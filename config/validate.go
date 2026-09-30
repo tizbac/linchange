@@ -258,12 +258,8 @@ func (v *validator) validateAuth() {
 		v.addf("auth.reset_password.token_ttl must be positive")
 	}
 
-	if c.Auth.RateLimit.PerIP < 1 {
-		v.addf("auth.rate_limit.per_ip must be at least 1")
-	}
-	if c.Auth.RateLimit.Window <= 0 {
-		v.addf("auth.rate_limit.window must be positive")
-	}
+	v.lockoutScope("auth.lockout.account", c.Auth.Lockout.Account)
+	v.lockoutScope("auth.lockout.ip", c.Auth.Lockout.IP)
 	if c.Auth.Session.IdleTimeout > c.Auth.Session.AbsoluteTimeout {
 		v.addf("auth.session.idle_timeout (%s) must not exceed absolute_timeout (%s)",
 			c.Auth.Session.IdleTimeout, c.Auth.Session.AbsoluteTimeout)
@@ -537,4 +533,29 @@ func validateKeyMaterial(name, key string) error {
 			"`openssl rand -base64 32`", name, minKeyBytes, len([]byte(key)))
 	}
 	return nil
+}
+
+// lockoutScope checks one of the two authentication lockout scopes.
+//
+// A scope with max_attempts of 0 or less is switched off, and the rest of its
+// settings are then ignored rather than required, so an operator who disables a
+// limit does not have to invent a window and a duration that will never be read.
+//
+// Nothing is required about the relationship between window and duration. Both
+// orderings are coherent: a lock longer than its window is simply a long
+// throttle, and a lock shorter than its window clears the counter when it is
+// served rather than re-locking on the next attempt. An earlier version of this
+// file refused duration > window on the reasoning that the window would then be
+// the real limit, which is not how the policy works, and it rejected the shipped
+// per-address default of 20 attempts per 15 minutes with a one hour lock.
+func (v *validator) lockoutScope(name string, s LockoutScope) {
+	if s.MaxAttempts <= 0 {
+		return
+	}
+	if s.Window <= 0 {
+		v.addf("%s.window must be positive when max_attempts is set", name)
+	}
+	if s.Duration <= 0 {
+		v.addf("%s.duration must be positive when max_attempts is set", name)
+	}
 }

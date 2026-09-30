@@ -95,9 +95,28 @@ auth:
     # Local users only. An LDAP user's password is changed in the directory.
     enabled: true
     token_ttl: 30m
-  rate_limit:
-    per_ip: 10
-    window: 15m
+  # Repeated authentication failures are counted per account and per source
+  # address, and both limits are enforced. Either alone leaves a way through: an
+  # account limit cannot see one host spraying many accounts, and an address
+  # limit cannot see a slow guess at one account from many hosts.
+  lockout:
+    account:
+      # Failures tolerated inside the window before the account is locked. This
+      # is the limit that actually protects a single mailbox, so it is strict.
+      max_attempts: 5
+      window: 15m
+      # How long the lock lasts. Must not exceed the window, or the lock would
+      # lift before the failures covering it had aged out.
+      duration: 15m
+    ip:
+      # Deliberately far looser than the account limit. A school or an office
+      # shares one egress address, so a threshold low enough to stop a
+      # determined attacker is also low enough to lock out a whole building on
+      # a burst of mistyped passwords. This slows a spray; it does not protect
+      # one account.
+      max_attempts: 20
+      window: 15m
+      duration: 1h
   session:
     idle_timeout: 30m
     absolute_timeout: 12h

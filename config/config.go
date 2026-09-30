@@ -110,7 +110,7 @@ type Auth struct {
 	JWT           JWTAuth       `yaml:"jwt"`
 	TOTP          TOTPAuth      `yaml:"totp"`
 	Reset         ResetAuth     `yaml:"reset_password"`
-	RateLimit     RateLimit     `yaml:"rate_limit"`
+	Lockout       Lockout       `yaml:"lockout"`
 	Session       SessionPolicy `yaml:"session"`
 	Impersonation Impersonation `yaml:"impersonation"`
 }
@@ -162,10 +162,32 @@ type ResetAuth struct {
 	TokenTTL time.Duration `yaml:"token_ttl"`
 }
 
-// RateLimit throttles authentication attempts per source IP.
-type RateLimit struct {
-	PerIP  int           `yaml:"per_ip"`
+// Lockout throttles repeated authentication failures.
+//
+// Both scopes are enforced together, because either one alone leaves an obvious
+// way through. A per-account limit cannot see one host spraying many accounts;
+// a per-IP limit cannot see a slow guess at one account from many hosts.
+type Lockout struct {
+	Account LockoutScope `yaml:"account"`
+	IP      LockoutScope `yaml:"ip"`
+}
+
+// LockoutScope is the threshold set for one scope.
+type LockoutScope struct {
+	// MaxAttempts is how many failures are tolerated inside Window before the
+	// subject is locked. Zero or less disables this scope, and a disabled scope
+	// records nothing at all.
+	MaxAttempts int `yaml:"max_attempts"`
+	// Window is the period a run of failures covers. A failure arriving after
+	// this has elapsed starts a new run rather than joining the current one.
 	Window time.Duration `yaml:"window"`
+	// Duration is how long a lock lasts once the threshold is reached.
+	Duration time.Duration `yaml:"duration"`
+}
+
+// Enabled reports whether this scope does anything.
+func (s LockoutScope) Enabled() bool {
+	return s.MaxAttempts > 0 && s.Window > 0 && s.Duration > 0
 }
 
 // SessionPolicy bounds the lifetime of a web session.

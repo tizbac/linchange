@@ -232,9 +232,26 @@ func New() *Config {
 				Enabled:  true,
 				TokenTTL: 30 * time.Minute,
 			},
-			RateLimit: RateLimit{
-				PerIP:  10,
-				Window: 15 * time.Minute,
+			Lockout: Lockout{
+				// The account limit is the strict one: five is the usual
+				// recommendation, and it is the limit that actually protects a
+				// single mailbox.
+				Account: LockoutScope{
+					MaxAttempts: 5,
+					Window:      15 * time.Minute,
+					Duration:    15 * time.Minute,
+				},
+				// The address limit is deliberately far looser. A school or an
+				// office shares one egress address, so a threshold low enough
+				// to stop a determined attacker is also low enough to lock out
+				// a whole building on a burst of mistyped passwords, which is
+				// self-inflicted and happens constantly. It is here to slow a
+				// spray, not to protect one account.
+				IP: LockoutScope{
+					MaxAttempts: 20,
+					Window:      15 * time.Minute,
+					Duration:    time.Hour,
+				},
 			},
 			Session: SessionPolicy{
 				IdleTimeout:     30 * time.Minute,
