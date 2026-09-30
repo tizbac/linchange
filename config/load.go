@@ -241,16 +241,26 @@ func New() *Config {
 					Window:      15 * time.Minute,
 					Duration:    15 * time.Minute,
 				},
-				// The address limit is deliberately far looser. A school or an
-				// office shares one egress address, so a threshold low enough
-				// to stop a determined attacker is also low enough to lock out
-				// a whole building on a burst of mistyped passwords, which is
-				// self-inflicted and happens constantly. It is here to slow a
-				// spray, not to protect one account.
+				// The address limit is looser than the account limit, but only
+				// by a factor of two, and the lock is half as long.
+				//
+				// A school or an office shares one egress address, so this
+				// threshold is the one that can lock out a building on a burst
+				// of mistyped passwords. It is kept at twice the account limit
+				// rather than an order of magnitude above it because the count
+				// is failures only: ten genuine failures in fifteen minutes
+				// from one address is a spray, not a busy morning, whereas a
+				// threshold set high enough to be certain of never catching one
+				// would be no limit at all.
+				//
+				// The half-hour lock follows from the lower threshold. An hour
+				// would mean ten typos cost a whole office an hour of mail,
+				// which is a worse outage than the one the limit prevents, and
+				// the account limit is what actually protects a single mailbox.
 				IP: LockoutScope{
-					MaxAttempts: 20,
+					MaxAttempts: 10,
 					Window:      15 * time.Minute,
-					Duration:    time.Hour,
+					Duration:    30 * time.Minute,
 				},
 			},
 			Session: SessionPolicy{

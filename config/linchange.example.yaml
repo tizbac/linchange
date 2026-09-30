@@ -109,14 +109,18 @@ auth:
       # lift before the failures covering it had aged out.
       duration: 15m
     ip:
-      # Deliberately far looser than the account limit. A school or an office
-      # shares one egress address, so a threshold low enough to stop a
-      # determined attacker is also low enough to lock out a whole building on
-      # a burst of mistyped passwords. This slows a spray; it does not protect
-      # one account.
-      max_attempts: 20
+      # Looser than the account limit, but only by a factor of two, and the lock
+      # is half as long. This is the threshold that can lock out a whole office
+      # behind one egress address, so it is worth understanding what it counts:
+      # failures only, from a single address, inside the window. Ten genuine
+      # failures in fifteen minutes is a spray, not a busy morning.
+      #
+      # Raising it much further would be no limit at all; lowering it much
+      # further would cost a building its mail for half an hour over a few
+      # mistyped passwords. The account limit is what protects one mailbox.
+      max_attempts: 10
       window: 15m
-      duration: 1h
+      duration: 30m
   session:
     idle_timeout: 30m
     absolute_timeout: 12h

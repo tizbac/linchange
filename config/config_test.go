@@ -434,3 +434,150 @@ mail:
 		})
 	}
 }
+
+// withLockout inserts a lockout block into the auth section of a config.
+//
+// The block has to go under auth: rather than be appended, because appending
+// lands it inside whichever top level section happens to be last and is then
+// reported as an unknown field of that section.
+func withLockout(base, block string) string {
+	const anchor = "  jwt:\n    secret: 0123456789abcdef0123456789abcdef0123456789\n"
+	return strings.Replace(base, anchor, anchor+block, 1)
+}
+
+// The shipped lockout thresholds are a security decision, not a preference, so
+// they are pinned by name. A future edit that quietly loosens them will fail
+// here rather than being discovered by somebody counting failed logins.
+//
+// The ordering is the part worth protecting: the account limit is the strict one
+// because it is what protects a single mailbox, and the address limit is loose
+// because it is the one that can lock out a building behind a single egress
+// address. A change that inverts those two would defeat the point of having
+// both.
+func TestLockoutDefaults(t *testing.T) {
+	cfg, err := Load(writeConfig(t, minimalConfig))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	account := cfg.Auth.Lockout.Account
+	if account.MaxAttempts != 5 {
+		t.Errorf("account max_attempts = %d, want 5", account.MaxAttempts)
+	}
+	if account.Window != 15*time.Minute {
+		t.Errorf("account window = %v, want 15m", account.Window)
+	}
+	if account.Duration != 15*time.Minute {
+		t.Errorf("account duration = %v, want 15m", account.Duration)
+	}
+
+	ip := cfg.Auth.Lockout.IP
+	if ip.MaxAttempts != 10 {
+		t.Errorf("ip max_attempts = %d, want 10", ip.MaxAttempts)
+	}
+	if ip.Window != 15*time.Minute {
+		t.Errorf("ip window = %v, want 15m", ip.Window)
+	}
+	if ip.Duration != 30*time.Minute {
+		t.Errorf("ip duration = %v, want 30m", ip.Duration)
+	}
+
+	if !account.Enabled() || !ip.Enabled() {
+		t.Fatal("both lockout scopes should be enabled by default")
+	}
+	if ip.MaxAttempts <= account.MaxAttempts {
+		t.Errorf("ip max_attempts (%d) must be looser than the account limit (%d)",
+			ip.MaxAttempts, account.MaxAttempts)
+	}
+	// The address lock is allowed to outlast its window, and deliberately is:
+	// a long lock on a shared address is the one self-inflicted outage here, so
+	// what is worth bounding is its length, not its relationship to the window.
+	if ip.Duration <= 0 || ip.Duration > time.Hour {
+		t.Errorf("ip duration = %v, want a positive lock of at most an hour", ip.Duration)
+	}
+	if account.Duration <= 0 {
+		t.Errorf("account duration = %v, want a positive lock", account.Duration)
+	}
+}
+
+// A scope switched off must not require a window or a duration, so an operator
+// who disables a limit is not forced to invent settings that are never read.
+func TestDisabledLockoutScopeNeedsNoTimings(t *testing.T) {
+	text := withLockout(minimalConfig, `  lockout:
+    account:
+      max_attempts: 0
+    ip:
+      max_attempts: 10
+      window: 15m
+      duration: 30m
+`)
+	loaded, err := Load(writeConfig(t, text))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if loaded.Auth.Lockout.Account.Enabled() {
+		t.Error("a scope with max_attempts 0 reports itself enabled")
+	}
+	if !loaded.Auth.Lockout.IP.Enabled() {
+		t.Error("the address scope should be unaffected")
+	}
+}
+
+// A scope that is switched on but given a zero timing is a mistake rather than a
+// preference, because it silently does nothing.
+//
+// The value has to be an explicit zero written as a duration: Load merges the
+// defaults before unmarshalling, so omitting a key inherits the default timing
+// rather than leaving it unset, and a bare integer will not parse into a
+// time.Duration at all. Writing 0s is the one way to reach the validator, and an
+// operator who typed it is telling us something they almost certainly did not
+// mean.
+func TestLockoutScopeWithZeroTimingsIsRejected(t *testing.T) {
+	for _, field := range []string{"window", "duration"} {
+		t.Run(field, func(t *testing.T) {
+			// The other timing is left at a real value so that only the field
+			// under test is zero.
+			other := "      duration: 15m\n"
+			if field == "duration" {
+				other = "      window: 15m\n"
+			}
+			text := withLockout(minimalConfig, `  lockout:
+    account:
+      max_attempts: 5
+`+other+`      `+field+`: 0s
+`)
+			_, err := Load(writeConfig(t, text))
+			if err == nil {
+				t.Fatalf("a scope with max_attempts and %s set to zero was accepted", field)
+			}
+			if !strings.Contains(err.Error(), "auth.lockout.account."+field) {
+				t.Errorf("error should name the field, got: %v", err)
+			}
+		})
+	}
+}
+
+// An omitted timing inherits the default rather than disabling the scope, which
+// is what keeps a partial override from silently switching a limit off.
+func TestLockoutScopeInheritsTimingsForTheOtherScope(t *testing.T) {
+	text := withLockout(minimalConfig, `  lockout:
+    account:
+      max_attempts: 9
+`)
+	loaded, err := Load(writeConfig(t, text))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	account := loaded.Auth.Lockout.Account
+	if account.MaxAttempts != 9 {
+		t.Errorf("account max_attempts = %d, want the configured 9", account.MaxAttempts)
+	}
+	if !account.Enabled() {
+		t.Error("overriding only max_attempts disabled the scope instead of " +
+			"inheriting the default window and duration")
+	}
+	if account.Window != 15*time.Minute || account.Duration != 15*time.Minute {
+		t.Errorf("account timings = %v/%v, want the 15m defaults",
+			account.Window, account.Duration)
+	}
+}
