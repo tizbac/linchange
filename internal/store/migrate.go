@@ -62,6 +62,20 @@ func Migrate(ctx context.Context, db *sqlx.DB, log *slog.Logger) error {
 		pending = append(pending, m)
 	}
 
+	// Refuse to run when the database is ahead of this binary. The loop below
+	// only walks the migrations this binary carries, so a version applied here
+	// that the binary has never heard of is invisible to it: pending comes back
+	// empty and the schema is reported as up to date while the code is older
+	// than the data. For a mail server that is a downgrade that runs happily
+	// and fails later, in the worst place, so it is stopped at startup.
+	if newest := all[len(all)-1].Version; hasNewer(applied, newest) {
+		return fmt.Errorf(
+			"store: the database is at schema version %d but this binary only "+
+				"knows up to %d; refusing to start an older binary against a "+
+				"newer schema, so deploy the newer build first",
+			newestApplied(applied), newest)
+	}
+
 	// Verify that nothing already applied has been edited. This runs before
 	// the no-op short circuit below: a database that is fully migrated is
 	// exactly the case where an edited migration would otherwise go unnoticed
@@ -143,6 +157,24 @@ func applyMigration(ctx context.Context, db *sqlx.DB, m migrations.Migration) er
 type appliedMigration struct {
 	name     string
 	checksum []byte
+}
+
+// hasNewer reports whether any applied version is past the newest this binary
+// carries.
+func hasNewer(applied map[int64]appliedMigration, newest int64) bool {
+	return newestApplied(applied) > newest
+}
+
+// newestApplied returns the highest applied version, or 0 when nothing has been
+// applied.
+func newestApplied(applied map[int64]appliedMigration) int64 {
+	var newest int64
+	for version := range applied {
+		if version > newest {
+			newest = version
+		}
+	}
+	return newest
 }
 
 // checksum is the SHA-256 of a migration's SQL text. It detects an applied

@@ -447,3 +447,38 @@ func testMigratedDB(t *testing.T) *sqlx.DB {
 	}
 	return db
 }
+
+// A database that is ahead of the binary is the other half of the checksum
+// guard. The checksum loop only walks migrations this build carries, so a
+// version it has never heard of is invisible: pending comes back empty and the
+// schema is reported as up to date while the code is older than the data. This
+// was not theoretical, it is what a stale binary does after a migration is
+// added.
+func TestMigrateRefusesADatabaseAheadOfTheBinary(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	if err := store.Migrate(ctx, db, nil); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	// Pretend a newer build applied a migration this one does not carry.
+	latest, err := migrations.LatestVersion()
+	if err != nil {
+		t.Fatalf("LatestVersion: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO schema_migrations (version, name, checksum, duration)
+		 VALUES ($1, 'from_the_future', $2, interval '0')`,
+		latest+1, []byte("not a real checksum")); err != nil {
+		t.Fatalf("recording a future migration: %v", err)
+	}
+
+	err = store.Migrate(ctx, db, nil)
+	if err == nil {
+		t.Fatal("an older binary started against a newer schema")
+	}
+	if !strings.Contains(err.Error(), "only knows up to") {
+		t.Errorf("error should explain the version mismatch, got: %v", err)
+	}
+}
