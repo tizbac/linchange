@@ -14,6 +14,7 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/linchange/linchange/internal/store"
+	"github.com/linchange/linchange/migrations"
 )
 
 // testDatabaseURL is where the store tests expect a PostgreSQL instance.
@@ -208,12 +209,20 @@ func TestMigrateIsIdempotent(t *testing.T) {
 		t.Errorf("schema version changed on re-run: %d then %d", first, second)
 	}
 
+	// Compared against the embedded set rather than a literal, so that adding a
+	// migration does not turn this into a test that has to be edited in step
+	// with the schema.
+	all, err := migrations.All()
+	if err != nil {
+		t.Fatalf("reading embedded migrations: %v", err)
+	}
+
 	var applied int
 	if err := db.GetContext(ctx, &applied, "SELECT count(*) FROM schema_migrations"); err != nil {
 		t.Fatal(err)
 	}
-	if applied != 1 {
-		t.Errorf("expected 1 recorded migration, got %d", applied)
+	if applied != len(all) {
+		t.Errorf("recorded %d migrations, want %d", applied, len(all))
 	}
 }
 
