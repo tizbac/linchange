@@ -3,6 +3,7 @@ module github.com/linchange/linchange
 go 1.27.1
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/pquerna/otp v1.5.0
