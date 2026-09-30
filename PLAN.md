@@ -50,12 +50,38 @@ every special case into a row rather than special-casing it in each subsystem:
 
 Consequences worth stating explicitly:
 
-- A shared mailbox is a `users` row with `source='shared'`, so
-  `alice@example.com#support` is a single login-resolution rule in one
-  function, shared by webmail, IMAP, POP3, EWS and EAS.
+- A shared mailbox is a `users` row with `source='shared'` **plus** a row in
+  `shared_mailboxes`, so `alice@example.com#support` is a single
+  login-resolution rule in one function, shared by webmail, IMAP, POP3, EWS and
+  EAS.
 - A domain admin that is not a mail user needs no separate table; the same
   "can this principal hold mail" predicate governs all five protocols.
 - The off-domain AD rule is one branch in the LDAP provider, not a new concept.
+
+### An alias is not a shared mailbox
+
+These are two separate features and the schema keeps them apart. Conflating
+them is the mistake that made `shared_mailbox_grants` reference `users`
+directly, which allowed a team's access to be granted against an ordinary
+person's private mailbox.
+
+| | Alias | Shared mailbox |
+| --- | --- | --- |
+| What it is | a second address that resolves to a mailbox that already exists | a mailbox that holds mail in its own right |
+| Address | the alias, e.g. `helpdesk@example.com` | the mailbox, e.g. `support@example.com` |
+| Folders and messages | none; it forwards into the target | its own, with its own quota |
+| Members | none | a grant list, per member, with a level |
+| Deleting it | changes nothing already received | deletes the mail it held |
+| Used for | a person reachable by several names | a team queue, ticket address, or role account |
+
+The two compose: an alias may target a shared mailbox, which is how a team gets
+an address reaching several people without any of them taking a second personal
+address. `aliases.target_address` referencing a `shared_mailboxes` row is
+supported and tested.
+
+Both are exposed over the same protocols, because both resolve to a mailbox:
+an alias is expanded at delivery time and never appears to a client as a
+separate destination.
 
 `policy` is the single package that answers "may principal P do action A",
 used by every protocol server and the HTTP API. Nothing else makes that
@@ -131,7 +157,7 @@ web/                         Angular 22 + Tailwind 4 + FullCalendar 7
 
 ```
 domains             name (citext PK), status, dkim_selector, quota defaults, created_at
-users               address (citext PK), source, display_name, enabled, is_shared,
+users               address (citext PK), source, display_name, enabled, mailbox_enabled,
                     quota_bytes, mailbox_enabled, created_at
 credentials         user_id PK, argon2id params + hash           -- local only
 ldap_links          provider, user_id PK, dn, last_synced_at
@@ -140,7 +166,9 @@ user_totp           user_id PK, secret_encrypted, enabled, recovery_codes[], cre
 workgroups          name, domain_id
 workgroup_members   workgroup_id, user_id, role
 aliases             address (citext PK), target_kind, target_id
-shared_mailbox_grants  shared_user_id, member_user_id, level
+shared_mailboxes   address (citext PK, FK users), display_name, colour, open_access
+shared_mailbox_grants  shared_address (FK shared_mailboxes), member_address, level
+outbox_recipients  (outbox_id, position), address, kind, state, attempts
 mailboxes           id, user_id, name, uidvalidity, uidnext, special_use, subscribed
 messages            id, mailbox_id, uid, blob_sha256, size, internaldate, flags[],
                     thread_key, subject, from_addr, snippet, has_attachments
@@ -224,23 +252,28 @@ Things established while landing P0 that later phases depend on:
 - PostgreSQL 18 stores data under `/var/lib/postgresql`, not
   `/var/lib/postgresql/data`; the compose volume mounts the parent directory.
 
-### Schema debt to settle before P2/P3
+### Schema corrections made before P2
 
-`0001_initial.sql` has two modelling problems that no constraint catches, and
-which only the P2/P3 repository work will expose:
+`0001` was corrected in place while it was still unapplied to any real
+database, and each correction is now pinned by a test in
+`internal/store/{schema,shared}_test.go`:
 
-- `aliases.target_id` is `bigint`, but `target_kind` may be `user` or `shared`,
-  whose natural identifier is a `citext` address. Either add a
-  `target_address citext` column alongside a nullable `workgroup_id`, or make
-  the identifier polymorphic with a discriminator. Aliases to a person are not
-  expressible as written.
-- `outbox` stores `recipients` and `recipients_outbound_kind` as parallel
-  arrays. The comment claims one entry per recipient, but nothing keeps the two
-  arrays aligned, and per-recipient partial delivery cannot be recorded. A
-  per-recipient child table is required for correct DSNs.
-
-`0001` has not been applied to any real database, so these can be corrected in
-place for new installations.
+- `aliases.target_id` was a single `bigint`, which could not express "point
+  this address at Alice". Replaced with `target_address citext` for a person or
+  shared mailbox and `workgroup_id bigint` for a workgroup, with a check
+  enforcing that exactly one is set and agrees with `target_kind`.
+- `outbox` held recipients and their per-recipient header kinds as two
+  parallel `text[]`/`enum[]` arrays that nothing kept aligned, so partial
+  delivery could not be recorded. Replaced with an `outbox_recipients` table
+  carrying position, kind, state and attempts.
+- `shared_mailbox_grants.shared_address` referenced `users`, so a team could be
+  granted access to an ordinary person's private mailbox. It now references a
+  dedicated `shared_mailboxes` table, which is what makes "is a shared mailbox"
+  an explicit declaration rather than an inference from `users.source`.
+- `users.mailbox_enabled` defaults to true and nothing pinned `domain_admin` to
+  false, so a domain admin could have owned folders, opened IMAP sessions and
+  been a shared mailbox member. Added a check constraint.
+- An empty envelope recipient could be queued; now rejected.
 
 ## Configuration
 

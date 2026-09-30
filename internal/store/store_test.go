@@ -60,7 +60,10 @@ func testDB(t *testing.T) *sqlx.DB {
 		t.Skipf("no test database at %s (%v); run `make up` or set %s",
 			testDatabaseURLEnv, err, testDatabaseURLEnv)
 	}
-	defer admin.Close()
+	// The admin connection is closed by the t.Cleanup below, not by a defer
+	// here. A defer would fire as testDB returned, before the cleanup ran,
+	// and the DROP DATABASE would then fail against a closed pool, quietly
+	// leaving a database behind on every single test run.
 
 	// Isolate this test in its own database.
 	name := fmt.Sprintf("lc_test_%d", time.Now().UnixNano()%1_000_000_000)
@@ -418,4 +421,20 @@ func mustMigrate(t *testing.T, db *sqlx.DB) {
 	if err := store.Migrate(context.Background(), db, nil); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+}
+
+// testMigratedDB returns a test database with the current schema applied.
+// Tests that assert on schema behaviour use this rather than testDB, because
+// the rules they check live in the migrations, not in the connection layer.
+func testMigratedDB(t *testing.T) *sqlx.DB {
+	t.Helper()
+
+	db := testDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	if err := store.Migrate(ctx, db, nil); err != nil {
+		t.Fatalf("applying migrations: %v", err)
+	}
+	return db
 }

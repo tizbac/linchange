@@ -33,6 +33,10 @@ CREATE TYPE outbox_state AS ENUM ('queued', 'sending', 'sent', 'deferred', 'fail
 
 CREATE TYPE outbox_recipient_kind AS ENUM ('to', 'cc', 'bcc');
 
+-- Per-recipient delivery outcome. A message is delivered when all of its
+-- recipients are; these states let that be derived instead of assumed.
+CREATE TYPE recipient_state AS ENUM ('pending', 'delivered', 'deferred', 'failed');
+
 -- ---------------------------------------------------------------------------
 -- Domains
 -- ---------------------------------------------------------------------------
@@ -74,8 +78,7 @@ CREATE TABLE users (
     -- Whether this principal may hold mail. False for domain_admin rows.
     -- Checked by every mail protocol and by the REST API, so that a domain
     -- admin can sign in to the web UI but never open an IMAP session.
-    mailbox_enabled     boolean       NOT NULL DEFAULT true,
-    -- Quota for this user's mailboxes. 0 means unlimited, NULL means inherit
+    mailbox_enabled     boolean       NOT NULL DEFAULT true,    -- Quota for this user's mailboxes. 0 means unlimited, NULL means inherit
     -- from the domain and then from mail.default_quota_bytes.
     quota_bytes         bigint,
     -- Per-user override of the daily send cap. NULL inherits.
@@ -97,7 +100,15 @@ CREATE TABLE users (
     updated_at          timestamptz    NOT NULL DEFAULT now(),
     deleted_at          timestamptz,
     CONSTRAINT users_quota_non_negative CHECK (quota_bytes IS NULL OR quota_bytes >= 0),
-    CONSTRAINT users_send_limit_non_negative CHECK (daily_send_limit IS NULL OR daily_send_limit >= 0)
+    CONSTRAINT users_send_limit_non_negative CHECK (daily_send_limit IS NULL OR daily_send_limit >= 0),
+    -- A domain admin administers mail and never receives it, so it can sign in
+    -- to the web interface but must not be able to hold a mailbox. The comment
+    -- on mailbox_enabled said this; the constraint is what makes it true, and
+    -- without it a default-true mailbox_enabled would quietly let a domain
+    -- admin own folders, open IMAP sessions and be a shared mailbox member.
+    CONSTRAINT users_domain_admin_cannot_hold_mail CHECK (
+        source <> 'domain_admin' OR mailbox_enabled = false
+    )
 );
 
 CREATE INDEX users_source_idx       ON users (source) WHERE deleted_at IS NULL;
@@ -205,31 +216,111 @@ CREATE TABLE workgroup_members (
 CREATE TABLE aliases (
     address      citext           PRIMARY KEY,
     target_kind  alias_target_kind NOT NULL,
-    target_id    bigint           NOT NULL,
+    -- An alias resolves either to a mailbox address or to a workgroup. These
+    -- cannot share one column: a workgroup has a bigint id while a user and a
+    -- shared mailbox are identified by a citext address. Exactly one is set,
+    -- which the check below enforces.
+    target_address citext          REFERENCES users(address) ON DELETE CASCADE,
+    workgroup_id  bigint           REFERENCES workgroups(id) ON DELETE CASCADE,
     -- Optional display name and destination comment shown in clients.
     display_name text             NOT NULL DEFAULT '',
     description  text             NOT NULL DEFAULT '',
     enabled      boolean          NOT NULL DEFAULT true,
     created_at   timestamptz      NOT NULL DEFAULT now(),
     updated_at   timestamptz      NOT NULL DEFAULT now(),
-    updated_by   citext
+    updated_by   citext,
+    -- The target must match the declared kind, and only a workgroup alias
+    -- carries a workgroup id. Without this an alias could claim to be a
+    -- workgroup while resolving to a person, and the resolution code would
+    -- have to guess.
+    CONSTRAINT aliases_target_matches_kind CHECK (
+        (target_kind = 'workgroup'
+            AND workgroup_id IS NOT NULL AND target_address IS NULL)
+        OR
+        (target_kind IN ('user', 'shared')
+            AND target_address IS NOT NULL AND workgroup_id IS NULL)
+    ),
+    -- An alias that points at itself would be an infinite loop for every
+    -- expansion path, including the MTA's.
+    CONSTRAINT aliases_target_not_self CHECK (target_address IS NULL OR target_address <> address)
 );
 
-CREATE INDEX aliases_target_idx ON aliases (target_kind, target_id);
+-- Reverse resolution: given a mailbox, which aliases point at it? This is the
+-- lookup that decides where a delivered message lands, so it is on the hot
+-- path of every inbound delivery.
+CREATE INDEX aliases_target_address_idx ON aliases (target_address)
+    WHERE target_address IS NOT NULL;
+
+-- Workgroup aliases are resolved separately, by id.
+CREATE INDEX aliases_workgroup_idx ON aliases (workgroup_id)
+    WHERE workgroup_id IS NOT NULL;
 
 COMMENT ON TABLE aliases IS
-    'target_id references users.address as text for kind=user or shared, and workgroups.id for kind=workgroup.';
+    'target_address references users.address for kind=user or shared; workgroup_id references workgroups.id for kind=workgroup. The check aliases_target_matches_kind guarantees exactly one is set and that it agrees with target_kind.';
 
--- Access grants that let a member user open a shared mailbox. This is the
--- model Exchange uses; the 'user#sharedmailbox' login suffix is resolved from
--- it too.
+-- A shared mailbox holds mail of its own, exactly like a person's mailbox: it
+-- has folders, messages, a quota and its own address. It is not an alias, and
+-- it is not a person's mailbox lent out: deleting it does not touch anyone's
+-- personal mail.
+--
+-- This table is what makes a principal a shared mailbox. `users.source =
+-- 'shared'` alone was not enough, because nothing stopped an administrator
+-- from granting "shared" access to an ordinary person and thereby exposing
+-- their personal mail to a team. Declaring the mailbox here is explicit, and
+-- the grants below can only point at a row in here.
+--
+-- The address is a real, plain address. The `#name` suffix a client may append
+-- (`alice@example.com#support`) is a login and URL convention parsed by the
+-- application; it is never stored as part of the identity.
+--
+-- Lifecycle: a shared mailbox is removed by deleting its principal in users,
+-- which cascades to this declaration, to the grants, and through mailboxes to
+-- the messages it held. Deleting the row here alone would drop the membership
+-- and the declaration while leaving the mail and the principal behind, which
+-- is not what "delete this shared mailbox" means to anyone.
+CREATE TABLE shared_mailboxes (
+    address       citext      PRIMARY KEY REFERENCES users (address) ON DELETE CASCADE,
+    display_name  text        NOT NULL DEFAULT '',
+    description   text        NOT NULL DEFAULT '',
+    -- Calendar and contacts for the team, distinct from the personal ones.
+    -- Written as #rrggbb by the web UI.
+    colour        text,
+    -- Optional out-of-office reply for the whole team. Per-member replies
+    -- stay on the person.
+    auto_reply_subject text,
+    auto_reply_body    text,
+    auto_reply_expires_at timestamptz,
+    -- When true, any principal in the domain with a mailbox may open this,
+    -- without an explicit grant. Used sparingly.
+    open_access   boolean     NOT NULL DEFAULT false,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    updated_by    citext,
+    CONSTRAINT shared_mailboxes_colour_is_hex CHECK (
+        colour IS NULL OR colour ~ '^#[0-9a-fA-F]{6}$'
+    )
+);
+
+-- Access grants that let a member open a shared mailbox. This is the model
+-- Exchange uses, and the same rows drive the REST API, IMAP, EWS and EAS.
+--
+-- `shared_address` references shared_mailboxes rather than users, which is
+-- what guarantees a grant can only ever be made against a real shared mailbox.
+-- Pointing it at users would have allowed "share Alice's personal mailbox",
+-- which is a different feature and is not supported.
 CREATE TABLE shared_mailbox_grants (
-    shared_address citext      NOT NULL REFERENCES users (address) ON DELETE CASCADE,
+    shared_address citext      NOT NULL REFERENCES shared_mailboxes (address) ON DELETE CASCADE,
     member_address citext      NOT NULL REFERENCES users (address) ON DELETE CASCADE,
     level          grant_level NOT NULL DEFAULT 'contribute',
+    -- Per-member override of the team out-of-office reply. An empty string
+    -- means "use the shared one"; NULL means "no reply".
+    personal_auto_reply text,
     granted_by     citext,
     created_at     timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (shared_address, member_address)
+    PRIMARY KEY (shared_address, member_address),
+    -- A mailbox is not a member of itself. Without this, "owner" level could
+    -- be granted to the shared mailbox, and the access check would recurse.
+    CONSTRAINT shared_grant_not_self CHECK (shared_address <> member_address)
 );
 
 CREATE INDEX shared_grants_member_idx ON shared_mailbox_grants (member_address);
@@ -372,9 +463,6 @@ CREATE TABLE outbox (
     -- for the daily send cap.
     submitted_by  citext      NOT NULL,
     envelope_from text        NOT NULL,
-    -- One row per recipient keeps partial-failure DSNs accurate.
-    recipients    outbox_recipient_kind[] NOT NULL DEFAULT '{}',
-    envelope_to   text[]      NOT NULL,
     blob_sha256   bytea       NOT NULL,
     size          bigint      NOT NULL,
     state         outbox_state NOT NULL DEFAULT 'queued',
@@ -391,6 +479,36 @@ CREATE TABLE outbox (
     created_at    timestamptz  NOT NULL DEFAULT now(),
     CONSTRAINT outbox_size_non_negative CHECK (size >= 0)
 );
+
+-- One row per recipient, in header order. This is deliberately not a pair of
+-- parallel arrays on outbox: nothing keeps two arrays aligned, and a message
+-- where four of five recipients were accepted needs a DSN naming the fifth.
+-- A per-recipient table makes both problems go away, and lets the delivery
+-- worker record partial progress across connection failures.
+CREATE TABLE outbox_recipients (
+    outbox_id    bigint               NOT NULL REFERENCES outbox(id) ON DELETE CASCADE,
+    -- Position in the header, which decides ordering when the same address
+    -- appears in more than one header.
+    position     integer              NOT NULL,
+    address      text                 NOT NULL,
+    kind         outbox_recipient_kind NOT NULL,
+    state        recipient_state      NOT NULL DEFAULT 'pending',
+    attempts     integer              NOT NULL DEFAULT 0,
+    last_error   text                 NOT NULL DEFAULT '',
+    delivered_at timestamptz,
+    PRIMARY KEY (outbox_id, position),
+    CONSTRAINT outbox_recipients_position_non_negative CHECK (position >= 0),
+    CONSTRAINT outbox_recipients_attempts_non_negative CHECK (attempts >= 0),
+    -- An empty envelope recipient is never legitimate, and accepting one here
+    -- would put a blank RCPT TO into the queue where the delivery worker has
+    -- no way to notice. Shape validation belongs in the submission path; this
+    -- only rules out the value that is unconditionally wrong.
+    CONSTRAINT outbox_recipients_address_present CHECK (length(btrim(address)) > 0)
+);
+
+-- Lets the worker find recipients still owing an attempt.
+CREATE INDEX outbox_recipients_pending_idx
+    ON outbox_recipients (outbox_id) WHERE state = 'pending';
 
 -- The worker's claim query: queued rows whose next_attempt_at has passed.
 CREATE INDEX outbox_claim_idx ON outbox (next_attempt_at)
@@ -644,3 +762,105 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER messages_notify
     AFTER INSERT OR UPDATE OR DELETE ON messages
     FOR EACH ROW EXECUTE FUNCTION notify_message_change();
+
+-- Keep `users.source` and the shared_mailboxes declarations in agreement.
+-- Without this the source enum alone would be authoritative, and the two
+-- could drift: a row could claim to be a shared mailbox while holding no
+-- folders, or a real shared mailbox could be relabelled and left with grants
+-- that the access check can no longer explain.
+CREATE OR REPLACE FUNCTION enforce_shared_mailbox_consistency() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        -- Only a dedicated principal may be declared a shared mailbox. This
+        -- is what stops an administrator exposing a person's own mail.
+        IF (SELECT source FROM users WHERE address = NEW.address) <> 'shared' THEN
+            RAISE EXCEPTION
+                'principal % has source %, only a shared principal can be a shared mailbox',
+                NEW.address,
+                (SELECT source FROM users WHERE address = NEW.address)
+                USING ERRCODE = '23514';
+        END IF;
+        IF NOT (SELECT mailbox_enabled FROM users WHERE address = NEW.address) THEN
+            RAISE EXCEPTION
+                'shared mailbox % cannot hold mail while mailbox_enabled is false',
+                NEW.address
+                USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+
+    ELSIF TG_OP = 'UPDATE' THEN
+        -- Relabelling a shared principal that already holds a shared mailbox
+        -- would leave its grants and folders pointing at a person.
+        IF OLD.source = 'shared' AND NEW.source <> 'shared' THEN
+            IF EXISTS (SELECT 1 FROM shared_mailboxes WHERE address = NEW.address) THEN
+                RAISE EXCEPTION
+                    'cannot change source of % from shared to %: it is a declared shared mailbox',
+                    NEW.address, NEW.source
+                    USING ERRCODE = '23514';
+            END IF;
+        END IF;
+
+        -- Nor may a shared mailbox be turned off while it holds mail, which
+        -- would strand the messages already delivered to it.
+        IF NEW.mailbox_enabled = false AND OLD.mailbox_enabled = true THEN
+            IF EXISTS (SELECT 1 FROM shared_mailboxes WHERE address = NEW.address) THEN
+                RAISE EXCEPTION
+                    'cannot disable mailbox for shared mailbox % without deleting it first',
+                    NEW.address
+                    USING ERRCODE = '23514';
+            END IF;
+        END IF;
+        RETURN NEW;
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER shared_mailboxes_source_guard
+    BEFORE INSERT OR UPDATE ON shared_mailboxes
+    FOR EACH ROW EXECUTE FUNCTION enforce_shared_mailbox_consistency();
+
+CREATE OR REPLACE FUNCTION guard_shared_principal_relabel() RETURNS trigger AS $$
+BEGIN
+    -- Removing the shared source from a principal that is a declared shared
+    -- mailbox would contradict the declaration, so refuse it from the users
+    -- side too rather than leaving a row that cannot be interpreted.
+    IF OLD.source = 'shared' AND NEW.source <> 'shared' THEN
+        IF EXISTS (SELECT 1 FROM shared_mailboxes WHERE address = NEW.address) THEN
+            RAISE EXCEPTION
+                'cannot change source of shared mailbox % to %: delete the shared mailbox first',
+                NEW.address, NEW.source
+                USING ERRCODE = '23514';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER users_shared_relabel_guard
+    BEFORE UPDATE OF source ON users
+    FOR EACH ROW EXECUTE FUNCTION guard_shared_principal_relabel();
+
+-- A grant is a promise that the member can read this mailbox, so the member
+-- has to be a principal that is allowed to hold mail at all. This is what
+-- stops a domain_admin, which administers mail but never receives it, from
+-- acquiring mailbox access behind the API's back. Administrators read other
+-- people's mail through impersonation, which is audited.
+CREATE OR REPLACE FUNCTION guard_shared_mailbox_grant() RETURNS trigger AS $$
+DECLARE
+    can_hold_mail boolean;
+BEGIN
+    SELECT mailbox_enabled INTO can_hold_mail FROM users WHERE address = NEW.member_address;
+    IF can_hold_mail IS DISTINCT FROM true THEN
+        RAISE EXCEPTION
+            'principal % cannot be a shared mailbox member: mailbox_enabled is not true',
+            NEW.member_address
+            USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER shared_mailbox_grants_member_guard
+    BEFORE INSERT OR UPDATE ON shared_mailbox_grants
+    FOR EACH ROW EXECUTE FUNCTION guard_shared_mailbox_grant();
