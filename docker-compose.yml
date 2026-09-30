@@ -1,0 +1,58 @@
+name: linchange
+
+# Local development only. A production deployment should not expose PostgreSQL
+# to the host at all, and should not run the server from a bind-mounted source
+# tree.
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: linchange-pg
+    environment:
+      POSTGRES_USER: ${PG_USER:-linchange}
+      POSTGRES_PASSWORD: ${PG_PASS:-linchange}
+      POSTGRES_DB: ${PG_DB:-linchange}
+      # Deterministic collation so that string ordering does not change
+      # between the developer's machine and production. The server stores
+      # timestamps in UTC and does its own normalisation of addresses, so a
+      # locale-dependent database collation would only introduce surprises.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      # Message search scans indexed metadata columns, so a larger shared
+      # buffer is worth more than a larger work_mem here.
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - log_min_duration_statement=1000
+    ports:
+      - "${PG_PORT:-55432}:5432"
+    volumes:
+      # PostgreSQL 18 moved its data root from /var/lib/postgresql/data to
+      # /var/lib/postgresql/<version>. Mounting a single volume at
+      # /var/lib/postgresql keeps pg_upgrade inside the mount boundary.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-linchange} -d ${PG_DB:-linchange}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  # Optional: a throwaway SMTP sink for exercising the submission path without
+  # sending real mail. Enabled with `docker compose --profile tools up`.
+  mailsink:
+    image: axllent/mailpit:latest
+    container_name: linchange-mailsink
+    profiles: ["tools"]
+    ports:
+      - "8025:8025"   # web interface
+      - "1025:1025"  # SMTP
+    restart: unless-stopped
+
+volumes:
+  pgdata:

@@ -1,0 +1,215 @@
+# linchange configuration.
+#
+# This file is required: the server refuses to start without it, and
+# `--config` is mandatory. Every value below is the built-in default unless
+# noted otherwise, so a minimal deployment only needs database.url,
+# auth.jwt.secret and a TLS certificate.
+#
+# ${VAR} is replaced with the value of that environment variable. A reference
+# with no value and no ${VAR:-fallback} is a startup error, so a missing secret
+# fails immediately rather than turning into a confusing runtime failure.
+
+server:
+  # Must have a DNS A record pointing at public_ip, and public_ip must have a
+  # matching PTR record. Outbound mail is rejected by remote servers otherwise.
+  hostname: localhost
+  public_ip: 127.0.0.1
+  data_dir: ./data
+  # Reverse proxies in front of the HTTP listener. X-Forwarded-For is only
+  # trusted from these ranges.
+  trusted_proxies: []
+
+database:
+  url: postgres://linchange:linchange@127.0.0.1:5432/linchange?sslmode=disable
+  max_open: 25
+  max_idle: 5
+  max_lifetime: 30m
+  connect_timeout: 10s
+  auto_migrate: true
+
+listeners:
+  # Inbound MTA. Unauthenticated, accepts only mail for local domains.
+  smtp_inbound: { addr: ":25" }
+  # Submission. AUTH required, and only the authenticated user may send.
+  smtp_submission: { addr: ":587" }
+  imap: { addr: ":143" }
+  # The three TLS-only listeners are refused at startup unless a certificate
+  # is configured under `tls:`, because binding 465/993/995 without one would
+  # advertise TLS and then fail the handshake. They are commented out here so
+  # that a fresh checkout starts on plaintext ports alone; uncomment them once
+  # you are serving real users.
+  # imaps: { addr: ":993" }
+  # pop3s: { addr: ":995" }
+  # smtp_submission_tls: { addr: ":465" }
+  pop3: { addr: ":110" }
+  # Loopback LMTP, for tests and for putting an external MTA in front.
+  lmtp: { addr: "" }
+  http: { addr: ":8080" }
+  https: { addr: "" }
+  smtp_inbound_max_bytes: 52428800
+
+tls:
+  # Either a static pair, or ACME below. Not both.
+  #
+  # The paths below are what `make dev-certs` generates, so a checkout works
+  # out of the box. A production deployment must replace them with a real
+  # certificate, or enable the ACME block instead.
+  cert_file: .certs/cert.pem
+  key_file: .certs/key.pem
+  acme:
+    enabled: false
+    email: ""
+    domains: []
+    cache_dir: ./data/acme
+
+auth:
+  local:
+    # OWASP password storage recommendation.
+    argon2:
+      memory_kib: 65536
+      iterations: 3
+      parallelism: 4
+      salt_len: 16
+      key_len: 32
+    min_password_length: 12
+  jwt:
+    # Required, at least 32 characters. Changing it invalidates all sessions.
+    secret: ${JWT_SECRET}
+    issuer: linchange
+    access_ttl: 15m
+    refresh_ttl: 720h
+  totp:
+    # Applies to local and LDAP users alike. The directory does not provide a
+    # second factor, so secrets are held here, encrypted at rest.
+    enabled: true
+    issuer: linchange
+    # Periods either side of now that also verify, for clock skew.
+    window: 1
+    recovery_codes: 10
+  reset_password:
+    # Local users only. An LDAP user's password is changed in the directory.
+    enabled: true
+    token_ttl: 30m
+  rate_limit:
+    per_ip: 10
+    window: 15m
+  session:
+    idle_timeout: 30m
+    absolute_timeout: 12h
+  impersonation:
+    allowed: true
+    # Forces the domain admin to state a reason, which is written to the audit
+    # log alongside the impersonated user.
+    require_reason: true
+
+ldap:
+  providers: []
+  #   - name: corp
+  #     url: ldaps://dc1.corp.example.com:636
+  #     start_tls: false
+  #     bind_dn: "CN=svc-linchange,OU=Service,DC=corp,DC=example,DC=com"
+  #     bind_password: ${LDAP_BIND_PASSWORD}
+  #     base_dn: "OU=Users,DC=corp,DC=example,DC=com"
+  #     user_filter: "(&(objectClass=user)(mail={{username}}))"
+  #     attributes:
+  #       mail: [mail, proxyAddresses, targetAddress]
+  #       display_name: [displayName, cn]
+  #       member_of: [memberOf]
+  #     # An AD user whose mail attribute is not in a hosted domain is refused
+  #     # unless they are a member of this group, in which case they get a
+  #     # domain_admin account with no mail functionality. Required.
+  #     domain_admins_group_dn: "CN=Domain Admins,CN=Users,DC=corp,DC=example,DC=com"
+  #     mailbox_quota_bytes: 10737418240
+  #     default_domain: ""
+  #     timeout: 10s
+  #
+  # sync:
+  #   enabled: false
+  #   interval: 15m
+  #   disable_missing_after: 72h
+  #   page_size: 500
+  # cache_ttl: 5m
+
+mail:
+  submission:
+    # Refuse AUTH on a connection that has not been upgraded with STARTTLS.
+    require_tls: true
+    # Only ever for debugging against a plaintext sink.
+    allow_insecure_auth: false
+    # Reject any MAIL FROM that is not the authenticated user or one of their
+    # verified aliases.
+    enforce_sender_identity: true
+    # Messages per user per UTC day. 0 disables the cap.
+    daily_send_limit: 500
+    daily_send_limit_overridable: true
+  inbound:
+    enabled: true
+    # Refuse mail for addresses with no matching user, alias or shared
+    # mailbox, rather than accepting it and bouncing later.
+    reject_unknown_recipients: true
+    max_recipients: 100
+    greylisting:
+      # First contact from an unknown sender is deferred. Real senders retry;
+      # most spam does not.
+      enabled: true
+      delay: 5m
+      expiry: 4h
+      retry_window: 30m
+    spam:
+      enabled: true
+      junk_threshold: 5.0
+      reject_threshold: 12.0
+  outbound:
+    concurrency: 4
+    per_domain_concurrency: 2
+    retry:
+      max_attempts: 12
+      backoff_base: 5m
+      backoff_max: 12h
+      max_lifetime: 168h
+    dsn:
+      enabled: true
+      # Wait this long after the final failure before bouncing, so a
+      # transiently broken remote host has time to recover.
+      delay: 4h
+      # Envelope sender of generated bounces. Must be a real address at a
+      # domain you control, or remote servers will reject the DSN.
+      from_address: postmaster@example.com
+    connect_timeout: 10s
+    command_timeout: 2m
+  dkim:
+    selector_prefix: s
+    key_bits: 2048
+    sign_all: true
+  # Encrypts DKIM private keys at rest. Required when dkim.sign_all is on.
+  dkim_private_key_encryption_key: ${DKIM_ENCRYPTION_KEY}
+  # Inherited by new mailboxes. 0 would mean unlimited; the schema treats NULL
+  # as "inherit from the domain".
+  default_quota_bytes: 10737418240
+  # Ceiling on what a domain admin may grant.
+  max_quota_bytes: 107374182400
+  recipients_per_message: 100
+  max_message_bytes: 52428800
+
+exchange:
+  enabled: true
+  # Reported to clients by Autodiscover and EWS. Required.
+  organization: Example Ltd
+  autodiscover:
+    enabled: true
+    path: /autodiscover/autodiscover.xml
+  ews:
+    enabled: true
+    path: /ews/exchange.asmx
+  eas:
+    enabled: true
+    path: /eas
+    max_ping_interval: 3540
+    max_sync_items: 512
+
+logging:
+  level: info
+  format: json
+  file: ""
+  audit: true
+  audit_retain: 8760h

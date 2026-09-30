@@ -1,0 +1,24 @@
+# Build output
+/bin/
+/data/
+
+# Local secrets and generated configuration
+.env
+/.env
+/certs/
+/.certs/
+linchange.dev.yaml
+
+# Web interface
+/web/node_modules/
+/web/.angular/
+/web/dist/
+/internal/httpapi/web/dist/
+
+# Go
+*.test
+*.out
+coverage.*
+
+# Test logs
+.test-integration.log
