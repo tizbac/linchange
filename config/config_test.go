@@ -14,6 +14,7 @@ const minimalConfig = `
 database:
   url: postgres://localhost/linchange
 auth:
+  encryption_key: 0123456789abcdef0123456789abcdef
   jwt:
     secret: 0123456789abcdef0123456789abcdef0123456789
 tls:
@@ -374,4 +375,62 @@ func asValidationError(err error, target **ValidationError) bool {
 		*target = ve
 	}
 	return ok
+}
+
+// Enrolment stores a secret it cannot encrypt, so the server must refuse to
+// start rather than letting the first user to enrol discover the problem.
+func TestTOTPRequiresAnEncryptionKey(t *testing.T) {
+	const jwtSecret = "0123456789abcdef0123456789abcdef0123456789"
+
+	// Each case is a whole document: appending a second `auth:` block to the
+	// minimal config would be a duplicate YAML key, not an override.
+	doc := func(auth string) string {
+		return `
+database:
+  url: postgres://localhost/linchange
+auth:
+` + auth + `
+tls:
+  cert_file: /tmp/cert.pem
+  key_file: /tmp/key.pem
+exchange:
+  organization: Example Ltd
+mail:
+  dkim_private_key_encryption_key: 0123456789abcdef0123456789abcdef
+  outbound:
+    dsn:
+      from_address: postmaster@example.com
+`
+	}
+
+	tests := []struct {
+		name    string
+		auth    string
+		wantErr string
+	}{
+		{"key present", "  encryption_key: 0123456789abcdef0123456789abcdef\n  jwt:\n    secret: " + jwtSecret, ""},
+		{"key absent", "  jwt:\n    secret: " + jwtSecret, "auth.encryption_key is required"},
+		{"key too short", "  encryption_key: too-short\n  jwt:\n    secret: " + jwtSecret, "at least 32 bytes"},
+		// Turning TOTP off removes the need, which is the escape hatch for an
+		// operator who has not generated a key yet.
+		{"totp disabled needs no key", "  jwt:\n    secret: " + jwtSecret + "\n  totp:\n    enabled: false", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, doc(tc.auth)))
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("load: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected an error mentioning %q", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error %q does not mention %q", err, tc.wantErr)
+			}
+		})
+	}
 }

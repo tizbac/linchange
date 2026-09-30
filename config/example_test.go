@@ -108,10 +108,11 @@ func TestDefaultsAreProductionSafe(t *testing.T) {
 	}
 }
 
-// setSecrets provides the two environment variables the example references.
+// setSecrets provides the environment variables the example references.
 func setSecrets(t *testing.T) {
 	t.Helper()
 	t.Setenv("JWT_SECRET", strings.Repeat("j", 40))
+	t.Setenv("AUTH_ENCRYPTION_KEY", strings.Repeat("a", 32))
 	t.Setenv("DKIM_ENCRYPTION_KEY", strings.Repeat("d", 32))
 }
 

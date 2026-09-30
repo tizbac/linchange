@@ -124,7 +124,8 @@ down: ## Stop local development services
 
 .PHONY: dev-config
 dev-config: dev-certs ## Write a development configuration file
-	@printf 'JWT_SECRET=%s\nDKIM_ENCRYPTION_KEY=%s\n' \
+	@printf 'JWT_SECRET=%s\nAUTH_ENCRYPTION_KEY=%s\nDKIM_ENCRYPTION_KEY=%s\n' \
+		"$$(head -c 32 /dev/urandom | base64 | tr -d '\n=')" \
 		"$$(head -c 32 /dev/urandom | base64 | tr -d '\n=')" \
 		"$$(head -c 32 /dev/urandom | base64 | tr -d '\n=')" > .env
 	@sed -e 's|^  url: .*|  url: $(TEST_DSN)|' \

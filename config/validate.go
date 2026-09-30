@@ -244,6 +244,14 @@ func (v *validator) validateAuth() {
 		if c.Auth.TOTP.RecoveryCodes < 0 || c.Auth.TOTP.RecoveryCodes > 32 {
 			v.addf("auth.totp.recovery_codes must be between 0 and 32, got %d", c.Auth.TOTP.RecoveryCodes)
 		}
+		// Enrolment cannot store a secret it cannot encrypt, so refuse to
+		// start rather than let the first user to enrol fail.
+		if c.Auth.EncryptionKey == "" {
+			v.addf("auth.encryption_key is required when TOTP is enabled, " +
+				"because second-factor secrets are stored encrypted")
+		} else if err := validateKeyMaterial("auth.encryption_key", c.Auth.EncryptionKey); err != nil {
+			v.addf("%v", err)
+		}
 	}
 
 	if c.Auth.Reset.Enabled && c.Auth.Reset.TokenTTL <= 0 {
@@ -361,9 +369,13 @@ func (v *validator) validateMail() {
 	if c.Mail.DKIM.SelectorPrefix == "" {
 		v.addf("mail.dkim.selector_prefix is required")
 	}
-	if c.Mail.DKIM.SignAll && c.Mail.DkimPrivateKeyEncryptionKey == "" {
-		v.addf("mail.dkim_private_key_encryption_key is required when mail.dkim.sign_all is on, " +
-			"so that private keys are not stored in plaintext on disk")
+	if c.Mail.DKIM.SignAll {
+		if c.Mail.DkimPrivateKeyEncryptionKey == "" {
+			v.addf("mail.dkim_private_key_encryption_key is required when mail.dkim.sign_all is on, " +
+				"so that private keys are not stored in plaintext on disk")
+		} else if err := validateKeyMaterial("mail.dkim_private_key_encryption_key", c.Mail.DkimPrivateKeyEncryptionKey); err != nil {
+			v.addf("%v", err)
+		}
 	}
 
 	if c.Mail.Inbound.Spam.Enabled {
@@ -502,4 +514,27 @@ func validHostname(h string) bool {
 		}
 	}
 	return true
+}
+
+// minKeyBytes is the shortest key accepted for an at-rest encryption key.
+// AES-256 is the target, so anything shorter is not really protecting the
+// secrets it is named for.
+const minKeyBytes = 32
+
+// validateKeyMaterial checks that a configured encryption key is present and
+// long enough to be meaningful.
+//
+// The key is accepted as an arbitrary string rather than requiring base64,
+// because an operator generating one with openssl should not have to know which
+// encoding this program happens to want. The TOTP package derives a fixed-size
+// key from it.
+func validateKeyMaterial(name, key string) error {
+	if key == "" {
+		return fmt.Errorf("%s is required", name)
+	}
+	if len([]byte(key)) < minKeyBytes {
+		return fmt.Errorf("%s must be at least %d bytes, got %d; generate one with "+
+			"`openssl rand -base64 32`", name, minKeyBytes, len([]byte(key)))
+	}
+	return nil
 }

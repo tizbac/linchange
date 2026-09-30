@@ -101,7 +101,12 @@ type ACME struct {
 
 // Auth covers every credential and session policy.
 type Auth struct {
-	Local         LocalAuth     `yaml:"local"`
+	Local LocalAuth `yaml:"local"`
+	// EncryptionKey protects second-factor secrets at rest. It is separate
+	// from the DKIM key on purpose: those have nothing to do with each other,
+	// and sharing one key would mean rotating the DKIM key invalidates every
+	// enrolled second factor, or the reverse.
+	EncryptionKey string        `yaml:"encryption_key"`
 	JWT           JWTAuth       `yaml:"jwt"`
 	TOTP          TOTPAuth      `yaml:"totp"`
 	Reset         ResetAuth     `yaml:"reset_password"`

@@ -63,6 +63,11 @@ tls:
     cache_dir: ./data/acme
 
 auth:
+  # Encrypts second-factor secrets at rest. Required whenever totp.enabled is
+  # on, which is the default. Deliberately not the same key as the DKIM one:
+  # sharing it would mean rotating either key breaks the other.
+  # Generate with: openssl rand -base64 32
+  encryption_key: ${AUTH_ENCRYPTION_KEY}
   local:
     # OWASP password storage recommendation.
     argon2:
