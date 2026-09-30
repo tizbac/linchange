@@ -263,6 +263,12 @@ func New() *Config {
 					Duration:    30 * time.Minute,
 				},
 			},
+			Challenge: Challenge{
+				// Long enough to find a phone, unlock it and read a code;
+				// short enough that a challenge left open in a browser tab is
+				// worthless by the time anyone comes back to it.
+				TTL: 5 * time.Minute,
+			},
 			Session: SessionPolicy{
 				IdleTimeout:     30 * time.Minute,
 				AbsoluteTimeout: 12 * time.Hour,

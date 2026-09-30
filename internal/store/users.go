@@ -77,6 +77,7 @@ func (r principalRow) principal() policy.Principal {
 // it was handed.
 type Querier interface {
 	GetContext(ctx context.Context, dest any, query string, args ...any) error
+	QueryRowxContext(ctx context.Context, query string, args ...any) *sqlx.Row
 	QueryxContext(ctx context.Context, query string, args ...any) (*sqlx.Rows, error)
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	NamedExecContext(ctx context.Context, query string, arg any) (sql.Result, error)

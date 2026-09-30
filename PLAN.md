@@ -1,8 +1,10 @@
 # linchange — implementation plan
 
 Full-featured mail + groupware server. Go, sqlx, PostgreSQL. IMAP / POP3 / SMTP
-listeners, LDAP/AD and local users, personal + workgroup calendars, Angular +
-Tailwind web UI, and Exchange compatibility (Autodiscover, EWS, ActiveSync).
+listeners, LDAP/AD and local users, personal + workgroup calendars, an Angular +
+Tailwind webmail — a real mail client (inbox, compose, folders, search), not just
+an admin console — plus a calendar UI and an admin section, and Exchange
+compatibility (Autodiscover, EWS, ActiveSync).
 
 MAPI/HTTP (the protocol Outlook for Windows speaks natively) is explicitly out
 of scope — no Go implementation exists (gromox is ~200k lines of C++). See
@@ -150,7 +152,7 @@ internal/
   httpapi/                   chi router: rest/ | ews/ | eas/ | autodiscover/
   admin/                     domain-admin service layer, impersonation, audit
   ldapsync/                  periodic AD reconcile
-web/                         Angular 22 + Tailwind 4 + FullCalendar 7
+ web/                         Angular 22 + Tailwind 4 mail client (webmail + calendar + admin)
 ```
 
 ## Data model

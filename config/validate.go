@@ -258,6 +258,10 @@ func (v *validator) validateAuth() {
 		v.addf("auth.reset_password.token_ttl must be positive")
 	}
 
+	if c.Auth.Challenge.TTL <= 0 {
+		v.addf("auth.challenge.ttl must be positive")
+	}
+
 	v.lockoutScope("auth.lockout.account", c.Auth.Lockout.Account)
 	v.lockoutScope("auth.lockout.ip", c.Auth.Lockout.IP)
 	if c.Auth.Session.IdleTimeout > c.Auth.Session.AbsoluteTimeout {

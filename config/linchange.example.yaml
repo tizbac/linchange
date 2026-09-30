@@ -121,6 +121,12 @@ auth:
       max_attempts: 10
       window: 15m
       duration: 30m
+  # A user with a second factor gets an opaque challenge after the password
+  # checks out, not tokens. Nothing usable exists until the code is presented,
+  # so a challenge left in a browser tab is worthless by the time anyone comes
+  # back. Long enough to find a phone and read a code; little more.
+  challenge:
+    ttl: 5m
   session:
     idle_timeout: 30m
     absolute_timeout: 12h

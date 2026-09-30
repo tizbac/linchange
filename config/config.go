@@ -111,6 +111,7 @@ type Auth struct {
 	TOTP          TOTPAuth      `yaml:"totp"`
 	Reset         ResetAuth     `yaml:"reset_password"`
 	Lockout       Lockout       `yaml:"lockout"`
+	Challenge     Challenge     `yaml:"challenge"`
 	Session       SessionPolicy `yaml:"session"`
 	Impersonation Impersonation `yaml:"impersonation"`
 }
@@ -188,6 +189,20 @@ type LockoutScope struct {
 // Enabled reports whether this scope does anything.
 func (s LockoutScope) Enabled() bool {
 	return s.MaxAttempts > 0 && s.Window > 0 && s.Duration > 0
+}
+
+// Challenge bounds the gap between a correct password and a second factor.
+//
+// A user with TOTP enrolled is issued an opaque challenge instead of tokens
+// once their password checks out, and the challenge is what the second factor
+// step exchanges for a session. Nothing usable exists until the code is
+// presented, so an intercepted first response carries no access.
+//
+// The window is short because it is a pause in one person's login, not a
+// resumable session: it has to survive typing a code off a phone, and not much
+// more.
+type Challenge struct {
+	TTL time.Duration `yaml:"ttl"`
 }
 
 // SessionPolicy bounds the lifetime of a web session.
