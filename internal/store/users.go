@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/netip"
 
 	"github.com/jmoiron/sqlx"
@@ -101,4 +102,29 @@ func parseIP(s string) (netip.Addr, bool) {
 		return netip.Addr{}, false
 	}
 	return addr, true
+}
+
+// SetMustChangePassword records whether a principal must choose a new password
+// before doing anything except signing in and changing it.
+//
+// The flag lives on users rather than alongside the password hash because it is a
+// property of the principal: a domain can require a change for an account whose
+// password is not held here at all, and a session or an access token carries
+// this copy, so it is the one already on the paths that enforce it. Keeping a
+// second copy on credentials meant two flags for one fact, and the ways they
+// could disagree were both bad.
+func SetMustChangePassword(ctx context.Context, q Querier, address string, mustChange bool) error {
+	const update = `
+		UPDATE users
+		SET must_change_password = $2, updated_at = now()
+		WHERE address = $1 AND deleted_at IS NULL`
+
+	res, err := q.ExecContext(ctx, update, address, mustChange)
+	if err != nil {
+		return fmt.Errorf("store: setting must_change_password: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
