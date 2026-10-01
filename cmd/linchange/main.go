@@ -51,6 +51,7 @@ Flags:
 		configPath  = fs.String("config", "", "path to the YAML configuration file (required)")
 		showVersion = fs.Bool("version", false, "print the version and exit")
 		checkOnly   = fs.Bool("check-config", false, "load and validate the configuration, then exit")
+		webDir      = fs.String("web-dir", "", "directory holding the built web app to serve (optional)")
 	)
 
 	if err := fs.Parse(args); err != nil {
@@ -95,11 +96,19 @@ Flags:
 	// Startup is bounded: a database that is unreachable must fail fast rather
 	// than hang a container start forever.
 	startupCtx, cancelStartup := context.WithTimeout(ctx, 60*time.Second)
-	application, err := app.New(startupCtx, app.Options{Config: cfg, Logger: log})
+	application, err := app.New(startupCtx, app.Options{Config: cfg, Logger: log, StaticDir: *webDir})
 	cancelStartup()
 	if err != nil {
 		return err
 	}
+
+	// The HTTP front end (API + web) runs for the life of the process and is
+	// torn down by the same Close that releases the rest.
+	go func() {
+		if err := application.Serve(ctx); err != nil {
+			log.Error("http listener stopped", "error", err)
+		}
+	}()
 
 	shutdownDone := make(chan struct{})
 	go func() {
@@ -108,9 +117,8 @@ Flags:
 		log.Info("shutdown signal received")
 	}()
 
-	// Listen until the context is cancelled. Later phases replace this with the
-	// protocol listeners; for now it verifies that startup and shutdown are
-	// correct before anything is layered on top.
+	// Listen until the context is cancelled. Later phases layer the protocol
+	// listeners on top of this same startup and shutdown path.
 	<-ctx.Done()
 
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 30*time.Second)

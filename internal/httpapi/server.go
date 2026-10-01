@@ -14,6 +14,9 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -44,12 +47,13 @@ const (
 
 // Server holds the long-lived dependencies the handlers share.
 type Server struct {
-	db       *sqlx.DB
-	log      *slog.Logger
-	auth     *login.Authenticator
-	reset    *reset.Resetter
-	tokens   *token.Manager
-	sessions *store.Sessions
+	db        *sqlx.DB
+	log       *slog.Logger
+	auth      *login.Authenticator
+	reset     *reset.Resetter
+	tokens    *token.Manager
+	sessions  *store.Sessions
+	staticDir string
 }
 
 // Options are the inputs to New.
@@ -57,6 +61,10 @@ type Options struct {
 	DB     *sqlx.DB
 	Config *config.Config
 	Logger *slog.Logger
+	// StaticDir, when set, is the directory holding the built web app. The
+	// router serves its asset files and falls back to index.html for the
+	// client-side routes so the single-binary server can host the SPA too.
+	StaticDir string
 }
 
 // New builds a Server from an open database and a loaded config.
@@ -146,12 +154,13 @@ func New(opts Options) (*Server, error) {
 	}
 
 	return &Server{
-		db:       opts.DB,
-		log:      log,
-		auth:     auth,
-		reset:    r,
-		tokens:   tokens,
-		sessions: store.NewSessions(),
+		db:        opts.DB,
+		log:       log,
+		auth:      auth,
+		reset:     r,
+		tokens:    tokens,
+		sessions:  store.NewSessions(),
+		staticDir: opts.StaticDir,
 	}, nil
 }
 
@@ -181,7 +190,57 @@ func (s *Server) Handler() http.Handler {
 		})
 	})
 
+	// With a web build present, the same server hosts the SPA: asset files are
+	// served directly and every other GET is answered with the app shell, which
+	// the client-side router then takes over. The API routes above win for their
+	// exact paths, so this never shadows the API.
+	if s.staticDir != "" {
+		r.Get("/*", s.serveSPA)
+	}
+
 	return r
+}
+
+// serveSPA serves a real asset if one exists at the requested path and otherwise
+// hands back index.html, so /login and /second-factor work without a 404.
+func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	if path == "/api" || strings.HasPrefix(path, "/api/") || path == "/healthz" {
+		s.writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	root := filepath.Clean(s.staticDir)
+	rel := strings.Trim(path, "/")
+	full := filepath.Join(root, filepath.FromSlash(rel))
+
+	// r.URL.Path is already cleaned, but keep the resolved file inside the web
+	// root regardless before anything reads from it.
+	if full != root && !strings.HasPrefix(full, root+string(filepath.Separator)) {
+		s.writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	// The root URL and anything that is not a real file are all the app shell;
+	// the client-side router takes over from there.
+	target := full
+	if rel == "" {
+		target = filepath.Join(root, "index.html")
+	} else if info, err := os.Stat(full); err != nil || info.IsDir() {
+		target = filepath.Join(root, "index.html")
+	}
+
+	f, err := os.Open(target)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	defer f.Close()
+	if stat, err := f.Stat(); err == nil {
+		http.ServeContent(w, r, filepath.Base(target), stat.ModTime(), f)
+		return
+	}
+	s.writeError(w, http.StatusNotFound, "not found")
 }
 
 // requireAuth validates the bearer access token and confirms the session it

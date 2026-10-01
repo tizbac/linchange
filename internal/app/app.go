@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -17,16 +18,19 @@ import (
 
 	"github.com/linchange/linchange/config"
 	"github.com/linchange/linchange/internal/blobstore"
+	"github.com/linchange/linchange/internal/httpapi"
 	"github.com/linchange/linchange/internal/store"
 )
 
 // App holds the long-lived resources shared by every listener.
 type App struct {
-	Config    *config.Config
-	Logger    *slog.Logger
-	DB        *sqlx.DB
-	Blobs     *blobstore.Store
-	StartedAt time.Time
+	Config     *config.Config
+	Logger     *slog.Logger
+	DB         *sqlx.DB
+	Blobs      *blobstore.Store
+	HTTPServer *httpapi.Server
+	HTTPListen *http.Server
+	StartedAt  time.Time
 
 	shutdownOnce sync.Once
 	closers      []func(context.Context) error
@@ -36,6 +40,9 @@ type App struct {
 type Options struct {
 	Config *config.Config
 	Logger *slog.Logger
+	// StaticDir is the directory holding the built web app, served alongside the
+	// API. Empty means API-only, for API clients and the protocol listeners.
+	StaticDir string
 }
 
 // New opens the database and the blob store, applies migrations, and prepares
@@ -94,14 +101,52 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		return nil, err
 	}
 
+	// The HTTP listener serves the REST API and, when a web build is present,
+	// the Angular app from the same origin. An empty address means this process
+	// is not the HTTP front end, in which case nothing is bound.
+	if addr := cfg.Listener.HTTP.Addr; addr != "" {
+		api, err := httpapi.New(httpapi.Options{
+			DB: db, Config: cfg, Logger: log, StaticDir: opts.StaticDir,
+		})
+		if err != nil {
+			a.Close(context.Background())
+			return nil, err
+		}
+		a.HTTPServer = api
+		a.HTTPListen = &http.Server{
+			Addr:              addr,
+			Handler:           api.Handler(),
+			ReadHeaderTimeout: 15 * time.Second,
+		}
+		a.closers = append(a.closers, a.HTTPListen.Shutdown)
+	}
+
 	log.Info("initialised",
 		"hostname", cfg.Server.Hostname,
 		"public_ip", cfg.Server.PublicIP,
 		"data_dir", cfg.Server.DataDir,
 		"postgres", db.PingContext(ctx) == nil,
+		"http", cfg.Listener.HTTP.Addr,
 	)
 
 	return a, nil
+}
+
+// Serve runs the HTTP listener until ctx is cancelled. A clean shutdown returns
+// nil; a bind or accept error is returned to the caller.
+func (a *App) Serve(ctx context.Context) error {
+	if a.HTTPListen == nil {
+		<-ctx.Done()
+		return nil
+	}
+	errCh := make(chan error, 1)
+	go func() { errCh <- a.HTTPListen.ListenAndServe() }()
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-errCh:
+		return err
+	}
 }
 
 // ensureDirs creates the data directories the server writes into.
