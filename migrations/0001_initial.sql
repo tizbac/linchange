@@ -787,40 +787,19 @@ BEGIN
                 USING ERRCODE = '23514';
         END IF;
         RETURN NEW;
-
-    ELSIF TG_OP = 'UPDATE' THEN
-        -- Relabelling a shared principal that already holds a shared mailbox
-        -- would leave its grants and folders pointing at a person.
-        IF OLD.source = 'shared' AND NEW.source <> 'shared' THEN
-            IF EXISTS (SELECT 1 FROM shared_mailboxes WHERE address = NEW.address) THEN
-                RAISE EXCEPTION
-                    'cannot change source of % from shared to %: it is a declared shared mailbox',
-                    NEW.address, NEW.source
-                    USING ERRCODE = '23514';
-            END IF;
-        END IF;
-
-        -- Nor may a shared mailbox be turned off while it holds mail, which
-        -- would strand the messages already delivered to it.
-        IF NEW.mailbox_enabled = false AND OLD.mailbox_enabled = true THEN
-            IF EXISTS (SELECT 1 FROM shared_mailboxes WHERE address = NEW.address) THEN
-                RAISE EXCEPTION
-                    'cannot disable mailbox for shared mailbox % without deleting it first',
-                    NEW.address
-                    USING ERRCODE = '23514';
-            END IF;
-        END IF;
-        RETURN NEW;
     END IF;
     RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER shared_mailboxes_source_guard
-    BEFORE INSERT OR UPDATE ON shared_mailboxes
+    BEFORE INSERT ON shared_mailboxes
     FOR EACH ROW EXECUTE FUNCTION enforce_shared_mailbox_consistency();
 
-CREATE OR REPLACE FUNCTION guard_shared_principal_relabel() RETURNS trigger AS $$
+-- The rules that protect a shared principal from the users side. These live
+-- here rather than on shared_mailboxes because `source` and `mailbox_enabled`
+-- are columns of users; reading them from a shared_mailboxes row would fail.
+CREATE OR REPLACE FUNCTION guard_shared_principal() RETURNS trigger AS $$
 BEGIN
     -- Removing the shared source from a principal that is a declared shared
     -- mailbox would contradict the declaration, so refuse it from the users
@@ -833,13 +812,24 @@ BEGIN
                 USING ERRCODE = '23514';
         END IF;
     END IF;
+
+    -- Nor may a shared mailbox be turned off while it holds mail, which
+    -- would strand the messages already delivered to it.
+    IF OLD.mailbox_enabled = true AND NEW.mailbox_enabled = false THEN
+        IF EXISTS (SELECT 1 FROM shared_mailboxes WHERE address = NEW.address) THEN
+            RAISE EXCEPTION
+                'cannot disable mailbox for shared mailbox % without deleting it first',
+                NEW.address
+                USING ERRCODE = '23514';
+        END IF;
+    END IF;
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER users_shared_relabel_guard
-    BEFORE UPDATE OF source ON users
-    FOR EACH ROW EXECUTE FUNCTION guard_shared_principal_relabel();
+CREATE TRIGGER users_shared_guard
+    BEFORE UPDATE OF source, mailbox_enabled ON users
+    FOR EACH ROW EXECUTE FUNCTION guard_shared_principal();
 
 -- A grant is a promise that the member can read this mailbox, so the member
 -- has to be a principal that is allowed to hold mail at all. This is what

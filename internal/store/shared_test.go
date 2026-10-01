@@ -345,3 +345,60 @@ func TestAliasToASharedMailboxRequiresItToExist(t *testing.T) {
 		t.Fatal("expected an alias to an undeclared shared mailbox to be refused")
 	}
 }
+
+// Renaming a shared mailbox is an ordinary edit and has to work. The guard that
+// protects a shared principal used to read `source` and `mailbox_enabled` off
+// the shared_mailboxes row, where neither column exists, so every update to the
+// table failed with "record old has no field source" and the mailbox could be
+// declared but never edited.
+func TestSharedMailboxCanBeRenamed(t *testing.T) {
+	db := testMigratedDB(t)
+	_, shared := seedSharedMailboxFixtures(t, db)
+	ctx := context.Background()
+
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO shared_mailboxes (address) VALUES ($1)`, shared); err != nil {
+		t.Fatalf("declaring a shared mailbox: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`UPDATE shared_mailboxes SET display_name = 'Support (EMEA)' WHERE address = $1`,
+		shared); err != nil {
+		t.Fatalf("renaming a shared mailbox: %v", err)
+	}
+
+	var name string
+	if err := db.GetContext(ctx, &name,
+		`SELECT display_name FROM shared_mailboxes WHERE address = $1`, shared); err != nil {
+		t.Fatalf("reading the new name: %v", err)
+	}
+	if name != "Support (EMEA)" {
+		t.Errorf("display_name = %q, want the new name", name)
+	}
+}
+
+// The rules that used to be written against the wrong table are enforced from
+// the users side, where `source` and `mailbox_enabled` actually live.
+func TestASharedMailboxPrincipalIsPinned(t *testing.T) {
+	db := testMigratedDB(t)
+	_, shared := seedSharedMailboxFixtures(t, db)
+	ctx := context.Background()
+
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO shared_mailboxes (address) VALUES ($1)`, shared); err != nil {
+		t.Fatalf("declaring a shared mailbox: %v", err)
+	}
+
+	// Relabelling a declared shared mailbox as a person would leave its
+	// grants and folders pointing at somebody.
+	if _, err := db.ExecContext(ctx,
+		`UPDATE users SET source = 'local' WHERE address = $1`, shared); err == nil {
+		t.Error("expected the source of a declared shared mailbox to be pinned")
+	}
+
+	// And it may not be switched off while it holds mail, which would strand
+	// everything already delivered to it.
+	if _, err := db.ExecContext(ctx,
+		`UPDATE users SET mailbox_enabled = false WHERE address = $1`, shared); err == nil {
+		t.Error("expected a declared shared mailbox to refuse being disabled")
+	}
+}
