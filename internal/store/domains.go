@@ -21,6 +21,18 @@ const (
 	DomainStatusDisabled DomainStatus = "disabled"
 )
 
+// Valid reports whether s is one of the statuses the enum allows. A status
+// arriving from a request is checked with this rather than by hand, so the
+// API refuses a bad value with a message naming it instead of letting it reach
+// the database as a cast error.
+func (s DomainStatus) Valid() bool {
+	switch s {
+	case DomainStatusActive, DomainStatusSuspended, DomainStatusDisabled:
+		return true
+	}
+	return false
+}
+
 // DefaultDomainQuotaBytes is what a new domain inherits for mailboxes that do
 // not carry a quota of their own. It matches the column default in the schema.
 const DefaultDomainQuotaBytes int64 = 10 * 1024 * 1024 * 1024

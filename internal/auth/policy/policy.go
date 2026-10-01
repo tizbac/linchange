@@ -301,6 +301,16 @@ var rank = map[GrantLevel]int{
 	GrantOwner:      4,
 }
 
+// Valid reports whether l is one of the levels the enum allows. A level from a
+// request is checked with this, so an unrecognised one is refused with a
+// message naming it rather than silently ranking as zero and reading as "no
+// access" in a way that would be indistinguishable from a deliberate read
+// grant having been left out.
+func (l GrantLevel) Valid() bool {
+	_, ok := rank[l]
+	return ok
+}
+
 // AtLeast reports whether the access satisfies want.
 func (s SharedAccess) AtLeast(want GrantLevel) bool {
 	if s.Open {

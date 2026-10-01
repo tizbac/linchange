@@ -4,8 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -14,103 +12,24 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/linchange/linchange/internal/store"
+	"github.com/linchange/linchange/internal/testdb"
 	"github.com/linchange/linchange/migrations"
 )
 
-// testDatabaseURL is where the store tests expect a PostgreSQL instance.
-// Override it in the environment to point at a different instance, for example
-// a throwaway container on CI.
-const testDatabaseURLEnv = "LINCHANGE_TEST_DATABASE_URL"
-
-// defaultTestURL mirrors docker-compose.yml and the Makefile. Keeping one
-// source of truth per file is not possible in Go, so this must be updated
-// alongside any change to the development credentials.
-const defaultTestURL = "postgres://linchange:linchange@127.0.0.1:55432/linchange?sslmode=disable"
-
 // Each test gets its own database so that a test which leaves rows behind, or
-// a migration which is deliberately re-run, cannot affect any other.
+// a migration which is deliberately re-run, cannot affect any other. The
+// harness itself lives in internal/testdb, so the connection details these
+// tests rely on are written down once rather than copied per package.
 func testDB(t *testing.T) *sqlx.DB {
 	t.Helper()
-
-	base := os.Getenv(testDatabaseURLEnv)
-	if base == "" {
-		// Matches the credentials in docker-compose.yml and the Makefile, so
-		// that `make up` followed by `go test` exercises the database rather
-		// than quietly skipping. A mismatch here used to be invisible: the
-		// connection error was turned into a skip, and the package still
-		// reported "ok".
-		base = defaultTestURL
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	admin, err := store.Open(ctx, store.Options{
-		URL:             base,
-		MaxOpen:         2,
-		ConnectTimeout:  10 * time.Second,
-		ApplicationName: "linchange-test-admin",
-	})
-	if err != nil {
-		if os.Getenv(testDatabaseURLEnv) != "" {
-			// The operator pointed us at a database. If we cannot reach it,
-			// that is a failure, not a reason to skip.
-			t.Fatalf("%s is set to %q but is unreachable: %v",
-				testDatabaseURLEnv, base, err)
-		}
-		t.Skipf("no test database at %s (%v); run `make up` or set %s",
-			testDatabaseURLEnv, err, testDatabaseURLEnv)
-	}
-	// The admin connection is closed by the t.Cleanup below, not by a defer
-	// here. A defer would fire as testDB returned, before the cleanup ran,
-	// and the DROP DATABASE would then fail against a closed pool, quietly
-	// leaving a database behind on every single test run.
-
-	// Isolate this test in its own database.
-	name := fmt.Sprintf("lc_test_%d", time.Now().UnixNano()%1_000_000_000)
-	if _, err := admin.ExecContext(ctx, "CREATE DATABASE "+name); err != nil {
-		t.Fatalf("creating test database: %v", err)
-	}
-
-	dsn := replaceDatabase(base, name)
-	db, err := store.Open(ctx, store.Options{
-		URL:             dsn,
-		MaxOpen:         8,
-		MaxIdle:         4,
-		ConnectTimeout:  10 * time.Second,
-		ApplicationName: "linchange-test",
-	})
-	if err != nil {
-		t.Fatalf("opening test database: %v", err)
-	}
-
-	t.Cleanup(func() {
-		db.Close()
-		dropCtx, dropCancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer dropCancel()
-		if _, err := admin.ExecContext(dropCtx, "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)"); err != nil {
-			// A leftover test database is untidy but not a test failure.
-			t.Logf("cleanup: dropping %s: %v", name, err)
-		}
-		admin.Close()
-	})
-
-	return db
+	return testdb.New(t)
 }
 
-func replaceDatabase(dsn, name string) string {
-	// Deliberately simple: the test DSN is expected to be a plain
-	// postgres://host:port/db form, and anything richer is a local setup
-	// problem worth surfacing loudly.
-	i := strings.LastIndex(dsn, "/")
-	if i < 0 {
-		return dsn
-	}
-	rest := dsn[i+1:]
-	if q := strings.Index(rest, "?"); q >= 0 {
-		rest = rest[:q]
-	}
-	return dsn[:i+1] + name + dsn[i+1+len(rest):]
+// Tests that assert on schema behaviour use this rather than testDB, because
+// the rules they check live in the migrations, not in the connection layer.
+func testMigratedDB(t *testing.T) *sqlx.DB {
+	t.Helper()
+	return testdb.Migrated(t)
 }
 
 func TestOpenRequiresURL(t *testing.T) {
@@ -433,20 +352,6 @@ func mustMigrate(t *testing.T, db *sqlx.DB) {
 }
 
 // testMigratedDB returns a test database with the current schema applied.
-// Tests that assert on schema behaviour use this rather than testDB, because
-// the rules they check live in the migrations, not in the connection layer.
-func testMigratedDB(t *testing.T) *sqlx.DB {
-	t.Helper()
-
-	db := testDB(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	if err := store.Migrate(ctx, db, nil); err != nil {
-		t.Fatalf("applying migrations: %v", err)
-	}
-	return db
-}
 
 // A database that is ahead of the binary is the other half of the checksum
 // guard. The checksum loop only walks migrations this build carries, so a
