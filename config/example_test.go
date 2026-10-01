@@ -93,6 +93,7 @@ func TestDefaultsAreProductionSafe(t *testing.T) {
 		{"password reset is available", cfg.Auth.Reset.Enabled},
 		{"audit logging is on", cfg.Log.Audit},
 		{"impersonation requires a reason", cfg.Auth.Impersonation.RequireReason},
+		{"impersonation requires a grant", cfg.Auth.Impersonation.RequireGrant},
 		{"argon2 uses a strong memory cost", cfg.Auth.Local.Argon2.MemoryKib >= 65536},
 		{"unknown recipients rejected before delivery", cfg.Mail.Inbound.MaxRecipients > 0},
 	}

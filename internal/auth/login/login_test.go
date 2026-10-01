@@ -217,7 +217,9 @@ func stdDeps(t *testing.T) authDeps {
 	}
 }
 
-func newAuth(t *testing.T, db *sqlx.DB, d authDeps) *login.Authenticator {
+// optionsFor assembles the full option set so a test can either hand it to New
+// directly or adjust one field before the constructor sees it.
+func optionsFor(t *testing.T, d authDeps) login.Options {
 	t.Helper()
 	mgr, err := token.NewManager(config.JWTAuth{
 		Secret: strings.Repeat("unit-test-signing-key-01", 2),
@@ -226,12 +228,14 @@ func newAuth(t *testing.T, db *sqlx.DB, d authDeps) *login.Authenticator {
 	if err != nil {
 		t.Fatalf("building the token manager: %v", err)
 	}
-	auth, err := login.New(login.Options{
+	return login.Options{
 		Credentials:  store.NewCredentials(),
 		Enrolments:   store.NewTOTP(),
 		Attempts:     store.NewAuthAttempts(),
 		Challenges:   store.NewChallenges(),
 		Sessions:     store.NewSessions(),
+		Grants:       store.NewImpersonationGrants(),
+		Audit:        store.NewAuditLog(),
 		Tokens:       mgr,
 		TOTP:         d.totp,
 		Directory:    d.dir,
@@ -240,7 +244,12 @@ func newAuth(t *testing.T, db *sqlx.DB, d authDeps) *login.Authenticator {
 		Policy:       d.pol,
 		ChallengeTTL: d.ttl,
 		Now:          d.now,
-	})
+	}
+}
+
+func newAuth(t *testing.T, db *sqlx.DB, d authDeps) *login.Authenticator {
+	t.Helper()
+	auth, err := login.New(optionsFor(t, d))
 	if err != nil {
 		t.Fatalf("building the authenticator: %v", err)
 	}
@@ -692,5 +701,179 @@ func TestSuccessfulLoginRehashesAWeakHash(t *testing.T) {
 	}
 	if weak, _ := password.NeedsRehash(cred.Hash, strongArgon2()); weak {
 		t.Error("the stored hash is still weaker than configured after a successful login")
+	}
+}
+
+// Impersonation is the most sensitive action the system performs, so a
+// successful one leaves a row in the audit log. An impersonation with no record
+// would leave an operator unable to answer "who was reading this person's mail".
+func TestImpersonationIsAudited(t *testing.T) {
+	db := testMigratedDB(t)
+	seedFixture(t, db)
+	setPassword(t, db, "admin@example.com", "correct horse battery staple", testArgon2())
+	d := stdDeps(t)
+	d.pol = policy.Policy{Impersonation: policy.Impersonation{Allowed: true}}
+	auth := newAuth(t, db, d)
+
+	r := req("admin@example.com", "correct horse battery staple")
+	r.Impersonating = "alice@example.com"
+	r.ImpersonationReason = "supporting a migration"
+	if _, err := auth.Password(context.Background(), db, r); err != nil {
+		t.Fatalf("Password: %v", err)
+	}
+
+	entries, err := store.NewAuditLog().List(context.Background(), db,
+		store.AuditFilter{Action: login.ActionImpersonationStart})
+	if err != nil {
+		t.Fatalf("listing the audit log: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d impersonation.start entries, want exactly 1", len(entries))
+	}
+	e := entries[0]
+	if e.ActorAddress == nil || *e.ActorAddress != "admin@example.com" {
+		t.Errorf("actor = %v, want the admin", e.ActorAddress)
+	}
+	if e.TargetAddress == nil || *e.TargetAddress != "alice@example.com" {
+		t.Errorf("target = %v, want alice", e.TargetAddress)
+	}
+	if !strings.Contains(string(e.Detail), "supporting a migration") {
+		t.Errorf("detail = %s, want the reason to be recorded", e.Detail)
+	}
+}
+
+// A login that is not an impersonation must not produce a record, or the audit
+// log fills with noise that hides the real ones.
+func TestOrdinaryLoginIsNotAuditedAsImpersonation(t *testing.T) {
+	db := testMigratedDB(t)
+	seedFixture(t, db)
+	setPassword(t, db, "alice@example.com", "correct horse battery staple", testArgon2())
+	d := stdDeps(t)
+	d.pol = policy.Policy{Impersonation: policy.Impersonation{Allowed: true}}
+	auth := newAuth(t, db, d)
+
+	if _, err := auth.Password(context.Background(), db,
+		req("alice@example.com", "correct horse battery staple")); err != nil {
+		t.Fatalf("Password: %v", err)
+	}
+	n, err := store.NewAuditLog().CountFor(context.Background(), db, login.ActionImpersonationStart)
+	if err != nil {
+		t.Fatalf("counting: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("got %d impersonation.start entries from an ordinary login, want 0", n)
+	}
+}
+
+// With RequireGrant the configuration switch is not enough: the admin needs a
+// live row naming the target. Without this check the grant table the admin API
+// manages would be decorative.
+func TestImpersonationRequiresALiveGrantWhenConfigured(t *testing.T) {
+	db := testMigratedDB(t)
+	seedFixture(t, db)
+	setPassword(t, db, "admin@example.com", "correct horse battery staple", testArgon2())
+	d := stdDeps(t)
+	d.pol = policy.Policy{Impersonation: policy.Impersonation{Allowed: true, RequireGrant: true}}
+	auth := newAuth(t, db, d)
+
+	r := req("admin@example.com", "correct horse battery staple")
+	r.Impersonating = "alice@example.com"
+	if _, err := auth.Password(context.Background(), db, r); !errors.Is(err, login.ErrInvalidCredentials) {
+		t.Fatalf("impersonation without a grant = %v, want ErrInvalidCredentials", err)
+	}
+
+	grants := store.NewImpersonationGrants()
+	if err := grants.Grant(context.Background(), db,
+		"admin@example.com", "alice@example.com", "supporting a migration", nil); err != nil {
+		t.Fatalf("granting: %v", err)
+	}
+	got, err := auth.Password(context.Background(), db, r)
+	if err != nil {
+		t.Fatalf("impersonation with a grant: %v", err)
+	}
+	if got.Granted == nil || got.Granted.Session.Impersonating != "alice@example.com" {
+		t.Fatalf("want a granted impersonation session, got %+v", got.Granted)
+	}
+
+	// A revoked grant withdraws the ability, and it must take effect on the
+	// next sign-in rather than when the session expires.
+	if err := grants.Revoke(context.Background(), db,
+		"admin@example.com", "alice@example.com"); err != nil {
+		t.Fatalf("revoking: %v", err)
+	}
+	if _, err := auth.Password(context.Background(), db, r); !errors.Is(err, login.ErrInvalidCredentials) {
+		t.Errorf("impersonation after revocation = %v, want ErrInvalidCredentials", err)
+	}
+}
+
+// A grant names one user. It must not become a key to the whole domain.
+func TestAGrantDoesNotCoverAnotherTarget(t *testing.T) {
+	db := testMigratedDB(t)
+	seedFixture(t, db)
+	setPassword(t, db, "admin@example.com", "correct horse battery staple", testArgon2())
+	if err := store.NewImpersonationGrants().Grant(context.Background(), db,
+		"admin@example.com", "alice@example.com", "supporting a migration", nil); err != nil {
+		t.Fatalf("granting: %v", err)
+	}
+	d := stdDeps(t)
+	d.pol = policy.Policy{Impersonation: policy.Impersonation{Allowed: true, RequireGrant: true}}
+	auth := newAuth(t, db, d)
+
+	r := req("admin@example.com", "correct horse battery staple")
+	r.Impersonating = "bob@example.com"
+	if _, err := auth.Password(context.Background(), db, r); !errors.Is(err, login.ErrInvalidCredentials) {
+		t.Errorf("impersonating an ungranted user = %v, want ErrInvalidCredentials", err)
+	}
+}
+
+// A domain admin can never hold a mailbox, so naming yourself as the
+// impersonation target is a sign-in with an extra word typed. It has to succeed
+// as an ordinary sign-in rather than fail, and it must leave no audit entry:
+// the alternative is a UI that reliably breaks when an admin selects themselves.
+func TestAnAdminNeedNoGrantToActAsThemselves(t *testing.T) {
+	db := testMigratedDB(t)
+	seedFixture(t, db)
+	setPassword(t, db, "admin@example.com", "correct horse battery staple", testArgon2())
+	d := stdDeps(t)
+	d.pol = policy.Policy{Impersonation: policy.Impersonation{Allowed: true, RequireGrant: true}}
+	auth := newAuth(t, db, d)
+
+	// No grant row exists for the self pair, and none is needed. The name is
+	// spelled with different case on purpose: the comparison is
+	// case-insensitive, so a lookup keyed on the raw string would miss and lock
+	// the admin out of their own account.
+	r := req("admin@example.com", "correct horse battery staple")
+	r.Impersonating = "ADMIN@example.com"
+	got, err := auth.Password(context.Background(), db, r)
+	if err != nil {
+		t.Fatalf("a self-impersonation was refused: %v", err)
+	}
+	if got.Granted == nil {
+		t.Fatal("want a granted session")
+	}
+	if got.Granted.Session.Impersonating != "" {
+		t.Errorf("session impersonating = %q, want it cleared", got.Granted.Session.Impersonating)
+	}
+	if got.Granted.Session.Address != "admin@example.com" {
+		t.Errorf("session principal = %q, want the admin", got.Granted.Session.Address)
+	}
+	n, err := store.NewAuditLog().CountFor(context.Background(), db, login.ActionImpersonationStart)
+	if err != nil {
+		t.Fatalf("counting: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("a self-impersonation wrote %d audit entries, want 0", n)
+	}
+}
+
+// New must refuse a configuration that demands a grant without the repository
+// that holds one, rather than failing at the first impersonation.
+func TestNewRejectsRequireGrantWithoutTheRepository(t *testing.T) {
+	d := stdDeps(t)
+	d.pol = policy.Policy{Impersonation: policy.Impersonation{Allowed: true, RequireGrant: true}}
+	opts := optionsFor(t, d)
+	opts.Grants = nil
+	if _, err := login.New(opts); err == nil {
+		t.Error("New accepted RequireGrant with no grant repository")
 	}
 }

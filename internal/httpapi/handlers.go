@@ -6,8 +6,10 @@ import (
 	"time"
 
 	"github.com/linchange/linchange/internal/auth/login"
+	"github.com/linchange/linchange/internal/auth/policy"
 	"github.com/linchange/linchange/internal/auth/reset"
 	"github.com/linchange/linchange/internal/auth/token"
+	"github.com/linchange/linchange/internal/store"
 )
 
 // loginRequest is what the sign-in form posts.
@@ -167,6 +169,78 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		ExpiresIn:          secondsUntil(access.ExpiresAt),
 		MustChangePassword: principal.MustChangePassword,
 	})
+}
+
+// meResponse is what the client needs to render itself: who it is acting as,
+// and whether that is somebody else.
+//
+// The impersonation target is here rather than left for the client to dig out
+// of the access token. A JWT is a signed blob, not an API, and making the web
+// UI decode one to decide whether to draw the "acting as" banner means the
+// banner and the server can disagree about the same session.
+type meResponse struct {
+	Address        string `json:"address"`
+	DisplayName    string `json:"display_name,omitempty"`
+	Source         string `json:"source"`
+	Enabled        bool   `json:"enabled"`
+	MailboxEnabled bool   `json:"mailbox_enabled"`
+	// IsDomainAdmin lets the client decide whether to offer administration at
+	// all, without a failing request being the way it finds out.
+	IsDomainAdmin bool `json:"is_domain_admin"`
+	// Impersonating is the user a domain admin is acting as, or empty. It is
+	// read from the session row rather than the token because the session is
+	// the authority: revoking the session is what ends an impersonation.
+	Impersonating      string `json:"impersonating,omitempty"`
+	MustChangePassword bool   `json:"must_change_password"`
+}
+
+func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
+	principal := Principal(r.Context())
+	session, err := s.sessions.Load(r.Context(), s.db, SessionID(r.Context()))
+	if err != nil {
+		s.writeError(w, http.StatusUnauthorized, "this sign-in is no longer active")
+		return
+	}
+	out := meResponse{
+		Address:            principal.Address,
+		Source:             string(principal.Source),
+		Enabled:            principal.Enabled,
+		MailboxEnabled:     principal.MailboxEnabled,
+		IsDomainAdmin:      principal.Source == policy.SourceDomainAdmin,
+		Impersonating:      session.Impersonating,
+		MustChangePassword: principal.MustChangePassword,
+	}
+	// The display name is decoration, so a lookup that fails must not fail the
+	// request: the client can render an address on its own.
+	if u, err := store.NewUsers().Get(r.Context(), s.db, principal.Address); err == nil {
+		out.DisplayName = u.DisplayName
+	}
+	s.writeJSON(w, http.StatusOK, out)
+}
+
+// handleStopImpersonating ends an impersonating session.
+//
+// It revokes the session rather than issuing a new one, so the tokens the
+// client is holding stop working immediately instead of being quietly swapped
+// for a pair that acts as the admin. The client signs in again as itself,
+// which is the only outcome where the admin is certainly acting as themselves.
+func (s *Server) handleStopImpersonating(w http.ResponseWriter, r *http.Request) {
+	session, err := s.sessions.Load(r.Context(), s.db, SessionID(r.Context()))
+	if err != nil {
+		s.writeError(w, http.StatusUnauthorized, "this sign-in is no longer active")
+		return
+	}
+	if session.Impersonating == "" {
+		// Already acting as themselves. Saying so is more useful than a 204
+		// that leaves the client guessing whether it needed to sign in again.
+		s.writeError(w, http.StatusConflict, "this sign-in is not impersonating anybody")
+		return
+	}
+	if err := s.sessions.Revoke(r.Context(), s.db, session.ID); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "the session could not be ended")
+		return
+	}
+	s.writeJSON(w, http.StatusNoContent, nil)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

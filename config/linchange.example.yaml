@@ -135,6 +135,11 @@ auth:
     # Forces the domain admin to state a reason, which is written to the audit
     # log alongside the impersonated user.
     require_reason: true
+    # Requires an impersonation_grants row naming the user, so an admin can act
+    # as one named colleague rather than as anybody. The grant can be given an
+    # expiry and revoked without touching this file. With it off, allowed is a
+    # blanket power over every account.
+    require_grant: true
 
 ldap:
   providers: []

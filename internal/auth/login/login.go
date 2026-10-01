@@ -24,10 +24,12 @@ package login
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/linchange/linchange/config"
@@ -159,6 +161,8 @@ type Authenticator struct {
 	attempts    *store.AuthAttempts
 	challenges  *store.Challenges
 	sessions    *store.Sessions
+	grants      *store.ImpersonationGrants
+	audit       *store.AuditLog
 	tokens      *token.Manager
 	totp        *totp.Verifier
 	directory   Directory
@@ -183,7 +187,16 @@ type Options struct {
 	Attempts    *store.AuthAttempts
 	Challenges  *store.Challenges
 	Sessions    *store.Sessions
-	Tokens      *token.Manager
+	// Grants is the repository that holds a domain admin's standing
+	// permission to act as one named user. It may be nil, which is only
+	// correct when Policy.Impersonation.RequireGrant is off.
+	Grants *store.ImpersonationGrants
+	// Audit receives the impersonation.start record. It may be nil, in which
+	// case New substitutes a real one: an impersonation that is not recorded
+	// is the one outcome this feature must never produce, so there is no way
+	// to construct an Authenticator that will skip it.
+	Audit  *store.AuditLog
+	Tokens *token.Manager
 	// TOTP is nil when second factors are switched off, which also means an
 	// enrolled factor is not enforced.
 	TOTP *totp.Verifier
@@ -215,6 +228,17 @@ func New(opts Options) (*Authenticator, error) {
 		return nil, errors.New("login: token manager is required")
 	case opts.ChallengeTTL <= 0:
 		return nil, errors.New("login: a positive challenge lifetime is required")
+	case opts.Policy.Impersonation.RequireGrant && opts.Grants == nil:
+		return nil, errors.New("login: the impersonation grant repository is required when a grant is")
+	}
+
+	grants := opts.Grants
+	if grants == nil {
+		grants = store.NewImpersonationGrants()
+	}
+	audit := opts.Audit
+	if audit == nil {
+		audit = store.NewAuditLog()
 	}
 
 	directory := opts.Directory
@@ -642,11 +666,39 @@ func (a *Authenticator) grant(
 	// was allowed to set it.
 	principal.Authenticated = true
 
+	// Naming yourself is not impersonation, it is a sign-in with an extra word
+	// typed, and it is turned back into an ordinary sign-in here rather than
+	// refused. The session store would otherwise turn it into an error, because
+	// a domain admin can never hold a mailbox and impersonation needs a target
+	// that can, so a UI that sent the admin's own name would fail the sign-in
+	// for no reason a user could understand. Normalising once, here, means the
+	// session, both tokens and the audit entry all agree that nothing special
+	// happened.
+	if req.Impersonating != "" && strings.EqualFold(principal.Address, req.Impersonating) {
+		a.log.DebugContext(ctx, "impersonation target is the principal itself, continuing as a normal sign-in",
+			"address", principal.Address)
+		req.Impersonating = ""
+	}
+
 	if req.Impersonating != "" {
 		if err := a.policies.CanImpersonate(principal, req.Impersonating, req.ImpersonationReason); err != nil {
 			a.log.InfoContext(ctx, "impersonation refused",
 				"address", principal.Address, "target", req.Impersonating, "reason", err.Error())
 			return out, ErrInvalidCredentials
+		}
+		// CanImpersonate answers from configuration alone, so a deployment that
+		// requires a grant still needs it checked against a row. This runs
+		// before the session row exists, so a refusal leaves no session to undo.
+		if a.policies.Impersonation.RequireGrant {
+			active, err := a.grants.ActiveFor(ctx, q, principal.Address, req.Impersonating)
+			if err != nil {
+				return out, err
+			}
+			if !active {
+				a.log.InfoContext(ctx, "impersonation refused: no live grant",
+					"address", principal.Address, "target", req.Impersonating)
+				return out, ErrInvalidCredentials
+			}
 		}
 	}
 
@@ -675,6 +727,27 @@ func (a *Authenticator) grant(
 	refresh, err := a.tokens.IssueRefresh(principal, created.Session.ID, req.Impersonating)
 	if err != nil {
 		return out, err
+	}
+
+	// Acting as somebody else is the most sensitive thing this system does, and
+	// it is written here, in the transaction that created the session, so that a
+	// committed impersonation session always has its record and a rolled back
+	// one never leaves a misleading entry behind. A sign-in that named the
+	// principal itself was normalised away above and correctly writes nothing.
+	if req.Impersonating != "" {
+		target := req.Impersonating
+		actor := principal.Address
+		if _, err := a.audit.Record(ctx, q, store.AuditEntry{
+			ActorAddress:  &actor,
+			TargetAddress: &target,
+			Action:        ActionImpersonationStart,
+			TargetType:    "user",
+			TargetID:      target,
+			IP:            optionalIP(req.IP),
+			Detail:        impersonationDetail(req.ImpersonationReason),
+		}); err != nil {
+			return out, err
+		}
 	}
 
 	// The address scope is deliberately left alone. Clearing it here would let
@@ -768,4 +841,34 @@ func (a *Authenticator) recordFailureLogged(
 	}
 	a.log.InfoContext(ctx, "authentication failed",
 		"address", address, "source_address", ip.String(), "reason", reason)
+}
+
+// ActionImpersonationStart is the audit action recorded when a domain admin
+// begins acting as another user.
+//
+// The name lives here rather than beside the other administration actions
+// because this is the one that is written from inside a sign-in, and a constant
+// with two homes is a constant that will disagree with itself.
+const ActionImpersonationStart = "impersonation.start"
+
+// impersonationDetail is the audit payload for a start. The reason is
+// free text typed by an administrator, so it is recorded as JSON rather than
+// interpolated into a query.
+func impersonationDetail(reason string) json.RawMessage {
+	detail, err := json.Marshal(map[string]string{"reason": reason})
+	if err != nil {
+		// A map of one string cannot fail to marshal. Falling back keeps the
+		// session rather than losing an audit decision over an encoding.
+		return json.RawMessage(`{}`)
+	}
+	return detail
+}
+
+// optionalIP reports the address as nil when there is none, so the audit row
+// stores SQL NULL instead of a sentinel that is not an address.
+func optionalIP(ip netip.Addr) *netip.Addr {
+	if !ip.IsValid() {
+		return nil
+	}
+	return &ip
 }

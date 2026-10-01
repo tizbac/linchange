@@ -599,3 +599,72 @@ func seedLiveSession(t *testing.T, db *sqlx.DB, address string) string {
 	}
 	return created.Session.ID
 }
+
+// The store's user update takes Enabled and MailboxEnabled as plain bools and
+// writes whatever it is given. An update that did not mention them would
+// therefore switch the account off and take away its mailbox, so the service
+// carries them over. This is checked against the row, not the return value,
+// because the return value is built from the same read.
+func TestUpdateUserCannotDisableTheAccount(t *testing.T) {
+	svc, db := newService(t)
+	ctx := context.Background()
+	adm := seedDomainAndAdmin(t, svc)
+
+	if _, err := svc.CreateUser(ctx, adm, admin.CreateUserRequest{
+		Address: "bob@example.com", Source: policy.SourceLocal, Password: testPassword,
+	}); err != nil {
+		t.Fatalf("creating a user: %v", err)
+	}
+
+	if _, err := svc.UpdateUser(ctx, adm, "bob@example.com", admin.UpdateUserRequest{
+		DisplayName: "Robert", Timezone: "Europe/Rome", Language: "it",
+	}); err != nil {
+		t.Fatalf("updating a user: %v", err)
+	}
+
+	var flags struct {
+		Enabled        bool   `db:"enabled"`
+		MailboxEnabled bool   `db:"mailbox_enabled"`
+		DisplayName    string `db:"display_name"`
+	}
+	if err := db.GetContext(ctx, &flags,
+		`SELECT enabled, mailbox_enabled, display_name FROM users WHERE address = 'bob@example.com'`); err != nil {
+		t.Fatalf("reading the row: %v", err)
+	}
+	if !flags.Enabled {
+		t.Error("enabled = false after an update that did not mention it")
+	}
+	if !flags.MailboxEnabled {
+		t.Error("mailbox_enabled = false after an update that did not mention it")
+	}
+	if flags.DisplayName != "Robert" {
+		t.Errorf("display_name = %q, want the new value", flags.DisplayName)
+	}
+}
+
+// The same shape on a domain: the store writes the whole row, and an empty
+// status is not a valid enum value, so an update that omitted it would fail
+// outright.
+func TestUpdateDomainKeepsItsStatus(t *testing.T) {
+	svc, _ := newService(t)
+	ctx := context.Background()
+	adm := seedDomainAndAdmin(t, svc)
+
+	if err := svc.SetDomainStatus(ctx, adm, "example.com", store.DomainStatusSuspended); err != nil {
+		t.Fatalf("suspending the domain: %v", err)
+	}
+	domain, err := svc.UpdateDomain(ctx, adm, "example.com", store.UpdateDomainRequest{
+		Description:       "still suspended",
+		DefaultQuotaBytes: store.DefaultDomainQuotaBytes,
+		IsLocal:           true,
+	})
+	if err != nil {
+		t.Fatalf("updating the domain: %v", err)
+	}
+	if domain.Status != store.DomainStatusSuspended {
+		t.Errorf("status = %q, want the domain to still be suspended", domain.Status)
+	}
+	if domain.Description != "still suspended" {
+		t.Errorf("description = %q, want the new value", domain.Description)
+	}
+}

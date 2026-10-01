@@ -50,7 +50,13 @@ func (s *Service) UpdateDomain(ctx context.Context, actor policy.Principal, name
 		if err != nil {
 			return mapStore(err)
 		}
-		if err := s.domains.Update(ctx, q, name, req); err != nil {
+		// Status is preserved: the store writes the whole row, and an empty
+		// status is not a valid enum value, so a caller that did not intend to
+		// change it would otherwise get a constraint failure. SetDomainStatus
+		// is the one way to change it.
+		carry := req
+		carry.Status = before.Status
+		if err := s.domains.Update(ctx, q, name, carry); err != nil {
 			return mapStore(err)
 		}
 		updated, err = s.domains.Get(ctx, q, name)

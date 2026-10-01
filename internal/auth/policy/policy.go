@@ -358,6 +358,14 @@ type Impersonation struct {
 	Allowed bool
 	// RequireReason forces a written justification, which is audited.
 	RequireReason bool
+	// RequireGrant makes a live impersonation_grants row a precondition.
+	//
+	// The lookup itself is not done here, because a policy is configuration and
+	// a grant is a row; a pure function cannot consult the database without
+	// becoming something other than a policy. The switch is carried here so all
+	// three impersonation decisions are read in one place, and the caller that
+	// holds a Querier enforces it.
+	RequireGrant bool
 }
 
 // CanImpersonate reports whether admin may impersonate target.

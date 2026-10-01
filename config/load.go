@@ -276,6 +276,7 @@ func New() *Config {
 			Impersonation: Impersonation{
 				Allowed:       true,
 				RequireReason: true,
+				RequireGrant:  true,
 			},
 		},
 		LDAP: LDAP{

@@ -120,6 +120,13 @@ func (s *Service) CreateUser(ctx context.Context, actor policy.Principal, req Cr
 }
 
 // UpdateUserRequest replaces the mutable fields of a user.
+//
+// It deliberately does not carry Enabled or MailboxEnabled. The store's update
+// takes both as plain bools and writes whatever it is given, so a request that
+// simply omitted them would disable the account and take away its mailbox. The
+// service preserves them here instead, which makes an off-path caller that
+// forgets them harmless rather than destructive, and leaves SetUserEnabled as
+// the one way to switch an account off.
 type UpdateUserRequest struct {
 	DisplayName    string
 	QuotaBytes     *int64
@@ -140,7 +147,10 @@ func (s *Service) UpdateUser(ctx context.Context, actor policy.Principal, addres
 			return mapStore(err)
 		}
 		if err := s.users.Update(ctx, q, address, store.UpdateUserRequest{
-			DisplayName:    req.DisplayName,
+			DisplayName: req.DisplayName,
+			// Carried over from the row just read: see UpdateUserRequest.
+			Enabled:        before.Enabled,
+			MailboxEnabled: before.MailboxEnabled,
 			QuotaBytes:     req.QuotaBytes,
 			DailySendLimit: req.DailySendLimit,
 			Timezone:       req.Timezone,

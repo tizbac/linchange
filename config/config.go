@@ -217,6 +217,14 @@ type Impersonation struct {
 	// RequireReason forces the admin to type a justification, which is
 	// recorded in the audit log.
 	RequireReason bool `yaml:"require_reason"`
+	// RequireGrant makes a specific impersonation_grants row a precondition,
+	// so the admin can act as one named user rather than any of them.
+	//
+	// It is off by default because with it off, Allowed is a blanket power:
+	// any admin can act as any user. Turning it on narrows that to the pairs
+	// somebody deliberately created, and the grant can then be expired or
+	// revoked without touching the configuration.
+	RequireGrant bool `yaml:"require_grant"`
 }
 
 // LDAP holds directory integration.

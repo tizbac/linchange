@@ -61,7 +61,6 @@ const (
 
 	ActionImpersonationGrant  = "impersonation.grant"
 	ActionImpersonationRevoke = "impersonation.revoke"
-	ActionImpersonationStart  = "impersonation.start"
 )
 
 // ErrDenied is returned when the caller is not permitted to do what they

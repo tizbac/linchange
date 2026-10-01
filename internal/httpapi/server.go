@@ -24,6 +24,7 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/linchange/linchange/config"
+	"github.com/linchange/linchange/internal/admin"
 	"github.com/linchange/linchange/internal/auth/lockout"
 	"github.com/linchange/linchange/internal/auth/login"
 	"github.com/linchange/linchange/internal/auth/policy"
@@ -51,6 +52,7 @@ type Server struct {
 	log       *slog.Logger
 	auth      *login.Authenticator
 	reset     *reset.Resetter
+	admin     *admin.Service
 	tokens    *token.Manager
 	sessions  *store.Sessions
 	staticDir string
@@ -107,9 +109,16 @@ func New(opts Options) (*Server, error) {
 		Attempts:    store.NewAuthAttempts(),
 		Challenges:  store.NewChallenges(),
 		Sessions:    store.NewSessions(),
-		Tokens:      tokens,
-		TOTP:        verifier,
-		Argon2:      cfg.Auth.Local.Argon2,
+		// The two repositories below are what make impersonation more than a
+		// configuration switch: one holds the per-user permission and the
+		// other records that it was used. They are stateless, so sharing the
+		// instances the admin service already uses costs nothing and keeps a
+		// single view of the table.
+		Grants: store.NewImpersonationGrants(),
+		Audit:  store.NewAuditLog(),
+		Tokens: tokens,
+		TOTP:   verifier,
+		Argon2: cfg.Auth.Local.Argon2,
 		Lockout: lockout.Both{
 			Account: lockout.Policy{
 				MaxAttempts: cfg.Auth.Lockout.Account.MaxAttempts,
@@ -126,6 +135,7 @@ func New(opts Options) (*Server, error) {
 			Impersonation: policy.Impersonation{
 				Allowed:       cfg.Auth.Impersonation.Allowed,
 				RequireReason: cfg.Auth.Impersonation.RequireReason,
+				RequireGrant:  cfg.Auth.Impersonation.RequireGrant,
 			},
 		},
 		ChallengeTTL: cfg.Auth.Challenge.TTL,
@@ -153,11 +163,31 @@ func New(opts Options) (*Server, error) {
 		return nil, err
 	}
 
+	// The administration service is built here so the HTTP layer only ever
+	// calls methods on it. It holds the same policy object the login path uses,
+	// so an impersonation decision is the same decision wherever it is made.
+	adm, err := admin.New(admin.Options{
+		DB:                opts.DB,
+		Argon2:            cfg.Auth.Local.Argon2,
+		MinPasswordLength: cfg.Auth.Local.MinPasswordLength,
+		Policy: policy.Policy{
+			Impersonation: policy.Impersonation{
+				Allowed:       cfg.Auth.Impersonation.Allowed,
+				RequireReason: cfg.Auth.Impersonation.RequireReason,
+				RequireGrant:  cfg.Auth.Impersonation.RequireGrant,
+			},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	return &Server{
 		db:        opts.DB,
 		log:       log,
 		auth:      auth,
 		reset:     r,
+		admin:     adm,
 		tokens:    tokens,
 		sessions:  store.NewSessions(),
 		staticDir: opts.StaticDir,
@@ -187,7 +217,15 @@ func (s *Server) Handler() http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
 			r.Post("/auth/logout", s.handleLogout)
+			r.Get("/auth/me", s.handleMe)
+			r.Post("/auth/stop-impersonating", s.handleStopImpersonating)
 		})
+
+		// Every administrative route requires a bearer token, and then requires
+		// the caller to be a domain admin. The second check is the service's,
+		// not the router's: a route group that assumed "authenticated" meant
+		// "permitted" would be one refactor away from being wrong.
+		s.mountAdmin(r)
 	})
 
 	// With a web build present, the same server hosts the SPA: asset files are
@@ -322,9 +360,15 @@ func clientIP(r *http.Request) netip.Addr {
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, maxAuthBody)
 	defer r.Body.Close()
+	return strictJSON(r).Decode(v)
+}
+
+// strictJSON decodes a body, rejecting unknown fields so a typo'd request fails
+// loudly instead of being silently half-applied.
+func strictJSON(r *http.Request) *json.Decoder {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	return dec.Decode(v)
+	return dec
 }
 
 // writeJSON encodes v as the response body.

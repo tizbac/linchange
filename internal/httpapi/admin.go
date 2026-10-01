@@ -1,0 +1,899 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/linchange/linchange/internal/admin"
+	"github.com/linchange/linchange/internal/auth/policy"
+	"github.com/linchange/linchange/internal/store"
+)
+
+// This file is the HTTP edge of the administration API and nothing else. It
+// decodes a request, calls one method on admin.Service, and maps the result to
+// a status code. Every question of who may do what has already been answered
+// by the time a handler here runs, so there is deliberately no authorization
+// logic in this file to drift from the service's.
+
+// maxAdminBody bounds an administrative request. Account creation and the
+// mailbox settings are the largest, and nothing legitimate is anywhere near
+// this.
+const maxAdminBody = 64 * 1024
+
+// adminErrors maps a service error to a status. store's sentinels are compared
+// with errors.Is because a repository may wrap one on its way out.
+func adminErrors(w http.ResponseWriter, s *Server, err error) {
+	switch {
+	case err == nil:
+		return
+	case errors.Is(err, admin.ErrDenied):
+		s.writeError(w, http.StatusForbidden, "you are not permitted to do that")
+	case errors.Is(err, admin.ErrInvalid):
+		// The caller can fix this, and the message says what is wrong: an
+		// administrator mistyping an address should be told, not left guessing.
+		s.writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, store.ErrNotFound):
+		s.writeError(w, http.StatusNotFound, "no such thing")
+	case errors.Is(err, store.ErrConflict):
+		// A conflict is a rule refusing the write rather than a fault: the
+		// address is taken, or the change would contradict something.
+		s.writeError(w, http.StatusConflict, "that conflicts with something that already exists")
+	default:
+		s.log.Error("administrative request failed", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "the request could not be completed")
+	}
+}
+
+// decodeAdmin reads a request body under the administrative limit.
+func decodeAdmin(w http.ResponseWriter, r *http.Request, v any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxAdminBody)
+	defer r.Body.Close()
+	return strictJSON(r).Decode(v)
+}
+
+func (s *Server) mountAdmin(r chi.Router) {
+	r.Route("/admin", func(r chi.Router) {
+		r.Use(s.requireAuth)
+		mountAdminRoutes(r, s)
+	})
+}
+
+func mountAdminRoutes(r chi.Router, s *Server) {
+	r.Route("/domains", func(r chi.Router) {
+		r.Get("/", s.listDomains)
+		r.Post("/", s.createDomain)
+		r.Route("/{name}", func(r chi.Router) {
+			r.Get("/", s.getDomain)
+			r.Patch("/", s.updateDomain)
+			r.Put("/status", s.setDomainStatus)
+		})
+	})
+
+	r.Route("/users", func(r chi.Router) {
+		r.Get("/", s.listUsers)
+		r.Post("/", s.createUser)
+		r.Route("/{address}", func(r chi.Router) {
+			r.Get("/", s.getUser)
+			r.Patch("/", s.updateUser)
+			r.Delete("/", s.deleteUser)
+			r.Put("/enabled", s.setUserEnabled)
+			r.Put("/quota", s.setUserQuota)
+			r.Put("/password", s.resetUserPassword)
+		})
+	})
+
+	r.Route("/aliases", func(r chi.Router) {
+		r.Get("/", s.listAliases)
+		r.Post("/", s.createAlias)
+		r.Put("/{address}/enabled", s.setAliasEnabled)
+		r.Delete("/{address}", s.deleteAlias)
+	})
+
+	r.Route("/shared-mailboxes", func(r chi.Router) {
+		r.Get("/", s.listSharedMailboxes)
+		r.Post("/", s.declareSharedMailbox)
+		r.Route("/{address}", func(r chi.Router) {
+			r.Patch("/", s.updateSharedMailbox)
+			r.Delete("/", s.undeclareSharedMailbox)
+			r.Get("/members", s.listSharedMailboxMembers)
+			r.Put("/members/{member}", s.grantSharedMailboxAccess)
+			r.Delete("/members/{member}", s.revokeSharedMailboxAccess)
+		})
+	})
+
+	r.Route("/impersonation", func(r chi.Router) {
+		r.Get("/grants", s.listImpersonationGrants)
+		r.Post("/grants", s.grantImpersonation)
+		r.Delete("/grants/{actor}/{target}", s.revokeImpersonation)
+		r.Get("/who/{target}", s.whoCanImpersonate)
+	})
+
+	r.Get("/audit", s.listAudit)
+}
+
+// --- domains ---
+
+func (s *Server) listDomains(w http.ResponseWriter, r *http.Request) {
+	domains, err := s.admin.ListDomains(r.Context(), Principal(r.Context()))
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	out := make([]domainView, 0, len(domains))
+	for _, d := range domains {
+		out = append(out, viewDomain(d))
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"domains": out})
+}
+
+func (s *Server) createDomain(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name              string  `json:"name"`
+		IsLocal           bool    `json:"is_local"`
+		Description       string  `json:"description"`
+		DefaultQuotaBytes *int64  `json:"default_quota_bytes"`
+		DailySendLimit    *int    `json:"daily_send_limit"`
+		DKIMSelector      *string `json:"dkim_selector"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	domain, err := s.admin.CreateDomain(r.Context(), Principal(r.Context()), store.CreateDomainRequest{
+		Name:              in.Name,
+		IsLocal:           in.IsLocal,
+		Description:       in.Description,
+		DefaultQuotaBytes: in.DefaultQuotaBytes,
+		DailySendLimit:    in.DailySendLimit,
+		DKIMSelector:      in.DKIMSelector,
+	})
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusCreated, viewDomain(domain))
+}
+
+func (s *Server) getDomain(w http.ResponseWriter, r *http.Request) {
+	domain, err := s.admin.GetDomain(r.Context(), Principal(r.Context()), chi.URLParam(r, "name"))
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, viewDomain(domain))
+}
+
+func (s *Server) updateDomain(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Description       *string `json:"description"`
+		DefaultQuotaBytes *int64  `json:"default_quota_bytes"`
+		DailySendLimit    *int    `json:"daily_send_limit"`
+		DKIMSelector      *string `json:"dkim_selector"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	// A PATCH names only the fields being changed, so the current values are
+	// read first and anything the caller omitted is carried over. Without this
+	// an omitted quota would be written as zero and every mailbox in the domain
+	// would suddenly be unlimited.
+	name := chi.URLParam(r, "name")
+	current, err := s.admin.GetDomain(r.Context(), Principal(r.Context()), name)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+
+	domain, err := s.admin.UpdateDomain(r.Context(), Principal(r.Context()), name,
+		store.UpdateDomainRequest{
+			IsLocal:           current.IsLocal,
+			Description:       stringOr(in.Description, current.Description),
+			DefaultQuotaBytes: int64Or(in.DefaultQuotaBytes, current.DefaultQuotaBytes),
+			DailySendLimit:    in.DailySendLimit,
+			DKIMSelector:      in.DKIMSelector,
+		})
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, viewDomain(domain))
+}
+
+func (s *Server) setDomainStatus(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Status store.DomainStatus `json:"status"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if err := s.admin.SetDomainStatus(r.Context(), Principal(r.Context()),
+		chi.URLParam(r, "name"), in.Status); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- users ---
+
+func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := s.admin.ListUsers(r.Context(), Principal(r.Context()))
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	out := make([]userView, 0, len(users))
+	for _, u := range users {
+		out = append(out, viewUser(u))
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"users": out})
+}
+
+func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Address            string        `json:"address"`
+		Source             policy.Source `json:"source"`
+		DisplayName        string        `json:"display_name"`
+		Password           string        `json:"password"`
+		QuotaBytes         *int64        `json:"quota_bytes"`
+		MustChangePassword *bool         `json:"must_change_password"`
+		DailySendLimit     *int          `json:"daily_send_limit"`
+		Timezone           string        `json:"timezone"`
+		Language           string        `json:"language"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	user, err := s.admin.CreateUser(r.Context(), Principal(r.Context()), admin.CreateUserRequest{
+		Address:            in.Address,
+		Source:             in.Source,
+		DisplayName:        in.DisplayName,
+		Password:           in.Password,
+		QuotaBytes:         in.QuotaBytes,
+		MustChangePassword: in.MustChangePassword,
+		DailySendLimit:     in.DailySendLimit,
+		Timezone:           in.Timezone,
+		Language:           in.Language,
+	})
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	// The password is in the request and is not echoed back: a response body
+	// ends up in logs and browser history.
+	s.writeJSON(w, http.StatusCreated, viewUser(admin.UserView{User: user}))
+}
+
+func (s *Server) getUser(w http.ResponseWriter, r *http.Request) {
+	user, err := s.admin.GetUser(r.Context(), Principal(r.Context()), chi.URLParam(r, "address"))
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, viewUser(user))
+}
+
+func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		DisplayName    string `json:"display_name"`
+		QuotaBytes     *int64 `json:"quota_bytes"`
+		DailySendLimit *int   `json:"daily_send_limit"`
+		Timezone       string `json:"timezone"`
+		Language       string `json:"language"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	user, err := s.admin.UpdateUser(r.Context(), Principal(r.Context()), chi.URLParam(r, "address"),
+		admin.UpdateUserRequest{
+			DisplayName:    in.DisplayName,
+			QuotaBytes:     in.QuotaBytes,
+			DailySendLimit: in.DailySendLimit,
+			Timezone:       in.Timezone,
+			Language:       in.Language,
+		})
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, viewUser(admin.UserView{User: user}))
+}
+
+func (s *Server) setUserEnabled(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if err := s.admin.SetUserEnabled(r.Context(), Principal(r.Context()),
+		chi.URLParam(r, "address"), in.Enabled); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) setUserQuota(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		QuotaBytes *int64 `json:"quota_bytes"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if err := s.admin.SetUserQuota(r.Context(), Principal(r.Context()),
+		chi.URLParam(r, "address"), in.QuotaBytes); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) resetUserPassword(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Password string `json:"password"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if err := s.admin.ResetUserPassword(r.Context(), Principal(r.Context()),
+		chi.URLParam(r, "address"), in.Password); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
+	if err := s.admin.DeleteUser(r.Context(), Principal(r.Context()), chi.URLParam(r, "address")); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- aliases ---
+
+func (s *Server) listAliases(w http.ResponseWriter, r *http.Request) {
+	aliases, err := s.admin.ListAliases(r.Context(), Principal(r.Context()))
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	out := make([]aliasView, 0, len(aliases))
+	for _, a := range aliases {
+		out = append(out, viewAlias(a))
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"aliases": out})
+}
+
+func (s *Server) createAlias(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Address       string                `json:"address"`
+		TargetKind    store.AliasTargetKind `json:"target_kind"`
+		TargetAddress *string               `json:"target_address"`
+		WorkgroupID   *int64                `json:"workgroup_id"`
+		DisplayName   string                `json:"display_name"`
+		Description   string                `json:"description"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if err := s.admin.CreateAlias(r.Context(), Principal(r.Context()), store.CreateAliasRequest{
+		Address:       in.Address,
+		TargetKind:    in.TargetKind,
+		TargetAddress: in.TargetAddress,
+		WorkgroupID:   in.WorkgroupID,
+		DisplayName:   in.DisplayName,
+		Description:   in.Description,
+		UpdatedBy:     addrOrNil(Principal(r.Context()).Address),
+	}); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusCreated, map[string]string{"address": in.Address})
+}
+
+func (s *Server) setAliasEnabled(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if err := s.admin.SetAliasEnabled(r.Context(), Principal(r.Context()),
+		chi.URLParam(r, "address"), in.Enabled); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) deleteAlias(w http.ResponseWriter, r *http.Request) {
+	if err := s.admin.DeleteAlias(r.Context(), Principal(r.Context()), chi.URLParam(r, "address")); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- shared mailboxes ---
+
+func (s *Server) listSharedMailboxes(w http.ResponseWriter, r *http.Request) {
+	boxes, err := s.admin.ListSharedMailboxes(r.Context(), Principal(r.Context()))
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	out := make([]sharedMailboxView, 0, len(boxes))
+	for _, b := range boxes {
+		out = append(out, viewSharedMailbox(b))
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"shared_mailboxes": out})
+}
+
+func (s *Server) declareSharedMailbox(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Address     string  `json:"address"`
+		DisplayName string  `json:"display_name"`
+		Description string  `json:"description"`
+		Colour      *string `json:"colour"`
+		OpenAccess  bool    `json:"open_access"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	box, err := s.admin.DeclareSharedMailbox(r.Context(), Principal(r.Context()), store.CreateSharedMailboxRequest{
+		Address:     in.Address,
+		DisplayName: in.DisplayName,
+		Description: in.Description,
+		Colour:      in.Colour,
+		OpenAccess:  in.OpenAccess,
+		UpdatedBy:   addrOrNil(Principal(r.Context()).Address),
+	})
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusCreated, viewSharedMailbox(admin.SharedMailboxView{SharedMailbox: box}))
+}
+
+func (s *Server) updateSharedMailbox(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		DisplayName        string  `json:"display_name"`
+		Description        string  `json:"description"`
+		Colour             *string `json:"colour"`
+		OpenAccess         bool    `json:"open_access"`
+		AutoReplySubject   *string `json:"auto_reply_subject"`
+		AutoReplyBody      *string `json:"auto_reply_body"`
+		AutoReplyExpiresAt *string `json:"auto_reply_expires_at"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	expires, err := parseOptionalTime(in.AutoReplyExpiresAt)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "auto_reply_expires_at is not a timestamp")
+		return
+	}
+	box, err := s.admin.UpdateSharedMailbox(r.Context(), Principal(r.Context()), chi.URLParam(r, "address"),
+		store.UpdateSharedMailboxRequest{
+			DisplayName:        in.DisplayName,
+			Description:        in.Description,
+			Colour:             in.Colour,
+			OpenAccess:         in.OpenAccess,
+			AutoReplySubject:   in.AutoReplySubject,
+			AutoReplyBody:      in.AutoReplyBody,
+			AutoReplyExpiresAt: expires,
+			UpdatedBy:          addrOrNil(Principal(r.Context()).Address),
+		})
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, viewSharedMailbox(admin.SharedMailboxView{SharedMailbox: box}))
+}
+
+func (s *Server) undeclareSharedMailbox(w http.ResponseWriter, r *http.Request) {
+	if err := s.admin.UndeclareSharedMailbox(r.Context(), Principal(r.Context()),
+		chi.URLParam(r, "address")); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listSharedMailboxMembers(w http.ResponseWriter, r *http.Request) {
+	boxes, err := s.admin.ListSharedMailboxes(r.Context(), Principal(r.Context()))
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	address := chi.URLParam(r, "address")
+	for _, box := range boxes {
+		if box.Address == address {
+			s.writeJSON(w, http.StatusOK, map[string]any{"members": viewSharedMailbox(box).Members})
+			return
+		}
+	}
+	s.writeError(w, http.StatusNotFound, "no such shared mailbox")
+}
+
+func (s *Server) grantSharedMailboxAccess(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Level policy.GrantLevel `json:"level"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if err := s.admin.GrantSharedMailboxAccess(r.Context(), Principal(r.Context()),
+		chi.URLParam(r, "address"), chi.URLParam(r, "member"), in.Level); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) revokeSharedMailboxAccess(w http.ResponseWriter, r *http.Request) {
+	if err := s.admin.RevokeSharedMailboxAccess(r.Context(), Principal(r.Context()),
+		chi.URLParam(r, "address"), chi.URLParam(r, "member")); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- impersonation and audit ---
+
+func (s *Server) listImpersonationGrants(w http.ResponseWriter, r *http.Request) {
+	// The administrator whose grants are listed defaults to the caller, so the
+	// common case is a bare GET and a supervisor names the parameter.
+	actorAddr := r.URL.Query().Get("actor")
+	if actorAddr == "" {
+		actorAddr = Principal(r.Context()).Address
+	}
+	grants, err := s.admin.ListImpersonationGrants(r.Context(), Principal(r.Context()), actorAddr)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"grants": viewImpersonations(grants)})
+}
+
+func (s *Server) grantImpersonation(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Actor  string `json:"actor"`
+		Target string `json:"target"`
+		Reason string `json:"reason"`
+		// TTLSeconds is a number rather than a duration string so a client does
+		// not have to agree on a duration syntax. Zero means no expiry.
+		TTLSeconds int `json:"ttl_seconds"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	var ttl *time.Duration
+	if in.TTLSeconds > 0 {
+		d := time.Duration(in.TTLSeconds) * time.Second
+		ttl = &d
+	}
+	if err := s.admin.GrantImpersonation(r.Context(), Principal(r.Context()), admin.GrantImpersonationRequest{
+		Actor: in.Actor, Target: in.Target, Reason: in.Reason, TTL: ttl,
+	}); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) revokeImpersonation(w http.ResponseWriter, r *http.Request) {
+	if err := s.admin.RevokeImpersonation(r.Context(), Principal(r.Context()),
+		chi.URLParam(r, "actor"), chi.URLParam(r, "target")); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) whoCanImpersonate(w http.ResponseWriter, r *http.Request) {
+	who, err := s.admin.WhoCanImpersonate(r.Context(), Principal(r.Context()), chi.URLParam(r, "target"))
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"grants": viewImpersonations(who)})
+}
+
+func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	f := store.AuditFilter{
+		Actor:  q.Get("actor"),
+		Target: q.Get("target"),
+		Action: q.Get("action"),
+	}
+	if raw := q.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			s.writeError(w, http.StatusBadRequest, "limit is not a number")
+			return
+		}
+		f.Limit = n
+	}
+	if raw := q.Get("offset"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			s.writeError(w, http.StatusBadRequest, "offset is not a number")
+			return
+		}
+		f.Offset = n
+	}
+	// The window is read as a number of days back, which is the only shape an
+	// audit page needs and avoids agreeing on a date format here.
+	if raw := q.Get("since_days"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			s.writeError(w, http.StatusBadRequest, "since_days is not a number")
+			return
+		}
+		since := time.Now().AddDate(0, 0, -n)
+		f.Since = &since
+	}
+
+	entries, err := s.admin.ListAudit(r.Context(), Principal(r.Context()), f)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	out := make([]auditView, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, viewAudit(e))
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"entries": out})
+}
+
+// --- small helpers ---
+
+func stringOr(p *string, fallback string) string {
+	if p == nil {
+		return fallback
+	}
+	return *p
+}
+
+func int64Or(p *int64, fallback int64) int64 {
+	if p == nil {
+		return fallback
+	}
+	return *p
+}
+
+func addrOrNil(address string) *string {
+	if address == "" {
+		return nil
+	}
+	return &address
+}
+
+func parseOptionalTime(raw *string) (*time.Time, error) {
+	if raw == nil || strings.TrimSpace(*raw) == "" {
+		return nil, nil
+	}
+	t, err := time.Parse(time.RFC3339, *raw)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// The wire types below are the API's own. They are written out rather than
+// reusing the store's row structs, because a row struct is an implementation
+// detail of the schema: serialising one directly would publish Go field names,
+// and renaming a column would silently rename a field in the public API. These
+// are the contract, and they change when the API should.
+type domainView struct {
+	Name              string  `json:"name"`
+	Status            string  `json:"status"`
+	IsLocal           bool    `json:"is_local"`
+	Description       string  `json:"description"`
+	DefaultQuotaBytes int64   `json:"default_quota_bytes"`
+	DailySendLimit    *int    `json:"daily_send_limit,omitempty"`
+	DKIMSelector      *string `json:"dkim_selector,omitempty"`
+}
+
+func viewDomain(d store.Domain) domainView {
+	return domainView{
+		Name:              d.Name,
+		Status:            string(d.Status),
+		IsLocal:           d.IsLocal,
+		Description:       d.Description,
+		DefaultQuotaBytes: d.DefaultQuotaBytes,
+		DailySendLimit:    d.DailySendLimit,
+		DKIMSelector:      d.DKIMSelector,
+	}
+}
+
+type userView struct {
+	Address            string `json:"address"`
+	AddressLocal       string `json:"address_local"`
+	Source             string `json:"source"`
+	DisplayName        string `json:"display_name"`
+	Enabled            bool   `json:"enabled"`
+	MailboxEnabled     bool   `json:"mailbox_enabled"`
+	QuotaBytes         *int64 `json:"quota_bytes"`
+	DailySendLimit     *int   `json:"daily_send_limit"`
+	Timezone           string `json:"timezone"`
+	Language           string `json:"language"`
+	MustChangePassword bool   `json:"must_change_password"`
+	CreatedAt          string `json:"created_at"`
+	QuotaUsedBytes     int64  `json:"quota_used_bytes"`
+	QuotaMessageCount  int64  `json:"quota_message_count"`
+}
+
+func viewUser(u admin.UserView) userView {
+	return userView{
+		Address:            u.Address,
+		AddressLocal:       u.AddressLocal,
+		Source:             string(u.Source),
+		DisplayName:        u.DisplayName,
+		Enabled:            u.Enabled,
+		MailboxEnabled:     u.MailboxEnabled,
+		QuotaBytes:         u.QuotaBytes,
+		DailySendLimit:     u.DailySendLimit,
+		Timezone:           u.Timezone,
+		Language:           u.Language,
+		MustChangePassword: u.MustChangePassword,
+		CreatedAt:          u.CreatedAt.UTC().Format(time.RFC3339),
+		QuotaUsedBytes:     u.QuotaUsedBytes,
+		QuotaMessageCount:  u.QuotaMessageCount,
+	}
+}
+
+type aliasView struct {
+	Address       string  `json:"address"`
+	TargetKind    string  `json:"target_kind"`
+	TargetAddress *string `json:"target_address"`
+	WorkgroupID   *int64  `json:"workgroup_id"`
+	DisplayName   string  `json:"display_name"`
+	Description   string  `json:"description"`
+	Enabled       bool    `json:"enabled"`
+}
+
+func viewAlias(a store.Alias) aliasView {
+	return aliasView{
+		Address:       a.Address,
+		TargetKind:    string(a.TargetKind),
+		TargetAddress: a.TargetAddress,
+		WorkgroupID:   a.WorkgroupID,
+		DisplayName:   a.DisplayName,
+		Description:   a.Description,
+		Enabled:       a.Enabled,
+	}
+}
+
+type sharedMailboxView struct {
+	Address            string      `json:"address"`
+	DisplayName        string      `json:"display_name"`
+	Description        string      `json:"description"`
+	Colour             *string     `json:"colour"`
+	OpenAccess         bool        `json:"open_access"`
+	AutoReplySubject   *string     `json:"auto_reply_subject"`
+	AutoReplyBody      *string     `json:"auto_reply_body"`
+	AutoReplyExpiresAt *string     `json:"auto_reply_expires_at"`
+	Members            []grantView `json:"members"`
+}
+
+func viewGrant(g store.SharedMailboxGrant) grantView {
+	return grantView{
+		SharedAddress: g.SharedAddress,
+		MemberAddress: g.MemberAddress,
+		Level:         string(g.Level),
+	}
+}
+
+type grantView struct {
+	SharedAddress string `json:"shared_address"`
+	MemberAddress string `json:"member_address"`
+	Level         string `json:"level"`
+}
+
+func viewSharedMailbox(s admin.SharedMailboxView) sharedMailboxView {
+	out := sharedMailboxView{
+		Address:          s.Address,
+		DisplayName:      s.DisplayName,
+		Description:      s.Description,
+		Colour:           s.Colour,
+		OpenAccess:       s.OpenAccess,
+		AutoReplySubject: s.AutoReplySubject,
+		AutoReplyBody:    s.AutoReplyBody,
+		Members:          make([]grantView, 0, len(s.Members)),
+	}
+	if s.AutoReplyExpiresAt != nil {
+		formatted := s.AutoReplyExpiresAt.UTC().Format(time.RFC3339)
+		out.AutoReplyExpiresAt = &formatted
+	}
+	for _, m := range s.Members {
+		out.Members = append(out.Members, viewGrant(m))
+	}
+	return out
+}
+
+type impersonationView struct {
+	ActorAddress  string  `json:"actor_address"`
+	TargetAddress string  `json:"target_address"`
+	Reason        string  `json:"reason"`
+	Active        bool    `json:"active"`
+	ExpiresAt     *string `json:"expires_at"`
+	CreatedAt     string  `json:"created_at"`
+}
+
+func viewImpersonation(g admin.ImpersonationView) impersonationView {
+	out := impersonationView{
+		ActorAddress:  g.ActorAddress,
+		TargetAddress: g.TargetAddress,
+		Reason:        g.Reason,
+		Active:        g.Active,
+		CreatedAt:     g.CreatedAt.UTC().Format(time.RFC3339),
+	}
+	if g.ExpiresAt != nil {
+		formatted := g.ExpiresAt.UTC().Format(time.RFC3339)
+		out.ExpiresAt = &formatted
+	}
+	return out
+}
+
+type auditView struct {
+	ID            int64           `json:"id"`
+	ActorAddress  *string         `json:"actor_address"`
+	TargetAddress *string         `json:"target_address"`
+	Action        string          `json:"action"`
+	TargetType    string          `json:"target_type"`
+	TargetID      string          `json:"target_id"`
+	IP            *string         `json:"ip"`
+	Detail        json.RawMessage `json:"detail"`
+	CreatedAt     string          `json:"created_at"`
+}
+
+func viewAudit(e store.AuditEntry) auditView {
+	out := auditView{
+		ID:            e.ID,
+		ActorAddress:  e.ActorAddress,
+		TargetAddress: e.TargetAddress,
+		Action:        e.Action,
+		TargetType:    e.TargetType,
+		TargetID:      e.TargetID,
+		Detail:        e.Detail,
+		CreatedAt:     e.CreatedAt.UTC().Format(time.RFC3339),
+	}
+	if e.IP != nil {
+		ip := e.IP.String()
+		out.IP = &ip
+	}
+	return out
+}
+
+func viewImpersonations(gs []admin.ImpersonationView) []impersonationView {
+	out := make([]impersonationView, 0, len(gs))
+	for _, g := range gs {
+		out = append(out, viewImpersonation(g))
+	}
+	return out
+}
