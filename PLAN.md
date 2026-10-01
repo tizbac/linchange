@@ -6,9 +6,11 @@ Tailwind webmail — a real mail client (inbox, compose, folders, search), not j
 an admin console — plus a calendar UI and an admin section, and Exchange
 compatibility (Autodiscover, EWS, ActiveSync).
 
-MAPI/HTTP (the protocol Outlook for Windows speaks natively) is explicitly out
-of scope — no Go implementation exists (gromox is ~200k lines of C++). See
-"Exchange scope" below.
+MAPI/HTTP (the protocol Outlook for Windows speaks natively) is in scope as the
+final phase (P11) and is implemented in Go. No mature Go library exists for it,
+so it is hand-written against the [MS-OXCMAPIHTTP] Open Specification, using
+gromox (grommunio/gromox, C++) as the reference server. See "MAPI/HTTP (P11)"
+below.
 
 ---
 
@@ -17,7 +19,7 @@ of scope — no Go implementation exists (gromox is ~200k lines of C++). See
 | Question | Decision |
 | --- | --- |
 | Inbound SMTP | The Go server also listens on `:25` and acts as a full inbound MTA. Submission (`:587`/`:465`) remains authenticated-only. |
-| Exchange scope | Autodiscover + EWS + ActiveSync. No MAPI/HTTP. |
+| Exchange scope | Autodiscover + EWS + ActiveSync (P10), then MAPI/HTTP (P11, last). |
 | Message storage | Content-addressed blob store on disk (SHA-256) + all metadata in PostgreSQL. |
 | AD user with off-domain address | Login allowed **only** for members of the configured AD `domain_admins_group_dn`, and only as a `domain_admin` (no email functionality). Everyone else in that situation is refused. |
 | Configuration | A single YAML file passed as a CLI parameter (`--config`). Required. |
@@ -123,7 +125,9 @@ Versions confirmed live against `proxy.golang.org` / `registry.npmjs.org`.
 
 - **POP3 server.** No mature Go implementation. RFC 1939 is small; the full
   command set plus `STLS` and `UIDL` is ~400 lines.
-- **MAPI/HTTP.** Out of scope by decision.
+- **MAPI/HTTP.** No Go implementation exists; hand-written as the last phase
+  (P11) against [MS-OXCMAPIHTTP], with gromox as the reference. See
+  "MAPI/HTTP (P11)" below.
 - **IMAP `QUOTA` extension.** Not present in `go-imap/v2`'s `imapserver`.
   Quotas are enforced server-side at delivery and APPEND and surfaced in the
   admin panel and webmail. Advertising `QUOTA` to IMAP clients requires a small
@@ -150,6 +154,7 @@ internal/
   delivery/                  persistent Postgres outbox, workers, backoff, DSN bounces
   inbound/                   SPF/DKIM/DMARC evaluation, greylisting, spam scoring
   httpapi/                   chi router: rest/ | ews/ | eas/ | autodiscover/
+  mapihttp/                  P11: MAPI/HTTP (Outlook-native), hand-written vs [MS-OXCMAPIHTTP]
   admin/                     domain-admin service layer, impersonation, audit
   ldapsync/                  periodic AD reconcile
  web/                         Angular 22 + Tailwind 4 mail client (webmail + calendar + admin)
@@ -218,6 +223,28 @@ there is exactly one definition of what a principal may do.
   (`shared_mailbox_grants`), not the `#` suffix, which is an IMAP/POP3/login
   convention only.
 
+### MAPI/HTTP (P11)
+
+The last phase. MAPI/HTTP is what Outlook for Windows speaks natively — the
+protocol real users will actually hit — so it is worth the cost even though it
+is the largest single piece of work.
+
+- **Specification.** [MS-OXCMAPIHTTP] (Microsoft Open Specification) is the
+  normative definition of the wire protocol; [MS-OXCFRMS] covers the
+  Client-Driven Search subset. Both live on learn.microsoft.com.
+- **Reference implementation.** gromox (`github.com/grommunio/gromox`) is a C++
+  groupware server that implements MAPI/HTTP (plus RPC/HTTP, EWS, IMAP, POP3).
+  It is the working reference for message framing, property/bulk marshalling,
+  and the request/response lifecycle. Its developer docs
+  (`docs.grommunio.com/dev/gromox/`) collect MS-OXO notes and a MAPI property
+  reference.
+- **Approach.** Hand-written in Go — no Go MAPI/HTTP server library exists.
+  Build the MAPI property + bulk-marshalling layer first, then the HTTP
+  transport (the MAPI/HTTP request verbs and framing), mapping every request
+  onto the same `store` and `policy` the other protocols use so authorisation
+  stays in one place. Reuse the blob store for message bodies. Cross-check
+  behaviour against gromox while developing.
+
 ## Phases
 
 Status is updated as each phase lands, so this file stays the record of what
@@ -236,6 +263,7 @@ exists rather than a wish list.
 | P8 | LDAP/AD provider; sync; off-domain → admin-only rule | LDAP fixture | pending |
 | P9 | calendars: personal + workgroup; recurrence; iMIP REQUEST/REPLY/CANCEL; free/busy; FullCalendar UI | ICS round-trip and expansion tests | pending |
 | P10 | Autodiscover; EWS; ActiveSync | interop traces | pending |
+| P11 | MAPI/HTTP (Outlook-native), hand-written in Go | Outlook client connects; cross-checked against gromox | pending (last) |
 
 ### P0 notes
 
