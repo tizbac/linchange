@@ -1,0 +1,276 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/linchange/linchange/internal/auth/policy"
+)
+
+// User is an admin's view of a principal row: enough of it to render a list,
+// edit a settings page, and reason about whether the account may hold mail.
+type User struct {
+	Address     string        `db:"address"`
+	Source      policy.Source `db:"source"`
+	DisplayName string        `db:"display_name"`
+	Enabled     bool          `db:"enabled"`
+	// MailboxEnabled is false for a domain admin; the database enforces that
+	// pairing, this field carries it.
+	MailboxEnabled bool `db:"mailbox_enabled"`
+	// QuotaBytes is nil when the user inherits the domain (and then global)
+	// default. Zero, when explicit, means unlimited.
+	QuotaBytes         *int64 `db:"quota_bytes"`
+	DailySendLimit     *int   `db:"daily_send_limit"`
+	Timezone           string `db:"timezone"`
+	Language           string `db:"language"`
+	MustChangePassword bool   `db:"must_change_password"`
+	// AddressLocal is the lowercased local part, the part before the "@". It is
+	// what the "#sharedmailbox" login convention splits on.
+	AddressLocal string     `db:"address_local"`
+	LastLoginAt  *time.Time `db:"last_login_at"`
+	CreatedAt    time.Time  `db:"created_at"`
+	UpdatedAt    time.Time  `db:"updated_at"`
+}
+
+// CreateUserRequest provisions a principal. Source is fixed at creation: it is
+// what decides where a password lives, and changing it later would strand the
+// credential. A nil Enabled/MailboxEnabled falls back to the sensible default;
+// a domain admin always comes out with MailboxEnabled false, whether asked or
+// not, because that pairing is a rule and not a preference.
+type CreateUserRequest struct {
+	Address            string
+	Source             policy.Source
+	DisplayName        string
+	Enabled            *bool
+	MailboxEnabled     *bool
+	QuotaBytes         *int64
+	DailySendLimit     *int
+	Timezone           string
+	Language           string
+	MustChangePassword bool
+}
+
+// UpdateUserRequest replaces the mutable fields of a user. The caller supplies
+// the whole row, as a settings page already has it.
+type UpdateUserRequest struct {
+	DisplayName        string
+	Enabled            bool
+	MailboxEnabled     bool
+	QuotaBytes         *int64
+	DailySendLimit     *int
+	Timezone           string
+	Language           string
+	MustChangePassword bool
+}
+
+// Users reads and writes the users table for administration. It is deliberately
+// separate from LoadPrincipal: that answers "may this identity act", while these
+// answer "what is the administrator changing".
+type Users struct{}
+
+// NewUsers returns the repository. It is stateless, so this is free.
+func NewUsers() *Users { return &Users{} }
+
+// addressLocal splits an address into its lowercased local part. An address
+// without a domain (which should not happen, but must not panic) is returned
+// whole.
+func addressLocal(address string) string {
+	if i := strings.IndexByte(address, '@'); i >= 0 {
+		address = address[:i]
+	}
+	return strings.ToLower(address)
+}
+
+func (u *Users) Create(ctx context.Context, q Querier, req CreateUserRequest) error {
+	if req.Address == "" {
+		return errors.New("store: user address is empty")
+	}
+	source := req.Source
+	if !source.Valid() {
+		return fmt.Errorf("store: unknown user source %q", source)
+	}
+
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	mailbox := source != policy.SourceDomainAdmin
+	if req.MailboxEnabled != nil {
+		mailbox = *req.MailboxEnabled
+	}
+	if source == policy.SourceDomainAdmin {
+		// A domain admin administers mail and never receives it. This is
+		// enforced by a CHECK constraint too, but refusing it here means the
+		// caller gets a clean answer instead of a check violation.
+		mailbox = false
+	}
+	tz := req.Timezone
+	if tz == "" {
+		tz = "UTC"
+	}
+	lang := req.Language
+	if lang == "" {
+		lang = "en"
+	}
+
+	const query = `
+		INSERT INTO users (address, source, display_name, enabled, mailbox_enabled,
+		                   quota_bytes, daily_send_limit, timezone, language,
+		                   must_change_password, address_local)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+	if _, err := q.ExecContext(ctx, query,
+		req.Address, source, req.DisplayName, enabled, mailbox,
+		req.QuotaBytes, req.DailySendLimit, tz, lang,
+		req.MustChangePassword, addressLocal(req.Address)); err != nil {
+		if IsConflict(err) {
+			return ErrConflict
+		}
+		return fmt.Errorf("store: creating user: %w", err)
+	}
+	return nil
+}
+
+const userSelect = `
+	SELECT address, source, display_name, enabled, mailbox_enabled,
+	       quota_bytes, daily_send_limit, timezone, language,
+	       must_change_password, address_local, last_login_at,
+	       created_at, updated_at
+	FROM users`
+
+// Get returns a user by address, or ErrNotFound. A disabled account is still
+// returned: an administrator needs to see it in order to re-enable it. A
+// deleted one is not; like List, Get treats a soft-deleted principal as gone,
+// which is what keeps the admin view honest.
+func (u *Users) Get(ctx context.Context, q Querier, address string) (User, error) {
+	var row User
+	if err := q.GetContext(ctx, &row, userSelect+` WHERE address = $1 AND deleted_at IS NULL`, address); err != nil {
+		if IsNotFound(err) {
+			return User{}, ErrNotFound
+		}
+		return User{}, err
+	}
+	return row, nil
+}
+
+// List returns every non-deleted user, ordered by address.
+func (u *Users) List(ctx context.Context, q Querier) ([]User, error) {
+	rows, err := q.QueryxContext(ctx, userSelect+` WHERE deleted_at IS NULL ORDER BY address`)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing users: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]User, 0, 32)
+	for rows.Next() {
+		var row User
+		if err := rows.StructScan(&row); err != nil {
+			return nil, fmt.Errorf("store: scanning user: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterating users: %w", err)
+	}
+	return out, nil
+}
+
+// Update replaces the mutable fields of a user.
+func (u *Users) Update(ctx context.Context, q Querier, address string, req UpdateUserRequest) error {
+	mailbox := req.MailboxEnabled
+	if source, err := sourceOf(ctx, q, address); err == nil && source == policy.SourceDomainAdmin {
+		mailbox = false
+	}
+	tz := req.Timezone
+	if tz == "" {
+		tz = "UTC"
+	}
+	lang := req.Language
+	if lang == "" {
+		lang = "en"
+	}
+
+	const query = `
+		UPDATE users SET
+			display_name = $2, enabled = $3, mailbox_enabled = $4,
+			quota_bytes = $5, daily_send_limit = $6, timezone = $7,
+			language = $8, must_change_password = $9, updated_at = now()
+		WHERE address = $1 AND deleted_at IS NULL`
+	res, err := q.ExecContext(ctx, query,
+		address, req.DisplayName, req.Enabled, mailbox,
+		req.QuotaBytes, req.DailySendLimit, tz, lang, req.MustChangePassword)
+	if err != nil {
+		return fmt.Errorf("store: updating user: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetEnabled enables or disables a principal. A disabled account
+// authenticates nowhere and receives nothing, but the row and its mail remain.
+func (u *Users) SetEnabled(ctx context.Context, q Querier, address string, enabled bool) error {
+	res, err := q.ExecContext(ctx,
+		`UPDATE users SET enabled = $2, updated_at = now()
+		 WHERE address = $1 AND deleted_at IS NULL`,
+		address, enabled)
+	if err != nil {
+		return fmt.Errorf("store: setting user enabled: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetQuota sets an explicit quota for a user. A nil quota clears the override
+// so the user inherits from the domain; the domain and then the global default
+// supply the value.
+func (u *Users) SetQuota(ctx context.Context, q Querier, address string, quota *int64) error {
+	res, err := q.ExecContext(ctx,
+		`UPDATE users SET quota_bytes = $2, updated_at = now()
+		 WHERE address = $1 AND deleted_at IS NULL`,
+		address, quota)
+	if err != nil {
+		return fmt.Errorf("store: setting user quota: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// Delete removes a principal by soft-deleting it. The row, its mail and its
+// folders all remain: a hard delete would cascade through mailboxes to the
+// messages they hold, which is not what "remove this account" means. Nothing
+// may authenticate as the address while it is deleted, because the login and
+// list paths all exclude deleted_at IS NULL.
+func (u *Users) Delete(ctx context.Context, q Querier, address string) error {
+	res, err := q.ExecContext(ctx,
+		`UPDATE users SET deleted_at = now(), updated_at = now()
+		 WHERE address = $1 AND deleted_at IS NULL`,
+		address)
+	if err != nil {
+		return fmt.Errorf("store: deleting user: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// sourceOf reads only the source of a user, for the domain-admin rule in
+// Update. It is a small helper rather than a Get so an update does not pay for
+// the whole row it is about to overwrite.
+func sourceOf(ctx context.Context, q Querier, address string) (policy.Source, error) {
+	var s policy.Source
+	err := q.GetContext(ctx, &s,
+		`SELECT source FROM users WHERE address = $1 AND deleted_at IS NULL`, address)
+	if err != nil {
+		return "", err
+	}
+	return s, nil
+}
