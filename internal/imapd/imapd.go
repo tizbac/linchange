@@ -722,10 +722,10 @@ func (s *session) Append(mailbox string, r imap.LiteralReader, options *imap.App
 	}
 
 	// Parse the message to extract headers and flags.
-	fromAddr, fromName, subject, internalDate, flags := parseMessageHeaders(data)
+	fromAddr, fromName, subject, internalDate, flags, snippet := parseMessageHeaders(data)
 
 	// Insert the message.
-	result, err := s.backend.messageStore.Insert(ctx, s.backend.db, mb.ID, digest[:], size, internalDate, flags, fromAddr, fromName, subject)
+	result, err := s.backend.messageStore.Insert(ctx, s.backend.db, mb.ID, digest[:], size, internalDate, flags, fromAddr, fromName, subject, snippet)
 	if err != nil {
 		return nil, fmt.Errorf("imap: insert message: %w", err)
 	}
@@ -1048,7 +1048,7 @@ func (s *session) Copy(numSet imap.NumSet, dest string) (*imap.CopyData, error) 
 			continue
 		}
 
-		result, err := s.backend.messageStore.Insert(ctx, s.backend.db, destMB.ID, digest[:], msg.Size, msg.InternalDate, msg.Flags, msg.FromAddress, msg.FromName, msg.Subject)
+		result, err := s.backend.messageStore.Insert(ctx, s.backend.db, destMB.ID, digest[:], msg.Size, msg.InternalDate, msg.Flags, msg.FromAddress, msg.FromName, msg.Subject, msg.Snippet)
 		if err != nil {
 			continue
 		}
@@ -1100,7 +1100,7 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imap.NumSet, dest string
 			continue
 		}
 
-		result, err := s.backend.messageStore.Insert(ctx, s.backend.db, destMB.ID, digest[:], msg.Size, msg.InternalDate, msg.Flags, msg.FromAddress, msg.FromName, msg.Subject)
+		result, err := s.backend.messageStore.Insert(ctx, s.backend.db, destMB.ID, digest[:], msg.Size, msg.InternalDate, msg.Flags, msg.FromAddress, msg.FromName, msg.Subject, msg.Snippet)
 		if err != nil {
 			continue
 		}
@@ -1193,12 +1193,13 @@ type messageHeaders struct {
 	flags        []string
 }
 
-func parseMessageHeaders(data []byte) (string, string, string, time.Time, []string) {
+func parseMessageHeaders(data []byte) (string, string, string, time.Time, []string, string) {
 	// Parse headers using textproto.
 	reader := textproto.NewReader(bufio.NewReader(strings.NewReader(string(data))))
 
 	// Skip empty lines at start.
 	headers := make(textproto.MIMEHeader)
+	var headerLines []string
 	for {
 		line, err := reader.ReadLine()
 		if err != nil {
@@ -1207,6 +1208,7 @@ func parseMessageHeaders(data []byte) (string, string, string, time.Time, []stri
 		if line == "" {
 			break // end of headers
 		}
+		headerLines = append(headerLines, line)
 		// Parse header line.
 		if parts := strings.SplitN(line, ":", 2); len(parts) == 2 {
 			name := strings.TrimSpace(parts[0])
@@ -1244,7 +1246,16 @@ func parseMessageHeaders(data []byte) (string, string, string, time.Time, []stri
 		}
 	}
 
-	return fromAddr, fromName, subject, internalDate, flags
+	// Generate snippet from first few lines of headers.
+	snippet := ""
+	if len(headerLines) > 0 {
+		snippet = strings.Join(headerLines[:min(5, len(headerLines))], " ")
+		if len(snippet) > 200 {
+			snippet = snippet[:200]
+		}
+	}
+
+	return fromAddr, fromName, subject, internalDate, flags, snippet
 }
 
 func parseAddress(header string) (name, addr string) {

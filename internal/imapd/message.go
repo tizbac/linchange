@@ -23,6 +23,7 @@ type Message struct {
 	Subject      string    `db:"subject"`
 	FromAddress  string    `db:"from_address"`
 	FromName     string    `db:"from_name"`
+	Snippet      string    `db:"snippet"`
 	ThreadKey    string    `db:"thread_key"`
 	MessageID    string    `db:"message_id"`
 }
@@ -44,20 +45,22 @@ func NewMessageRepo() *MessageRepo {
 // Insert adds a message to a mailbox.
 func (r *MessageRepo) Insert(ctx context.Context, db *sqlx.DB, mailboxID int64,
 	blobSHA256 []byte, size int64, internalDate time.Time,
-	flags []string, fromAddr, fromName, subject string,
+	flags []string, fromAddr, fromName, subject, snippet string,
 ) (MessageResult, error) {
 
 	const insertQuery = `
 		INSERT INTO messages (mailbox_id, uid, blob_sha256, size, internal_date,
-		                      flags, subject, from_address, from_name, thread_key, message_id)
+		                      flags, subject, from_address, from_name, snippet,
+		                      thread_key, message_id)
 		VALUES ($1, (SELECT uidnext FROM mailboxes WHERE id = $2),
-		        $3, $4, $5, $6, $7, $8, $9, gen_random_uuid()::text, gen_random_uuid()::text)
+		        $3, $4, $5, $6, $7, $8, $9, $10,
+		        gen_random_uuid()::text, gen_random_uuid()::text)
 		RETURNING id, uid`
 
 	var result MessageResult
 	if err := db.GetContext(ctx, &result, insertQuery,
 		mailboxID, mailboxID, blobSHA256, size, internalDate, flags,
-		subject, fromAddr, fromName); err != nil {
+		subject, fromAddr, fromName, snippet); err != nil {
 		return MessageResult{}, fmt.Errorf("store: insert message: %w", err)
 	}
 
@@ -186,11 +189,9 @@ func (r *MessageRepo) SearchUID(ctx context.Context, db *sqlx.DB,
 func (r *MessageRepo) searchUID(ctx context.Context, db *sqlx.DB,
 	mailboxID int64, criteria *imap.SearchCriteria,
 ) ([]uint32, error) {
-	// Simple search: match all messages in the mailbox.
-	// Extended search would parse criteria for FROM, TO, SUBJECT, DATE, etc.
-	const query = `SELECT uid FROM messages WHERE mailbox_id = $1 ORDER BY uid`
+	query, args := buildSearchQuery(mailboxID, criteria)
 
-	rows, err := db.QueryxContext(ctx, query, mailboxID)
+	rows, err := db.QueryxContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: search messages: %w", err)
 	}
@@ -206,6 +207,153 @@ func (r *MessageRepo) searchUID(ctx context.Context, db *sqlx.DB,
 	}
 
 	return uids, nil
+}
+
+func buildSearchQuery(mailboxID int64, criteria *imap.SearchCriteria) (string, []any) {
+	var conditions []string
+	var args []any
+	argIndex := 1
+
+	// Base condition
+	conditions = append(conditions, fmt.Sprintf("mailbox_id = $%d", argIndex))
+	args = append(args, mailboxID)
+	argIndex++
+
+	// UID search
+	if len(criteria.UID) > 0 {
+		for _, uidSet := range criteria.UID {
+			placeholders := make([]string, 0, len(uidSet))
+			for _, uidRange := range uidSet {
+				for i := uidRange.Start; i <= uidRange.Stop; i++ {
+					placeholders = append(placeholders, fmt.Sprintf("$%d", argIndex))
+					args = append(args, uint32(i))
+					argIndex++
+				}
+			}
+			conditions = append(conditions, fmt.Sprintf("uid IN (%s)", strings.Join(placeholders, ",")))
+		}
+	}
+
+	// Sequence number search (treat as UID for simplicity)
+	if len(criteria.SeqNum) > 0 {
+		for _, seqSet := range criteria.SeqNum {
+			placeholders := make([]string, 0, len(seqSet))
+			for _, seqRange := range seqSet {
+				for i := seqRange.Start; i <= seqRange.Stop; i++ {
+					placeholders = append(placeholders, fmt.Sprintf("$%d", argIndex))
+					args = append(args, i)
+					argIndex++
+				}
+			}
+			conditions = append(conditions, fmt.Sprintf("uid IN (%s)", strings.Join(placeholders, ",")))
+		}
+	}
+
+	// Flag search
+	if len(criteria.Flag) > 0 {
+		for _, flag := range criteria.Flag {
+			conditions = append(conditions, fmt.Sprintf("flags @> ARRAY[$%d::text]", argIndex))
+			args = append(args, string(flag))
+			argIndex++
+		}
+	}
+
+	// Not flag search
+	if len(criteria.NotFlag) > 0 {
+		for _, flag := range criteria.NotFlag {
+			conditions = append(conditions, fmt.Sprintf("NOT (flags @> ARRAY[$%d::text])", argIndex))
+			args = append(args, string(flag))
+			argIndex++
+		}
+	}
+
+	// Date range: Since (messages since date)
+	if !criteria.Since.IsZero() {
+		conditions = append(conditions, fmt.Sprintf("internal_date >= $%d", argIndex))
+		args = append(args, criteria.Since)
+		argIndex++
+	}
+
+	// Date range: Before (messages before date)
+	if !criteria.Before.IsZero() {
+		conditions = append(conditions, fmt.Sprintf("internal_date < $%d", argIndex))
+		args = append(args, criteria.Before)
+		argIndex++
+	}
+
+	// Date range: SentSince (messages sent since date)
+	if !criteria.SentSince.IsZero() {
+		conditions = append(conditions, fmt.Sprintf("internal_date >= $%d", argIndex))
+		args = append(args, criteria.SentSince)
+		argIndex++
+	}
+
+	// Date range: SentBefore (messages sent before date)
+	if !criteria.SentBefore.IsZero() {
+		conditions = append(conditions, fmt.Sprintf("internal_date < $%d", argIndex))
+		args = append(args, criteria.SentBefore)
+		argIndex++
+	}
+
+	// Size constraints
+	if criteria.Larger > 0 {
+		conditions = append(conditions, fmt.Sprintf("size > $%d", argIndex))
+		args = append(args, criteria.Larger)
+		argIndex++
+	}
+
+	if criteria.Smaller > 0 {
+		conditions = append(conditions, fmt.Sprintf("size < $%d", argIndex))
+		args = append(args, criteria.Smaller)
+		argIndex++
+	}
+
+	// Header search (FROM, SUBJECT, etc.)
+	for _, header := range criteria.Header {
+		key := strings.ToLower(header.Key)
+		value := header.Value
+
+		switch key {
+		case "from":
+			conditions = append(conditions, fmt.Sprintf("(from_address ILIKE $%d OR from_name ILIKE $%d)", argIndex, argIndex+1))
+			args = append(args, "%"+value+"%", "%"+value+"%")
+			argIndex += 2
+		case "to":
+			// To is not stored separately, search in snippet/body
+			conditions = append(conditions, fmt.Sprintf("search_vector @@ websearch_to_tsquery('english', $%d)", argIndex))
+			args = append(args, value)
+			argIndex++
+		case "subject":
+			conditions = append(conditions, fmt.Sprintf("search_vector @@ websearch_to_tsquery('english', $%d)", argIndex))
+			args = append(args, value)
+			argIndex++
+		default:
+			// For other headers, search in snippet
+			conditions = append(conditions, fmt.Sprintf("search_vector @@ websearch_to_tsquery('english', $%d)", argIndex))
+			args = append(args, value)
+			argIndex++
+		}
+	}
+
+	// Body search
+	for _, body := range criteria.Body {
+		conditions = append(conditions, fmt.Sprintf("search_vector @@ websearch_to_tsquery('english', $%d)", argIndex))
+		args = append(args, body)
+		argIndex++
+	}
+
+	// Text search (subject, from, body combined)
+	for _, text := range criteria.Text {
+		conditions = append(conditions, fmt.Sprintf("search_vector @@ websearch_to_tsquery('english', $%d)", argIndex))
+		args = append(args, text)
+		argIndex++
+	}
+
+	// Build WHERE clause
+	whereClause := strings.Join(conditions, " AND ")
+	query := fmt.Sprintf("SELECT uid FROM messages WHERE %s ORDER BY uid", whereClause)
+
+	return query, args
 }
 
 // UpdateFlags updates message flags.
