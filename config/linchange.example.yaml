@@ -216,6 +216,12 @@ mail:
       from_address: postmaster@example.com
     connect_timeout: 10s
     command_timeout: 2m
+    # Default smart host for outbound delivery. If empty, MX lookup is used.
+    # smtp_host: mail.example.com
+    # smtp_port: 587
+    # smtp_starttls: true
+    # smtp_username: ""
+    # smtp_password: ""
   dkim:
     selector_prefix: s
     key_bits: 2048

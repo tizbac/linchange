@@ -370,6 +370,17 @@ type Outbound struct {
 	// ConnectTimeout and CommandTimeout bound each delivery attempt.
 	ConnectTimeout time.Duration `yaml:"connect_timeout"`
 	CommandTimeout time.Duration `yaml:"command_timeout"`
+	// SMTPHost is the default smart host for outbound delivery. If empty,
+	// the worker resolves MX records for the destination domain.
+	SMTPHost string `yaml:"smtp_host"`
+	// SMTPPort is the port for the smart host. Default is 587.
+	SMTPPort int `yaml:"smtp_port"`
+	// SMTPStartTLS uses STARTTLS on the submission port. When false and
+	// SMTPHost is set, TLS is used directly (port 465).
+	SMTPStartTLS bool `yaml:"smtp_starttls"`
+	// SMTPUsername and SMTPPassword are used for authentication.
+	SMTPUsername string `yaml:"smtp_username"`
+	SMTPPassword string `yaml:"smtp_password"`
 }
 
 // Retry controls queue backoff.

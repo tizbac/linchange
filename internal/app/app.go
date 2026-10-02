@@ -18,7 +18,10 @@ import (
 
 	"github.com/linchange/linchange/config"
 	"github.com/linchange/linchange/internal/blobstore"
+	"github.com/linchange/linchange/internal/delivery"
+	"github.com/linchange/linchange/internal/dkim"
 	"github.com/linchange/linchange/internal/httpapi"
+	"github.com/linchange/linchange/internal/smtpd"
 	"github.com/linchange/linchange/internal/store"
 )
 
@@ -30,7 +33,11 @@ type App struct {
 	Blobs      *blobstore.Store
 	HTTPServer *httpapi.Server
 	HTTPListen *http.Server
-	StartedAt  time.Time
+
+	deliveryPool *delivery.Pool
+	smtpServer   *smtpd.Server
+	dkimKeys     *dkim.Keys
+	StartedAt    time.Time
 
 	shutdownOnce sync.Once
 	closers      []func(context.Context) error
@@ -96,6 +103,61 @@ func New(ctx context.Context, opts Options) (*App, error) {
 	}
 	a.Blobs = blobs
 
+	if cfg.Mail.Outbound.Concurrency > 0 {
+		pool := delivery.FromConfig(cfg, log, db)
+		poolCfg := pool.GetConfig()
+		poolCfg.BlobStore = blobs
+		pool.ApplyConfig(poolCfg)
+		a.deliveryPool = pool
+
+		// Register shutdown so the pool stops processing. The pool's Stop
+		// waits for in-flight deliveries to finish, so it must be called
+		// from the shutdown path (OnShutdown) rather than from Close: the
+		// DB connection pool is released before the pool shuts down.
+		a.OnShutdown(func(ctx context.Context) error {
+			pool.Stop()
+			log.Info("delivery pool stopped")
+			return nil
+		})
+	}
+
+	// Wire the SMTP submission backend and server.
+	{
+		backend := smtpd.NewBackend(
+			db,
+			cfg.Mail.Submission,
+			store.NewUsers(),
+			store.NewAliases(),
+			store.NewCredentials(),
+			a.deliveryPool.GetConfig().Outbox,
+			blobs,
+			log,
+			store.NewSendCounters(),
+		)
+		smtpSrv, err := smtpd.New(*cfg, backend, log)
+		if err != nil {
+			a.Close(context.Background())
+			return nil, fmt.Errorf("smtpd: %w", err)
+		}
+		a.smtpServer = smtpSrv
+
+		if smtpSrv.Enabled() {
+			a.OnShutdown(func(ctx context.Context) error {
+				log.Info("smtp submission listeners stopped")
+				return nil
+			})
+		}
+	}
+
+	// Initialise DKIM key manager.
+	if cfg.Mail.DKIM.SelectorPrefix != "" {
+		a.dkimKeys = dkim.New(cfg.Dir("dkim"))
+		poolCfg := a.deliveryPool.GetConfig()
+		poolCfg.DKIMKeys = a.dkimKeys
+		poolCfg.DKIMSelectorPrefix = cfg.Mail.DKIM.SelectorPrefix
+		a.deliveryPool.ApplyConfig(poolCfg)
+	}
+
 	if err := ensureDirs(cfg); err != nil {
 		a.Close(context.Background())
 		return nil, err
@@ -127,6 +189,8 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		"data_dir", cfg.Server.DataDir,
 		"postgres", db.PingContext(ctx) == nil,
 		"http", cfg.Listener.HTTP.Addr,
+		"smtp_submission", cfg.Listener.SMTPSubmission.Addr,
+		"smtp_submission_tls", cfg.Listener.SMTPSubmissionTLS.Addr,
 	)
 
 	return a, nil
@@ -135,16 +199,55 @@ func New(ctx context.Context, opts Options) (*App, error) {
 // Serve runs the HTTP listener until ctx is cancelled. A clean shutdown returns
 // nil; a bind or accept error is returned to the caller.
 func (a *App) Serve(ctx context.Context) error {
+	if a.deliveryPool != nil {
+		a.deliveryPool.Start(ctx)
+		go a.runDSNProcessor(ctx)
+	}
+
+	// Start SMTP submission listeners.
+	var smtpErrCh chan error
+	if a.smtpServer != nil {
+		smtpErrCh = make(chan error, 2)
+		go func() {
+			if err := a.smtpServer.StartHTTP(ctx); err != nil {
+				smtpErrCh <- fmt.Errorf("smtp submission: %w", err)
+			}
+		}()
+		go func() {
+			if err := a.smtpServer.StartTLS(ctx); err != nil {
+				smtpErrCh <- fmt.Errorf("smtp submission-tls: %w", err)
+			}
+		}()
+	}
+
 	if a.HTTPListen == nil {
+		if smtpErrCh != nil {
+			return <-smtpErrCh
+		}
 		<-ctx.Done()
 		return nil
 	}
-	errCh := make(chan error, 1)
-	go func() { errCh <- a.HTTPListen.ListenAndServe() }()
+
+	httpErrCh := make(chan error, 1)
+	go func() { httpErrCh <- a.HTTPListen.ListenAndServe() }()
+
+	if smtpErrCh == nil {
+		// Only HTTP, no SMTP.
+		select {
+		case <-ctx.Done():
+			return nil
+		case err := <-httpErrCh:
+			return err
+		}
+	}
+
+	// Both HTTP and SMTP.
 	select {
 	case <-ctx.Done():
 		return nil
-	case err := <-errCh:
+	case err := <-smtpErrCh:
+		return err
+	case err := <-httpErrCh:
 		return err
 	}
 }
@@ -192,3 +295,22 @@ func (a *App) Close(ctx context.Context) {
 
 // Uptime reports how long the app has been running.
 func (a *App) Uptime() time.Duration { return time.Since(a.StartedAt) }
+
+// runDSNProcessor runs the DSN processor in the background. It enqueues bounce
+// messages for failed outbox entries whose retry lifetime has expired.
+func (a *App) runDSNProcessor(ctx context.Context) {
+	if a.deliveryPool == nil {
+		return
+	}
+	dsn := delivery.NewDSNProcessor(a.deliveryPool)
+	err := dsn.Process(ctx, a.Blobs, func(submittedBy, envelopeFrom string, blob []byte, recipients []delivery.OutboxRecipient) (int64, error) {
+		digest, size, err := a.Blobs.Put(blob)
+		if err != nil {
+			return 0, fmt.Errorf("dsn blob put: %w", err)
+		}
+		return a.deliveryPool.GetConfig().Outbox.InsertMessage(ctx, nil, submittedBy, envelopeFrom, digest[:], size, recipients)
+	})
+	if err != nil {
+		a.Logger.Error("dsn processor", "error", err)
+	}
+}
