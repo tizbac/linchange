@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
-import { AuthState, LoginResponse } from './models';
+import { AuthState, LoginResponse, Me } from './models';
 
 // The API lives on the same origin in production and is proxied there by the
 // dev server, so relative paths are all the app ever needs.
@@ -26,6 +26,45 @@ export class AuthService {
   readonly isAuthenticated = computed(() => this._state() !== null);
   readonly user = computed(() => this._state()?.user ?? '');
   readonly mustChangePassword = computed(() => this._state()?.mustChangePassword ?? false);
+
+  // me is what the server says about this session. It is separate from the
+  // signed-in state because it can change without a new sign-in: ending an
+  // impersonation revokes the session, and a refresh can change nothing else.
+  private readonly _me = signal<Me | null>(null);
+  readonly me = this._me.asReadonly();
+  readonly isDomainAdmin = computed(() => this._me()?.is_domain_admin ?? false);
+  readonly impersonating = computed(() => this._me()?.impersonating ?? '');
+  readonly impersonationRequiresGrant = computed(
+    () => this._me()?.impersonation_requires_grant ?? false,
+  );
+
+  // loadMe refreshes the session description. It is awaited after a sign-in and
+  // after a restore so a guard never decides on a stale answer, and it is also
+  // callable on its own to pick up a server-side change.
+  async loadMe(): Promise<Me | null> {
+    if (!this.isAuthenticated()) {
+      this._me.set(null);
+      return null;
+    }
+    try {
+      const me = await firstValueFrom(this.http.get<Me>(`${API}/auth/me`));
+      this._me.set(me);
+      return me;
+    } catch {
+      // A failure here is not a reason to sign the user out: the token may
+      // still be good, and /me is decoration on top of it. Treating a failed
+      // lookup as a lost session would sign people out for a flaky request.
+      this._me.set(null);
+      return null;
+    }
+  }
+
+  // stopImpersonating ends an impersonating session. The server revokes it, so
+  // the stored tokens are dead and the caller signs in again as itself.
+  async stopImpersonating(): Promise<void> {
+    await firstValueFrom(this.http.post(`${API}/auth/stop-impersonating`, {}));
+    this.clear();
+  }
 
   // bootstrap restores a prior session from a stored refresh token. It runs once
   // at startup and resolves when the restore has settled, so the root component
@@ -111,6 +150,7 @@ export class AuthService {
     this.storage.removeItem(K_REFRESH);
     this.storage.removeItem(K_USER);
     this._state.set(null);
+    this._me.set(null);
   }
 
   requestReset(login: string): Promise<unknown> {
@@ -121,6 +161,9 @@ export class AuthService {
     return this.post('/auth/reset/complete', { token, password });
   }
 
+  // adopt takes the tokens and then asks who the session is. The address typed
+  // on the form is not trusted for this: the server canonicalises it, and only
+  // the server knows whether the session is impersonating.
   private adopt(res: LoginResponse, user: string): void {
     if (!res.access_token || !res.refresh_token) {
       throw new Error('the server did not issue tokens');
@@ -134,6 +177,7 @@ export class AuthService {
     this.storage.setItem(K_REFRESH, state.refreshToken);
     this.storage.setItem(K_USER, state.user);
     this._state.set(state);
+    void this.loadMe();
   }
 
   private restore(rt: string): Promise<void> {
@@ -146,6 +190,7 @@ export class AuthService {
         accessToken: res.access_token ?? '',
         refreshToken: res.refresh_token ?? '',
       });
+      void this.loadMe();
     });
   }
 

@@ -48,13 +48,17 @@ const (
 
 // Server holds the long-lived dependencies the handlers share.
 type Server struct {
-	db        *sqlx.DB
-	log       *slog.Logger
-	auth      *login.Authenticator
-	reset     *reset.Resetter
-	admin     *admin.Service
-	tokens    *token.Manager
-	sessions  *store.Sessions
+	db       *sqlx.DB
+	log      *slog.Logger
+	auth     *login.Authenticator
+	reset    *reset.Resetter
+	admin    *admin.Service
+	tokens   *token.Manager
+	sessions *store.Sessions
+	// policies is held so a handler can answer a question about this
+	// deployment's switches. It is the same object the login path and the admin
+	// service decide with, so there is one answer rather than three.
+	policies  policy.Policy
 	staticDir string
 }
 
@@ -103,6 +107,18 @@ func New(opts Options) (*Server, error) {
 		}
 	}
 
+	// The policy is built once and handed to everything that decides what a
+	// principal may do. Constructing it per consumer would work until the day
+	// one consumer learned a switch the others did not, and then impersonation
+	// would be permitted in one place and refused in another.
+	pol := policy.Policy{
+		Impersonation: policy.Impersonation{
+			Allowed:       cfg.Auth.Impersonation.Allowed,
+			RequireReason: cfg.Auth.Impersonation.RequireReason,
+			RequireGrant:  cfg.Auth.Impersonation.RequireGrant,
+		},
+	}
+
 	auth, err := login.New(login.Options{
 		Credentials: store.NewCredentials(),
 		Enrolments:  store.NewTOTP(),
@@ -131,13 +147,7 @@ func New(opts Options) (*Server, error) {
 				Duration:    cfg.Auth.Lockout.IP.Duration,
 			},
 		},
-		Policy: policy.Policy{
-			Impersonation: policy.Impersonation{
-				Allowed:       cfg.Auth.Impersonation.Allowed,
-				RequireReason: cfg.Auth.Impersonation.RequireReason,
-				RequireGrant:  cfg.Auth.Impersonation.RequireGrant,
-			},
-		},
+		Policy:       pol,
 		ChallengeTTL: cfg.Auth.Challenge.TTL,
 	})
 	if err != nil {

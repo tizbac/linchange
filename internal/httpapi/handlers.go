@@ -192,6 +192,12 @@ type meResponse struct {
 	// the authority: revoking the session is what ends an impersonation.
 	Impersonating      string `json:"impersonating,omitempty"`
 	MustChangePassword bool   `json:"must_change_password"`
+	// ImpersonationRequiresGrant reports whether this deployment demands an
+	// impersonation_grants row. The administration page needs it: when it is
+	// true the grant list is the allowlist of who may act as whom, and when it
+	// is false the same list is only a record of intentions. An operator shown
+	// the wrong one of those two will trust the wrong thing.
+	ImpersonationRequiresGrant bool `json:"impersonation_requires_grant"`
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -202,13 +208,14 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := meResponse{
-		Address:            principal.Address,
-		Source:             string(principal.Source),
-		Enabled:            principal.Enabled,
-		MailboxEnabled:     principal.MailboxEnabled,
-		IsDomainAdmin:      principal.Source == policy.SourceDomainAdmin,
-		Impersonating:      session.Impersonating,
-		MustChangePassword: principal.MustChangePassword,
+		Address:                    principal.Address,
+		Source:                     string(principal.Source),
+		Enabled:                    principal.Enabled,
+		MailboxEnabled:             principal.MailboxEnabled,
+		IsDomainAdmin:              principal.Source == policy.SourceDomainAdmin,
+		Impersonating:              session.Impersonating,
+		MustChangePassword:         principal.MustChangePassword,
+		ImpersonationRequiresGrant: s.policies.Impersonation.RequireGrant,
 	}
 	// The display name is decoration, so a lookup that fails must not fail the
 	// request: the client can render an address on its own.

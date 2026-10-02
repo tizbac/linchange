@@ -17,3 +17,22 @@ export interface AuthState {
   accessToken: string;
   refreshToken: string;
 }
+
+// Me is GET /api/v1/auth/me. The client reads the impersonation target from
+// here rather than decoding the access token: a token is a signed blob, and
+// making the UI parse one to decide whether to show the "acting as" banner
+// means the banner and the server can disagree about the same session.
+export interface Me {
+  address: string;
+  display_name?: string;
+  source: string;
+  enabled: boolean;
+  mailbox_enabled: boolean;
+  is_domain_admin: boolean;
+  impersonating?: string;
+  must_change_password?: boolean;
+  // Whether this deployment requires an impersonation_grants row. The
+  // administration page reads it rather than assuming: with it on the grant
+  // list is the allowlist, with it off the same list is only a record.
+  impersonation_requires_grant?: boolean;
+}

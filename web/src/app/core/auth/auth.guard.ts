@@ -15,3 +15,12 @@ export const onlyGuests: CanActivateFn = () => {
   const router = inject(Router);
   return auth.isAuthenticated() ? router.parseUrl('/') : true;
 };
+
+// requireDomainAdmin guards the admin panel so only a domain admin can reach it.
+// A user who is merely a normal mailbox owner or who has an expired session is
+// sent back to the dashboard, where the link is hidden.
+export const requireDomainAdmin: CanActivateFn = () => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+  return auth.isDomainAdmin() ? true : router.parseUrl('/dashboard');
+};
