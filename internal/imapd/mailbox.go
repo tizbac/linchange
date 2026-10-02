@@ -66,10 +66,11 @@ func (r *MailboxRepo) Create(ctx context.Context, db *sqlx.DB, owner, name strin
 	const query = `
 		INSERT INTO mailboxes (owner, name, parent_id, uidvalidity, uidnext, special_use, subscribed)
 		VALUES ($1, $2, $3, 
-		        EXTRACT(EPOCH FROM NOW())::UINT32, 1, NULL, TRUE)
+		        EXTRACT(EPOCH FROM NOW())::bigint, 1, NULL, TRUE)
 		RETURNING id`
 
-	return db.GetContext(ctx, nil, query, owner, name, parentID)
+	var id int64
+	return db.GetContext(ctx, &id, query, owner, name, parentID)
 }
 
 // Delete removes a mailbox.

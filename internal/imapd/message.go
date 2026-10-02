@@ -99,24 +99,26 @@ func (r *MessageRepo) GetByUIDSet(ctx context.Context, db *sqlx.DB,
 		return nil, nil
 	}
 
-	placeholders := make([]string, len(uids))
-	args := make([]any, len(uids))
-	for i, uid := range uids {
-		placeholders[i] = fmt.Sprintf("$%d", i+1)
-		args[i] = uid
+	// Build query with mailbox_id = $1 and uid IN ($2, $3, ...)
+	allArgs := make([]any, 0, len(uids)+1)
+	allArgs = append(allArgs, mailboxID)
+	for _, uid := range uids {
+		allArgs = append(allArgs, uid)
+	}
+	inPlaceholders := make([]string, len(uids))
+	for i := range uids {
+		inPlaceholders[i] = fmt.Sprintf("$%d", i+2)
 	}
 
 	query := fmt.Sprintf(`
 		SELECT id, mailbox_id, uid, blob_sha256, size, internal_date,
 		       flags, subject, from_address, from_name, thread_key, message_id
 		FROM messages
-		WHERE mailbox_id = $%d AND uid IN (%s)
-		ORDER BY uid`, len(uids)+1, strings.Join(placeholders, ", "))
-
-	args = append([]any{mailboxID}, args...)
+		WHERE mailbox_id = $1 AND uid IN (%s)
+		ORDER BY uid`, strings.Join(inPlaceholders, ", "))
 
 	var messages []Message
-	if err := db.SelectContext(ctx, &messages, query, args...); err != nil {
+	if err := db.SelectContext(ctx, &messages, query, allArgs...); err != nil {
 		return nil, fmt.Errorf("store: get messages: %w", err)
 	}
 
@@ -131,6 +133,40 @@ func (r *MessageRepo) CountByMailbox(ctx context.Context, db *sqlx.DB, mailboxID
 		return 0, fmt.Errorf("store: count messages: %w", err)
 	}
 	return count, nil
+}
+
+// GetDeletedMessages returns all messages with the \Deleted flag in a mailbox.
+func (r *MessageRepo) GetDeletedMessages(ctx context.Context, db *sqlx.DB, mailboxID int64) ([]Message, error) {
+	const query = `
+		SELECT id, mailbox_id, uid, blob_sha256, size, internal_date,
+		       flags, subject, from_address, from_name, thread_key, message_id
+		FROM messages
+		WHERE mailbox_id = $1 AND flags::text LIKE '%Deleted%'
+		ORDER BY uid`
+
+	var messages []Message
+	if err := db.SelectContext(ctx, &messages, query, mailboxID); err != nil {
+		return nil, fmt.Errorf("store: get deleted messages: %w", err)
+	}
+
+	return messages, nil
+}
+
+// GetAllMessages returns all messages in a mailbox (for debugging).
+func (r *MessageRepo) GetAllMessages(ctx context.Context, db *sqlx.DB, mailboxID int64) ([]Message, error) {
+	const query = `
+		SELECT id, mailbox_id, uid, blob_sha256, size, internal_date,
+		       flags, subject, from_address, from_name, thread_key, message_id
+		FROM messages
+		WHERE mailbox_id = $1
+		ORDER BY uid`
+
+	var messages []Message
+	if err := db.SelectContext(ctx, &messages, query, mailboxID); err != nil {
+		return nil, fmt.Errorf("store: get all messages: %w", err)
+	}
+
+	return messages, nil
 }
 
 // SearchSeq searches by sequence numbers.
@@ -174,7 +210,7 @@ func (r *MessageRepo) searchUID(ctx context.Context, db *sqlx.DB,
 
 // UpdateFlags updates message flags.
 func (r *MessageRepo) UpdateFlags(ctx context.Context, db *sqlx.DB, messageID int64, flags []string) error {
-	const query = `UPDATE messages SET flags = $2, updated_at = now() WHERE id = $1`
+	const query = `UPDATE messages SET flags = $2 WHERE id = $1`
 	_, err := db.ExecContext(ctx, query, messageID, flags)
 	return err
 }

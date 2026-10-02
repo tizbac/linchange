@@ -59,6 +59,16 @@ type Server struct {
 // Enabled reports whether any IMAP listener is configured.
 func (s *Server) Enabled() bool { return s.enabled }
 
+// PlainServer returns the underlying imapserver.Server for plain connections.
+// Tests use this to bind to a random port.
+func (s *Server) PlainServer() *imapserver.Server { return s.plainServer }
+
+// PlainAddr returns the configured plain listener address.
+func (s *Server) PlainAddr() string { return s.plainAddr }
+
+// SetPlainAddr changes the plain listener address.
+func (s *Server) SetPlainAddr(addr string) { s.plainAddr = addr }
+
 type backend struct {
 	db              *sqlx.DB
 	blobStore       *blobstore.Store
@@ -79,8 +89,25 @@ func New(db *sqlx.DB, blobs *blobstore.Store,
 	creds *store.Credentials,
 	sharedMailboxes *store.SharedMailboxes, sharedGrants *store.SharedMailboxGrants,
 ) (*Server, error) {
+	return newFromConfig(db, blobs, log, users, aliases, creds, sharedMailboxes, sharedGrants, config.New())
+}
 
-	cfg := config.New()
+// NewForTest creates the IMAP server with a custom configuration.
+func NewForTest(db *sqlx.DB, blobs *blobstore.Store,
+	log *slog.Logger, users *store.Users, aliases *store.Aliases,
+	creds *store.Credentials,
+	sharedMailboxes *store.SharedMailboxes, sharedGrants *store.SharedMailboxGrants,
+	cfg *config.Config,
+) (*Server, error) {
+	return newFromConfig(db, blobs, log, users, aliases, creds, sharedMailboxes, sharedGrants, cfg)
+}
+
+func newFromConfig(db *sqlx.DB, blobs *blobstore.Store,
+	log *slog.Logger, users *store.Users, aliases *store.Aliases,
+	creds *store.Credentials,
+	sharedMailboxes *store.SharedMailboxes, sharedGrants *store.SharedMailboxGrants,
+	cfg *config.Config,
+) (*Server, error) {
 
 	var plainServer, tlsServer *imapserver.Server
 	enabled := false
@@ -299,8 +326,8 @@ func (s *session) AuthenticateMechanisms() []string {
 // ---------------------------------------------------------------------------
 
 // Namespace returns the server namespace.
-func (s *session) Namespace() (imap.NamespaceData, error) {
-	return imap.NamespaceData{
+func (s *session) Namespace() (*imap.NamespaceData, error) {
+	return &imap.NamespaceData{
 		Personal: []imap.NamespaceDescriptor{
 			{Prefix: "", Delim: '/'},
 		},
@@ -320,7 +347,20 @@ func (s *session) List(w *imapserver.ListWriter, ref string, patterns []string, 
 		return fmt.Errorf("imap: list mailboxes: %w", err)
 	}
 
+	s.backend.logger.Info("imap: list mailboxes", "count", len(mailboxes), "patterns", patterns)
+
+	matched := make([]Mailbox, 0, len(mailboxes))
 	for _, mb := range mailboxes {
+		if options != nil && options.ReturnSubscribed && !mb.Subscribed {
+			continue
+		}
+		if !s.matchPatterns(mb.Name, patterns) {
+			continue
+		}
+		matched = append(matched, mb)
+	}
+
+	for _, mb := range matched {
 		var attrs []imap.MailboxAttr
 		if mb.SpecialUse != nil && *mb.SpecialUse != "" {
 			attrs = append(attrs, imap.MailboxAttrMarked)
@@ -353,6 +393,9 @@ func (s *session) List(w *imapserver.ListWriter, ref string, patterns []string, 
 		if idx := strings.IndexByte(sharedAddr, '#'); idx >= 0 {
 			name = sharedAddr[:idx]
 		}
+		if !s.matchPatterns(name, patterns) {
+			continue
+		}
 		data := &imap.ListData{
 			Delim:   '/',
 			Mailbox: name,
@@ -363,6 +406,64 @@ func (s *session) List(w *imapserver.ListWriter, ref string, patterns []string, 
 	}
 
 	return nil
+}
+
+func (s *session) matchPatterns(name string, patterns []string) bool {
+	if len(patterns) == 0 {
+		return true
+	}
+	for _, pattern := range patterns {
+		if s.matchPattern(name, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *session) matchPattern(name, pattern string) bool {
+	// Simple wildcard matching: * matches any sequence of non-delimiter chars
+	// % matches any sequence of chars
+	// For simplicity, convert % to * and normalize multiple asterisks
+	pattern = strings.ReplaceAll(pattern, "%", "*")
+	pattern = normalizeAsterisks(pattern)
+	
+	if pattern == "*" {
+		return true
+	}
+	
+	if strings.Contains(pattern, "*") {
+		parts := strings.SplitN(pattern, "*", 2)
+		if len(parts) == 2 {
+			if strings.HasPrefix(pattern, "*") && strings.HasSuffix(pattern, "*") {
+				return strings.Contains(name, parts[1])
+			}
+			if strings.HasPrefix(pattern, "*") {
+				return strings.HasSuffix(name, parts[1])
+			}
+			if strings.HasSuffix(pattern, "*") {
+				return strings.HasPrefix(name, parts[0])
+			}
+			return strings.HasPrefix(name, parts[0]) && strings.HasSuffix(name, parts[1])
+		}
+	}
+	return name == pattern
+}
+
+func normalizeAsterisks(s string) string {
+	var result strings.Builder
+	prevStar := false
+	for _, r := range s {
+		if r == '*' {
+			if !prevStar {
+				result.WriteRune(r)
+			}
+			prevStar = true
+		} else {
+			result.WriteRune(r)
+			prevStar = false
+		}
+	}
+	return result.String()
 }
 
 // Create creates a new mailbox.
@@ -634,14 +735,18 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 		return nil
 	}
 
-	// Watch for changes.
-	rows, err := db.QueryxContext(ctx, `
-		SELECT id FROM messages WHERE mailbox_id = $1
-		ORDER BY id DESC LIMIT 10`, s.selected.mailboxID)
-	if err != nil {
-		return fmt.Errorf("imap: poll: %w", err)
+	// Get current message count
+	var currentCount int
+	const countQuery = `SELECT count(*) FROM messages WHERE mailbox_id = $1`
+	if err := db.GetContext(ctx, &currentCount, countQuery, s.selected.mailboxID); err != nil {
+		return fmt.Errorf("imap: poll count: %w", err)
 	}
-	defer rows.Close()
+
+	// Update message count and send EXISTS if there are new messages
+	if currentCount > int(s.selected.messageCount) {
+		s.selected.messageCount = uint32(currentCount)
+		w.WriteNumMessages(s.selected.messageCount)
+	}
 
 	return nil
 }
@@ -739,8 +844,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imap.NumSet, options *
 		return fmt.Errorf("imap: fetch: %w", err)
 	}
 
-	for seqNum, msg := range messages {
-		seqNumU32 := uint32(seqNum + 1)
+	for _, msg := range messages {
 		// Get the full message blob.
 		var digest blobstore.Digest
 		copy(digest[:], msg.BlobSHA256)
@@ -753,7 +857,10 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imap.NumSet, options *
 		// Build the envelope.
 		envelope := buildEnvelope(msg)
 
-		// Write the response.
+		// Write the response using the UID as the sequence number.
+		// When fetching by sequence set, the sequence numbers correspond to the UIDs
+		// since we query by UID.
+		seqNumU32 := uint32(msg.UID)
 		wr := w.CreateMessage(seqNumU32)
 		if envelope != nil {
 			wr.WriteEnvelope(envelope)
@@ -765,11 +872,12 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imap.NumSet, options *
 		// Write the body section.
 		if len(options.BodySection) > 0 {
 			for _, bs := range options.BodySection {
-				if bs.Peek {
-					wr.WriteBodySection(bs, int64(len(blob)))
-				} else {
-					wr.WriteBodySection(bs, int64(len(blob)))
+				lr := wr.WriteBodySection(bs, int64(len(blob)))
+				if _, err := lr.Write(blob); err != nil {
+					s.backend.logger.Warn("imap: write body section", "error", err)
+					return fmt.Errorf("imap: write body section: %w", err)
 				}
+				lr.Close()
 			}
 		}
 
@@ -825,6 +933,15 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imap.NumSet, flags *im
 		if err != nil {
 			return fmt.Errorf("imap: update flags: %w", err)
 		}
+
+		// Write the updated flags if not silent.
+		if !flags.Silent {
+			seqNumU32 := uint32(msg.UID)
+			wr := w.CreateMessage(seqNumU32)
+			wr.WriteFlags(convertFlags(newFlags))
+			wr.WriteUID(imap.UID(msg.UID))
+			wr.Close()
+		}
 	}
 
 	return nil
@@ -839,6 +956,7 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imap.UIDSet) error 
 	}
 
 	if uids != nil {
+		// UID EXPUNGE - delete specific UIDs
 		for _, uidRange := range *uids {
 			uid := uidRange.Start
 			err := s.backend.messageStore.DeleteByUID(ctx, s.backend.db, s.selected.mailboxID, uint32(uid))
@@ -846,6 +964,30 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imap.UIDSet) error 
 				return fmt.Errorf("imap: expunge: %w", err)
 			}
 			s.selected.messageCount--
+			s.backend.logger.Info("imap: expunge uid", "uid", uid, "seqNum", s.selected.messageCount+1)
+			w.WriteExpunge(s.selected.messageCount + 1)
+		}
+	} else {
+		// EXPUNGE without UIDs - expunge all messages with \Deleted flag
+		messages, err := s.backend.messageStore.GetDeletedMessages(ctx, s.backend.db, s.selected.mailboxID)
+		if err != nil {
+			return fmt.Errorf("imap: expunge get messages: %w", err)
+		}
+
+		allMessages, _ := s.backend.messageStore.GetAllMessages(ctx, s.backend.db, s.selected.mailboxID)
+		s.backend.logger.Info("imap: expunge", "deletedCount", len(messages), "mailboxID", s.selected.mailboxID, "totalCount", len(allMessages))
+		for i := range allMessages {
+			s.backend.logger.Info("imap: expunge all message", "uid", allMessages[i].UID, "flags", allMessages[i].Flags)
+		}
+
+		for _, msg := range messages {
+			s.backend.logger.Info("imap: expunge msg", "uid", msg.UID, "seqNumBefore", s.selected.messageCount)
+			err := s.backend.messageStore.DeleteByUID(ctx, s.backend.db, s.selected.mailboxID, msg.UID)
+			if err != nil {
+				return fmt.Errorf("imap: expunge delete: %w", err)
+			}
+			s.selected.messageCount--
+			s.backend.logger.Info("imap: expunge msg done", "uid", msg.UID, "seqNumAfter", s.selected.messageCount+1)
 			w.WriteExpunge(s.selected.messageCount + 1)
 		}
 	}
@@ -889,14 +1031,84 @@ func (s *session) Copy(numSet imap.NumSet, dest string) (*imap.CopyData, error) 
 		uids = append(uids, result.UID)
 	}
 
+	srcUIDs := make(imap.UIDSet, len(messages))
+	for i, msg := range messages {
+		srcUIDs[i] = imap.UIDRange{Start: imap.UID(msg.UID), Stop: imap.UID(msg.UID)}
+	}
+
 	destUIDs := make(imap.UIDSet, len(uids))
 	for i, uid := range uids {
 		destUIDs[i] = imap.UIDRange{Start: imap.UID(uid), Stop: imap.UID(uid)}
 	}
 	return &imap.CopyData{
 		UIDValidity: s.selected.uidValidity,
+		SourceUIDs:  srcUIDs,
 		DestUIDs:    destUIDs,
 	}, nil
+}
+
+// Move moves messages to another mailbox.
+func (s *session) Move(w *imapserver.MoveWriter, numSet imap.NumSet, dest string) error {
+	ctx := context.Background()
+
+	if s.selected == nil {
+		return ErrMailboxSelected
+	}
+
+	destName := strings.Trim(dest, "/")
+	destMB, err := s.backend.mailboxStore.GetByName(ctx, s.backend.db, s.user, destName)
+	if err != nil {
+		return ErrMailboxNotFound
+	}
+
+	messages, err := s.backend.messageStore.GetByUIDSet(ctx, s.backend.db, s.selected.mailboxID, numSet)
+	if err != nil {
+		return fmt.Errorf("imap: move: %w", err)
+	}
+
+	var srcUIDs []uint32
+	var destUIDs []uint32
+	for _, msg := range messages {
+		var digest blobstore.Digest
+		copy(digest[:], msg.BlobSHA256)
+		_, err := s.backend.blobStore.Get(digest)
+		if err != nil {
+			continue
+		}
+
+		result, err := s.backend.messageStore.Insert(ctx, s.backend.db, destMB.ID, digest[:], msg.Size, msg.InternalDate, msg.Flags, msg.FromAddress, msg.FromName, msg.Subject)
+		if err != nil {
+			continue
+		}
+		destUIDs = append(destUIDs, result.UID)
+		srcUIDs = append(srcUIDs, msg.UID)
+
+		err = s.backend.messageStore.DeleteByUID(ctx, s.backend.db, s.selected.mailboxID, msg.UID)
+		if err != nil {
+			continue
+		}
+		s.selected.messageCount--
+		w.WriteExpunge(s.selected.messageCount + 1)
+	}
+
+	uidSet := make(imap.UIDSet, len(srcUIDs))
+	for i, uid := range srcUIDs {
+		uidSet[i] = imap.UIDRange{Start: imap.UID(uid), Stop: imap.UID(uid)}
+	}
+
+	destUIDSet := make(imap.UIDSet, len(destUIDs))
+	for i, uid := range destUIDs {
+		destUIDSet[i] = imap.UIDRange{Start: imap.UID(uid), Stop: imap.UID(uid)}
+	}
+
+	copyData := &imap.CopyData{
+		UIDValidity: s.selected.uidValidity,
+		SourceUIDs:  uidSet,
+		DestUIDs:    destUIDSet,
+	}
+	w.WriteCopyData(copyData)
+
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -962,7 +1174,7 @@ func parseMessageHeaders(data []byte) (string, string, string, time.Time, []stri
 	reader := textproto.NewReader(bufio.NewReader(strings.NewReader(string(data))))
 
 	// Skip empty lines at start.
-	var headers textproto.MIMEHeader
+	headers := make(textproto.MIMEHeader)
 	for {
 		line, err := reader.ReadLine()
 		if err != nil {
@@ -1082,6 +1294,15 @@ func removeFlag(flags []string, flag string) []string {
 		}
 	}
 	return result
+}
+
+func hasFlag(flags []string, flag string) bool {
+	for _, f := range flags {
+		if f == flag {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------
