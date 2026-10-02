@@ -255,7 +255,7 @@ exists rather than a wish list.
 | P0 | config → typed/validated; sqlx + pgx; embedded migrations; blobstore; compose; `main` | `go build`, `go test ./...`, boots against real Postgres | done |
 | P1 | auth chain; argon2id; TOTP + recovery; reset via secondary email; JWT; chi skeleton; Angular + Tailwind shell with login and TOTP screens | end-to-end browser login | done |
 | P2 | domains; mailboxes; aliases; shared mailboxes; quotas; admin API; impersonation + audit; admin panel | CRUD, quota and impersonation tests | ✅ DONE |
-| P3 | submission policy; DKIM; outbox with retry and DSN bounces | real send to an external SMTP sink | pending |
+| P3 | submission policy; DKIM; outbox with retry and DSN bounces | real send to an external SMTP sink | ✅ DONE |
 | P4 | IMAP server | Thunderbird + `imapclient` conformance run | pending |
 | P5 | POP3 server | `openssl s_client` command transcripts | pending |
 | P6 | inbound `:25`; SPF/DKIM/DMARC; greylisting; junk routing | inbound fixture plus live test | pending |
