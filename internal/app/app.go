@@ -22,6 +22,7 @@ import (
 	"github.com/linchange/linchange/internal/dkim"
 	"github.com/linchange/linchange/internal/httpapi"
 	imapd "github.com/linchange/linchange/internal/imapd"
+	"github.com/linchange/linchange/internal/pop3d"
 	"github.com/linchange/linchange/internal/smtpd"
 	"github.com/linchange/linchange/internal/store"
 )
@@ -38,6 +39,7 @@ type App struct {
 	deliveryPool *delivery.Pool
 	smtpServer   *smtpd.Server
 	imapServer   *imapd.Server
+	pop3Server   *pop3d.Server
 	dkimKeys     *dkim.Keys
 	StartedAt    time.Time
 
@@ -177,6 +179,32 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		}
 	}
 
+	// Wire the POP3 server.
+	{
+		pop3Srv, err := pop3d.New(
+			db,
+			blobs,
+			log,
+			store.NewUsers(),
+			store.NewAliases(),
+			store.NewCredentials(),
+			store.NewSharedMailboxes(),
+			store.NewSharedMailboxGrants(),
+		)
+		if err != nil {
+			a.Close(context.Background())
+			return nil, fmt.Errorf("pop3d: %w", err)
+		}
+		a.pop3Server = pop3Srv
+
+		if pop3Srv.Enabled() {
+			a.OnShutdown(func(ctx context.Context) error {
+				log.Info("pop3 listeners stopped")
+				return nil
+			})
+		}
+	}
+
 	// Initialise DKIM key manager.
 	if cfg.Mail.DKIM.SelectorPrefix != "" {
 		a.dkimKeys = dkim.New(cfg.Dir("dkim"))
@@ -221,6 +249,8 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		"smtp_submission_tls", cfg.Listener.SMTPSubmissionTLS.Addr,
 		"imap", cfg.Listener.IMAP.Addr,
 		"imaps", cfg.Listener.IMAPS.Addr,
+		"pop3", cfg.Listener.POP3.Addr,
+		"pop3s", cfg.Listener.POP3S.Addr,
 	)
 
 	return a, nil
@@ -266,6 +296,22 @@ func (a *App) Serve(ctx context.Context) error {
 		}()
 	}
 
+	// Start POP3 listeners.
+	var pop3ErrCh chan error
+	if a.pop3Server != nil && a.pop3Server.Enabled() {
+		pop3ErrCh = make(chan error, 2)
+		go func() {
+			if err := a.pop3Server.StartPlain(ctx); err != nil {
+				pop3ErrCh <- fmt.Errorf("pop3: %w", err)
+			}
+		}()
+		go func() {
+			if err := a.pop3Server.StartTLS(ctx); err != nil {
+				pop3ErrCh <- fmt.Errorf("pop3s: %w", err)
+			}
+		}()
+	}
+
 	if a.HTTPListen == nil {
 		if smtpErrCh != nil {
 			return <-smtpErrCh
@@ -290,7 +336,7 @@ func (a *App) Serve(ctx context.Context) error {
 		}
 	}
 
-	// HTTP with SMTP and/or IMAP.
+	// HTTP with SMTP, IMAP, and/or POP3.
 	select {
 	case <-ctx.Done():
 		return nil
@@ -299,6 +345,8 @@ func (a *App) Serve(ctx context.Context) error {
 	case err := <-smtpErrCh:
 		return err
 	case err := <-imapErrCh:
+		return err
+	case err := <-pop3ErrCh:
 		return err
 	}
 }
