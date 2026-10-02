@@ -16,13 +16,14 @@ import (
 	"time"
 
 	"github.com/emersion/go-sasl"
-	"github.com/jmoiron/sqlx"
 	smtp "github.com/emersion/go-smtp"
+	"github.com/jmoiron/sqlx"
 
 	"github.com/linchange/linchange/config"
 	pwd "github.com/linchange/linchange/internal/auth/password"
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/delivery"
+	"github.com/linchange/linchange/internal/logging"
 	"github.com/linchange/linchange/internal/store"
 )
 
@@ -335,7 +336,7 @@ func New(cfg config.Config, backend *Backend, logger *slog.Logger) (*Server, err
 		httpServer.MaxLineLength = 998
 		httpServer.AllowInsecureAuth = cfg.Mail.Submission.AllowInsecureAuth
 		httpServer.Debug = nil
-		httpServer.ErrorLog = nil
+		httpServer.ErrorLog = logging.NewPrintf(logger)
 		httpServer.ReadTimeout = 30 * time.Second
 		httpServer.WriteTimeout = 30 * time.Second
 		httpServer.EnableSMTPUTF8 = true
@@ -362,7 +363,7 @@ func New(cfg config.Config, backend *Backend, logger *slog.Logger) (*Server, err
 		tlsServer.MaxLineLength = 998
 		tlsServer.AllowInsecureAuth = false
 		tlsServer.Debug = nil
-		tlsServer.ErrorLog = nil
+		tlsServer.ErrorLog = logging.NewPrintf(logger)
 		tlsServer.ReadTimeout = 30 * time.Second
 		tlsServer.WriteTimeout = 30 * time.Second
 		tlsServer.EnableSMTPUTF8 = true

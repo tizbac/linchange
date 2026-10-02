@@ -80,25 +80,11 @@ type session struct {
 }
 
 // New creates the POP3 server from application configuration.
+// New creates the POP3 server.
+//
+// The listener addresses come from cfg, so that the ports the operator
+// configured are the ports that are bound.
 func New(db *sqlx.DB, blobs *blobstore.Store,
-	log *slog.Logger, users *store.Users, aliases *store.Aliases,
-	creds *store.Credentials,
-	sharedMailboxes *store.SharedMailboxes, sharedGrants *store.SharedMailboxGrants,
-) (*Server, error) {
-	return newFromConfig(db, blobs, log, users, aliases, creds, sharedMailboxes, sharedGrants, config.New())
-}
-
-// NewForTest creates the POP3 server with a custom configuration.
-func NewForTest(db *sqlx.DB, blobs *blobstore.Store,
-	log *slog.Logger, users *store.Users, aliases *store.Aliases,
-	creds *store.Credentials,
-	sharedMailboxes *store.SharedMailboxes, sharedGrants *store.SharedMailboxGrants,
-	cfg *config.Config,
-) (*Server, error) {
-	return newFromConfig(db, blobs, log, users, aliases, creds, sharedMailboxes, sharedGrants, cfg)
-}
-
-func newFromConfig(db *sqlx.DB, blobs *blobstore.Store,
 	log *slog.Logger, users *store.Users, aliases *store.Aliases,
 	creds *store.Credentials,
 	sharedMailboxes *store.SharedMailboxes, sharedGrants *store.SharedMailboxGrants,
@@ -273,8 +259,8 @@ func (s *session) Login(ctx context.Context, username, password string) error {
 
 func (s *session) Stat(ctx context.Context) (count int, size int64, err error) {
 	var stats struct {
-		Count int    `db:"count"`
-		Size  int64  `db:"size"`
+		Count int   `db:"count"`
+		Size  int64 `db:"size"`
 	}
 	query := `
 		SELECT COUNT(*)::int as count, COALESCE(SUM(size), 0)::bigint as size

@@ -16,11 +16,11 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/linchange/linchange/config"
+	pwd "github.com/linchange/linchange/internal/auth/password"
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/imapd"
 	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/testdb"
-	pwd "github.com/linchange/linchange/internal/auth/password"
 )
 
 func testConfig(t *testing.T) *config.Config {
@@ -83,7 +83,7 @@ func setupServer(t *testing.T) (*imapd.Server, *sqlx.DB, string) {
 		Level: slog.LevelInfo,
 	}))
 
-	srv, err := imapd.NewForTest(db, blobs, logger, users, aliases, creds, sharedMailboxes, sharedGrants, cfg)
+	srv, err := imapd.New(db, blobs, logger, users, aliases, creds, sharedMailboxes, sharedGrants, cfg)
 	if err != nil {
 		t.Fatalf("create imap server: %v", err)
 	}
@@ -518,7 +518,7 @@ func TestSearch(t *testing.T) {
 	}
 
 	searchCmd := client.Search(&imap.SearchCriteria{}, nil)
- searchData, err := searchCmd.Wait()
+	searchData, err := searchCmd.Wait()
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -586,7 +586,7 @@ func TestExpungeMessage(t *testing.T) {
 	options := &imapclient.Options{
 		DebugWriter: &debugBuf,
 	}
-	
+
 	client, err := imapclient.DialInsecure(addr, options)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
@@ -637,9 +637,9 @@ func TestExpungeMessage(t *testing.T) {
 
 	expungeCmd := client.Expunge()
 	t.Log("calling Collect...")
-	
+
 	expunged, err := expungeCmd.Collect()
-	
+
 	t.Logf("Debug output after Collect:\n%s", debugBuf.String())
 	t.Logf("Collect returned: %d expunged, err=%v", len(expunged), err)
 	if err != nil {

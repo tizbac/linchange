@@ -14,11 +14,11 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/linchange/linchange/config"
+	pwd "github.com/linchange/linchange/internal/auth/password"
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/pop3d"
 	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/testdb"
-	pwd "github.com/linchange/linchange/internal/auth/password"
 )
 
 func testConfig(t *testing.T) *config.Config {
@@ -81,7 +81,7 @@ func setupServer(t *testing.T) (*pop3d.Server, *sqlx.DB, string) {
 		Level: slog.LevelInfo,
 	}))
 
-	srv, err := pop3d.NewForTest(db, blobs, logger, users, aliases, creds, sharedMailboxes, sharedGrants, cfg)
+	srv, err := pop3d.New(db, blobs, logger, users, aliases, creds, sharedMailboxes, sharedGrants, cfg)
 	if err != nil {
 		t.Fatalf("create pop3 server: %v", err)
 	}

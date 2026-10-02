@@ -22,6 +22,7 @@ import (
 	"github.com/linchange/linchange/internal/dkim"
 	"github.com/linchange/linchange/internal/httpapi"
 	imapd "github.com/linchange/linchange/internal/imapd"
+	"github.com/linchange/linchange/internal/inbound"
 	"github.com/linchange/linchange/internal/pop3d"
 	"github.com/linchange/linchange/internal/smtpd"
 	"github.com/linchange/linchange/internal/store"
@@ -37,6 +38,7 @@ type App struct {
 	HTTPListen *http.Server
 
 	deliveryPool *delivery.Pool
+	inboundSMTPS *inbound.Server
 	smtpServer   *smtpd.Server
 	imapServer   *imapd.Server
 	pop3Server   *pop3d.Server
@@ -125,6 +127,25 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		})
 	}
 
+	// Wire the inbound MTA on :25. It takes mail from the internet, so it runs
+	// before submission: everything it accepts lands in a local mailbox.
+	{
+		backend := inbound.NewBackend(db, *cfg, log, blobs)
+		inboundSrv, err := inbound.New(*cfg, backend, log)
+		if err != nil {
+			a.Close(context.Background())
+			return nil, fmt.Errorf("inbound: %w", err)
+		}
+		a.inboundSMTPS = inboundSrv
+
+		if inboundSrv.Enabled() {
+			a.OnShutdown(func(ctx context.Context) error {
+				log.Info("smtp inbound listener stopped")
+				return nil
+			})
+		}
+	}
+
 	// Wire the SMTP submission backend and server.
 	{
 		backend := smtpd.NewBackend(
@@ -164,6 +185,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 			store.NewCredentials(),
 			store.NewSharedMailboxes(),
 			store.NewSharedMailboxGrants(),
+			cfg,
 		)
 		if err != nil {
 			a.Close(context.Background())
@@ -190,6 +212,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 			store.NewCredentials(),
 			store.NewSharedMailboxes(),
 			store.NewSharedMailboxGrants(),
+			cfg,
 		)
 		if err != nil {
 			a.Close(context.Background())
@@ -264,6 +287,17 @@ func (a *App) Serve(ctx context.Context) error {
 		go a.runDSNProcessor(ctx)
 	}
 
+	// Start the inbound MTA listener.
+	var inboundErrCh chan error
+	if a.inboundSMTPS != nil && a.inboundSMTPS.Enabled() {
+		inboundErrCh = make(chan error, 1)
+		go func() {
+			if err := a.inboundSMTPS.Start(ctx); err != nil {
+				inboundErrCh <- fmt.Errorf("smtp inbound: %w", err)
+			}
+		}()
+	}
+
 	// Start SMTP submission listeners.
 	var smtpErrCh chan error
 	if a.smtpServer != nil {
@@ -313,11 +347,17 @@ func (a *App) Serve(ctx context.Context) error {
 	}
 
 	if a.HTTPListen == nil {
+		if inboundErrCh != nil {
+			return <-inboundErrCh
+		}
 		if smtpErrCh != nil {
 			return <-smtpErrCh
 		}
 		if imapErrCh != nil {
 			return <-imapErrCh
+		}
+		if pop3ErrCh != nil {
+			return <-pop3ErrCh
 		}
 		<-ctx.Done()
 		return nil
@@ -326,7 +366,7 @@ func (a *App) Serve(ctx context.Context) error {
 	httpErrCh := make(chan error, 1)
 	go func() { httpErrCh <- a.HTTPListen.ListenAndServe() }()
 
-	if smtpErrCh == nil && imapErrCh == nil {
+	if smtpErrCh == nil && imapErrCh == nil && pop3ErrCh == nil && inboundErrCh == nil {
 		// Only HTTP.
 		select {
 		case <-ctx.Done():
@@ -336,11 +376,13 @@ func (a *App) Serve(ctx context.Context) error {
 		}
 	}
 
-	// HTTP with SMTP, IMAP, and/or POP3.
+	// HTTP with inbound, SMTP, IMAP, and/or POP3.
 	select {
 	case <-ctx.Done():
 		return nil
 	case err := <-httpErrCh:
+		return err
+	case err := <-inboundErrCh:
 		return err
 	case err := <-smtpErrCh:
 		return err

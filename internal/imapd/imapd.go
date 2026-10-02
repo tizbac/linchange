@@ -29,9 +29,9 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	"github.com/linchange/linchange/config"
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapserver"
+	"github.com/linchange/linchange/config"
 	pwd "github.com/linchange/linchange/internal/auth/password"
 	"github.com/linchange/linchange/internal/auth/policy"
 	"github.com/linchange/linchange/internal/blobstore"
@@ -83,26 +83,11 @@ type backend struct {
 	logger          *slog.Logger
 }
 
-// New creates the IMAP server from application configuration.
+// New creates the IMAP server.
+//
+// The listener addresses come from cfg, so that the ports the operator
+// configured are the ports that are bound.
 func New(db *sqlx.DB, blobs *blobstore.Store,
-	log *slog.Logger, users *store.Users, aliases *store.Aliases,
-	creds *store.Credentials,
-	sharedMailboxes *store.SharedMailboxes, sharedGrants *store.SharedMailboxGrants,
-) (*Server, error) {
-	return newFromConfig(db, blobs, log, users, aliases, creds, sharedMailboxes, sharedGrants, config.New())
-}
-
-// NewForTest creates the IMAP server with a custom configuration.
-func NewForTest(db *sqlx.DB, blobs *blobstore.Store,
-	log *slog.Logger, users *store.Users, aliases *store.Aliases,
-	creds *store.Credentials,
-	sharedMailboxes *store.SharedMailboxes, sharedGrants *store.SharedMailboxGrants,
-	cfg *config.Config,
-) (*Server, error) {
-	return newFromConfig(db, blobs, log, users, aliases, creds, sharedMailboxes, sharedGrants, cfg)
-}
-
-func newFromConfig(db *sqlx.DB, blobs *blobstore.Store,
 	log *slog.Logger, users *store.Users, aliases *store.Aliases,
 	creds *store.Credentials,
 	sharedMailboxes *store.SharedMailboxes, sharedGrants *store.SharedMailboxGrants,
@@ -139,23 +124,23 @@ func newFromConfig(db *sqlx.DB, blobs *blobstore.Store,
 				return sess, nil, nil
 			},
 			Caps: imap.CapSet{
-				imap.CapIMAP4rev1:     {},
-				imap.CapIMAP4rev2:     {},
-				imap.CapIdle:          {},
-				imap.CapNamespace:     {},
-				imap.CapUIDPlus:       {},
-				imap.CapSASLIR:        {},
-				imap.CapLiteralMinus:  {},
-				imap.CapUnselect:      {},
-				imap.CapEnable:        {},
-				imap.CapID:            {},
-				imap.CapESearch:       {},
-				imap.CapSearchRes:     {},
-				imap.CapListExtended:  {},
-				imap.CapListStatus:    {},
-				imap.CapMove:          {},
-				imap.CapStatusSize:    {},
-				imap.CapChildren:      {},
+				imap.CapIMAP4rev1:    {},
+				imap.CapIMAP4rev2:    {},
+				imap.CapIdle:         {},
+				imap.CapNamespace:    {},
+				imap.CapUIDPlus:      {},
+				imap.CapSASLIR:       {},
+				imap.CapLiteralMinus: {},
+				imap.CapUnselect:     {},
+				imap.CapEnable:       {},
+				imap.CapID:           {},
+				imap.CapESearch:      {},
+				imap.CapSearchRes:    {},
+				imap.CapListExtended: {},
+				imap.CapListStatus:   {},
+				imap.CapMove:         {},
+				imap.CapStatusSize:   {},
+				imap.CapChildren:     {},
 			},
 			InsecureAuth: true,
 			Logger:       imapLogger{log: log},
@@ -186,23 +171,23 @@ func newFromConfig(db *sqlx.DB, blobs *blobstore.Store,
 				return sess, nil, nil
 			},
 			Caps: imap.CapSet{
-				imap.CapIMAP4rev1:     {},
-				imap.CapIMAP4rev2:     {},
-				imap.CapIdle:          {},
-				imap.CapNamespace:     {},
-				imap.CapUIDPlus:       {},
-				imap.CapSASLIR:        {},
-				imap.CapLiteralMinus:  {},
-				imap.CapUnselect:      {},
-				imap.CapEnable:        {},
-				imap.CapID:            {},
-				imap.CapESearch:       {},
-				imap.CapSearchRes:     {},
-				imap.CapListExtended:  {},
-				imap.CapListStatus:    {},
-				imap.CapMove:          {},
-				imap.CapStatusSize:    {},
-				imap.CapChildren:      {},
+				imap.CapIMAP4rev1:    {},
+				imap.CapIMAP4rev2:    {},
+				imap.CapIdle:         {},
+				imap.CapNamespace:    {},
+				imap.CapUIDPlus:      {},
+				imap.CapSASLIR:       {},
+				imap.CapLiteralMinus: {},
+				imap.CapUnselect:     {},
+				imap.CapEnable:       {},
+				imap.CapID:           {},
+				imap.CapESearch:      {},
+				imap.CapSearchRes:    {},
+				imap.CapListExtended: {},
+				imap.CapListStatus:   {},
+				imap.CapMove:         {},
+				imap.CapStatusSize:   {},
+				imap.CapChildren:     {},
 			},
 			TLSConfig: tlsCfg,
 			Logger:    imapLogger{log: log},
@@ -263,13 +248,13 @@ func (l imapLogger) Printf(format string, args ...interface{}) {
 
 // session holds the state for one IMAP connection.
 type session struct {
-	backend      *backend
-	user         string
-	password     string
+	backend       *backend
+	user          string
+	password      string
 	authenticated bool
-	selected     *selectedMailbox
-	readonly     bool
-	idleDone     chan struct{}
+	selected      *selectedMailbox
+	readonly      bool
+	idleDone      chan struct{}
 }
 
 type selectedMailbox struct {
@@ -283,8 +268,8 @@ type selectedMailbox struct {
 // Login handles SASL LOGIN authentication.
 func (b *backend) NewSession() (imapserver.Session, error) {
 	return &session{
-		backend:    b,
-		idleDone:   make(chan struct{}),
+		backend:  b,
+		idleDone: make(chan struct{}),
 	}, nil
 }
 
@@ -450,11 +435,11 @@ func (s *session) matchPattern(name, pattern string) bool {
 	// For simplicity, convert % to * and normalize multiple asterisks
 	pattern = strings.ReplaceAll(pattern, "%", "*")
 	pattern = normalizeAsterisks(pattern)
-	
+
 	if pattern == "*" {
 		return true
 	}
-	
+
 	if strings.Contains(pattern, "*") {
 		parts := strings.SplitN(pattern, "*", 2)
 		if len(parts) == 2 {
@@ -562,9 +547,9 @@ func (s *session) Select(mailbox string, options *imap.SelectOptions) (*imap.Sel
 	}
 
 	return &imap.SelectData{
-		NumMessages:   s.selected.messageCount,
-		UIDNext:       imap.UID(s.selected.uidNext),
-		UIDValidity:   s.selected.uidValidity,
+		NumMessages: s.selected.messageCount,
+		UIDNext:     imap.UID(s.selected.uidNext),
+		UIDValidity: s.selected.uidValidity,
 	}, nil
 }
 
@@ -639,8 +624,8 @@ func (s *session) Status(mailbox string, options *imap.StatusOptions) (*imap.Sta
 
 	msgCountU32 := uint32(msgCount)
 	return &imap.StatusData{
-		Mailbox:       name,
-		NumMessages:   &msgCountU32,
+		Mailbox:     name,
+		NumMessages: &msgCountU32,
 	}, nil
 }
 

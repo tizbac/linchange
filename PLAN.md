@@ -147,12 +147,13 @@ internal/
   policy/                    the one place that authorises every action
   auth/                      provider chain: local | ldap | shared | domain_admin
   mail/                      RFC 5322 parse/build, envelope, threading, quota, send caps
-  smtpd/                     :25 inbound MTA and :587/:465 submission (same lib, different backend)
+  smtpd/                     :587/:465 submission, authenticated, go-smtp backend
   imapd/                     imapserver.Session backed by store; IDLE via LISTEN/NOTIFY
   pop3d/                     hand-written RFC 1939
   lmtpd/                     go-smtp LMTPSession; free, and makes integration testing real
   delivery/                  persistent Postgres outbox, workers, backoff, DSN bounces
-  inbound/                   SPF/DKIM/DMARC evaluation, greylisting, spam scoring
+  inbound/                   :25 inbound MTA: recipient resolution, greylisting, SPF/DKIM/
+                             DMARC evaluation, spam scoring, routing into INBOX/Junk
   httpapi/                   chi router: rest/ | ews/ | eas/ | autodiscover/
   mapihttp/                  P11: MAPI/HTTP (Outlook-native), hand-written vs [MS-OXCMAPIHTTP]
   admin/                     domain-admin service layer, impersonation, audit
@@ -258,7 +259,7 @@ exists rather than a wish list.
 | P3 | submission policy; DKIM; outbox with retry and DSN bounces | real send to an external SMTP sink | ✅ DONE |
 | P4 | IMAP server | Thunderbird + `imapclient` conformance run | ✅ DONE |
 | P5 | POP3 server | `openssl s_client` command transcripts | ✅ DONE |
-| P6 | inbound `:25`; SPF/DKIM/DMARC; greylisting; junk routing | inbound fixture plus live test | pending |
+| P6 | inbound `:25`; SPF/DKIM/DMARC; greylisting; junk routing | inbound fixture plus live test | ✅ DONE |
 | P7 | webmail: folders, list, read, compose, send, search, threading, attachments, aliases, shared mailboxes, rules | browser E2E | pending |
 | P8 | LDAP/AD provider; sync; off-domain → admin-only rule | LDAP fixture | pending |
 | P9 | calendars: personal + workgroup; recurrence; iMIP REQUEST/REPLY/CANCEL; free/busy; FullCalendar UI | ICS round-trip and expansion tests | pending |
