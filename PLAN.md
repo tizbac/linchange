@@ -256,7 +256,7 @@ exists rather than a wish list.
 | P1 | auth chain; argon2id; TOTP + recovery; reset via secondary email; JWT; chi skeleton; Angular + Tailwind shell with login and TOTP screens | end-to-end browser login | done |
 | P2 | domains; mailboxes; aliases; shared mailboxes; quotas; admin API; impersonation + audit; admin panel | CRUD, quota and impersonation tests | ✅ DONE |
 | P3 | submission policy; DKIM; outbox with retry and DSN bounces | real send to an external SMTP sink | ✅ DONE |
-| P4 | IMAP server | Thunderbird + `imapclient` conformance run | pending |
+| P4 | IMAP server | Thunderbird + `imapclient` conformance run | ✅ DONE |
 | P5 | POP3 server | `openssl s_client` command transcripts | pending |
 | P6 | inbound `:25`; SPF/DKIM/DMARC; greylisting; junk routing | inbound fixture plus live test | pending |
 | P7 | webmail: folders, list, read, compose, send, search, threading, attachments, aliases, shared mailboxes, rules | browser E2E | pending |
