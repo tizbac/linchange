@@ -21,6 +21,7 @@ import (
 	"github.com/linchange/linchange/internal/delivery"
 	"github.com/linchange/linchange/internal/dkim"
 	"github.com/linchange/linchange/internal/httpapi"
+	imapd "github.com/linchange/linchange/internal/imapd"
 	"github.com/linchange/linchange/internal/smtpd"
 	"github.com/linchange/linchange/internal/store"
 )
@@ -36,6 +37,7 @@ type App struct {
 
 	deliveryPool *delivery.Pool
 	smtpServer   *smtpd.Server
+	imapServer   *imapd.Server
 	dkimKeys     *dkim.Keys
 	StartedAt    time.Time
 
@@ -149,6 +151,32 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		}
 	}
 
+	// Wire the IMAP server.
+	{
+		imapSrv, err := imapd.New(
+			db,
+			blobs,
+			log,
+			store.NewUsers(),
+			store.NewAliases(),
+			store.NewCredentials(),
+			store.NewSharedMailboxes(),
+			store.NewSharedMailboxGrants(),
+		)
+		if err != nil {
+			a.Close(context.Background())
+			return nil, fmt.Errorf("imapd: %w", err)
+		}
+		a.imapServer = imapSrv
+
+		if imapSrv.Enabled() {
+			a.OnShutdown(func(ctx context.Context) error {
+				log.Info("imap listeners stopped")
+				return nil
+			})
+		}
+	}
+
 	// Initialise DKIM key manager.
 	if cfg.Mail.DKIM.SelectorPrefix != "" {
 		a.dkimKeys = dkim.New(cfg.Dir("dkim"))
@@ -191,6 +219,8 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		"http", cfg.Listener.HTTP.Addr,
 		"smtp_submission", cfg.Listener.SMTPSubmission.Addr,
 		"smtp_submission_tls", cfg.Listener.SMTPSubmissionTLS.Addr,
+		"imap", cfg.Listener.IMAP.Addr,
+		"imaps", cfg.Listener.IMAPS.Addr,
 	)
 
 	return a, nil
@@ -220,9 +250,28 @@ func (a *App) Serve(ctx context.Context) error {
 		}()
 	}
 
+	// Start IMAP listeners.
+	var imapErrCh chan error
+	if a.imapServer != nil && a.imapServer.Enabled() {
+		imapErrCh = make(chan error, 2)
+		go func() {
+			if err := a.imapServer.StartPlain(ctx); err != nil {
+				imapErrCh <- fmt.Errorf("imap: %w", err)
+			}
+		}()
+		go func() {
+			if err := a.imapServer.StartTLS(ctx); err != nil {
+				imapErrCh <- fmt.Errorf("imaps: %w", err)
+			}
+		}()
+	}
+
 	if a.HTTPListen == nil {
 		if smtpErrCh != nil {
 			return <-smtpErrCh
+		}
+		if imapErrCh != nil {
+			return <-imapErrCh
 		}
 		<-ctx.Done()
 		return nil
@@ -231,8 +280,8 @@ func (a *App) Serve(ctx context.Context) error {
 	httpErrCh := make(chan error, 1)
 	go func() { httpErrCh <- a.HTTPListen.ListenAndServe() }()
 
-	if smtpErrCh == nil {
-		// Only HTTP, no SMTP.
+	if smtpErrCh == nil && imapErrCh == nil {
+		// Only HTTP.
 		select {
 		case <-ctx.Done():
 			return nil
@@ -241,13 +290,15 @@ func (a *App) Serve(ctx context.Context) error {
 		}
 	}
 
-	// Both HTTP and SMTP.
+	// HTTP with SMTP and/or IMAP.
 	select {
 	case <-ctx.Done():
 		return nil
+	case err := <-httpErrCh:
+		return err
 	case err := <-smtpErrCh:
 		return err
-	case err := <-httpErrCh:
+	case err := <-imapErrCh:
 		return err
 	}
 }
