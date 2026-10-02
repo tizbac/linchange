@@ -88,6 +88,11 @@ func (r *MessageRepo) Insert(ctx context.Context, db *sqlx.DB, mailboxID int64,
 	var result MessageResult
 
 	err := store.InTx(ctx, db, func(tx *sqlx.Tx) error {
+		threadKey, err := adoptThread(ctx, tx, mailboxID, meta, internalDate)
+		if err != nil {
+			return err
+		}
+
 		const reserveUID = `
 			UPDATE mailboxes SET uidnext = uidnext + 1, updated_at = now()
 			WHERE id = $1
@@ -104,10 +109,10 @@ func (r *MessageRepo) Insert(ctx context.Context, db *sqlx.DB, mailboxID int64,
 			        $12, $13, $14)
 			RETURNING id`
 		var id int64
-		err := tx.GetContext(ctx, &id, insertMessage,
+		err = tx.GetContext(ctx, &id, insertMessage,
 			mailboxID, result.UID, blobSHA256, size, internalDate, flags,
 			meta.Subject, meta.FromAddress, meta.FromName, meta.Snippet,
-			meta.MessageID, meta.ThreadKey, meta.ThreadSubject, meta.HasAttachments)
+			meta.MessageID, threadKey, meta.ThreadSubject, meta.HasAttachments)
 		if err != nil {
 			return fmt.Errorf("store: insert message: %w", err)
 		}
