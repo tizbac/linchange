@@ -27,14 +27,14 @@ func TestBackoffCalculateBackoff(t *testing.T) {
 			name:      "zero attempts returns base delay",
 			attempts:  0,
 			wantMin:   time.Minute,
-			wantMax:   time.Minute * 60/4 + time.Minute, // base + 25% jitter
+			wantMax:   time.Minute*60/4 + time.Minute, // base + 25% jitter
 			wantValid: true,
 		},
 		{
 			name:      "one attempt doubles",
 			attempts:  1,
 			wantMin:   time.Minute * 2,
-			wantMax:   time.Minute * 2 + time.Minute*30/4,
+			wantMax:   time.Minute*2 + time.Minute*30/4,
 			wantValid: true,
 		},
 		{

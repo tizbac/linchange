@@ -1,8 +1,6 @@
 package inbound
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
-	"net/textproto"
 	"strings"
 	"time"
 
@@ -24,6 +21,7 @@ import (
 	"github.com/linchange/linchange/internal/blobstore"
 	imapd "github.com/linchange/linchange/internal/imapd"
 	"github.com/linchange/linchange/internal/logging"
+	"github.com/linchange/linchange/internal/mail"
 	"github.com/linchange/linchange/internal/store"
 )
 
@@ -289,13 +287,25 @@ func (s *session) Data(r io.Reader) error {
 		}
 	}
 
-	fromAddr, fromName, subject, internalDate, snippet := parseDisplay(data)
-	flags := []string{}
+	meta, err := mail.Describe(data)
+	if err != nil {
+		return &smtp.SMTPError{
+			Code:         554,
+			EnhancedCode: smtp.EnhancedCode{5, 6, 0},
+			Message:      "message could not be parsed",
+		}
+	}
+	internalDate := meta.Date
+	if internalDate.IsZero() {
+		internalDate = time.Now().UTC()
+	}
+
+	var flags []string
 	if junk {
 		flags = []string{"\\Junk"}
 	}
 
-	if err := s.deliver(ctx, digest, size, flags, fromAddr, fromName, subject, snippet, internalDate); err != nil {
+	if err := s.deliver(ctx, digest, size, flags, meta, internalDate); err != nil {
 		return err
 	}
 
@@ -319,7 +329,7 @@ func (s *session) Data(r io.Reader) error {
 // before anything is written; a failure between the check and the insert is
 // possible in principle and would cost the sender a retry.
 func (s *session) deliver(ctx context.Context, digest blobstore.Digest, size int64,
-	flags []string, fromAddr, fromName, subject, snippet string, internalDate time.Time,
+	flags []string, meta mail.Metadata, internalDate time.Time,
 ) error {
 	owners := make([]string, 0, len(s.owners))
 	seen := map[string]bool{}
@@ -357,7 +367,12 @@ func (s *session) deliver(ctx context.Context, digest blobstore.Digest, size int
 			}
 		}
 		if _, err := s.backend.messages.Insert(ctx, s.backend.db, mbID, digest[:], size,
-			internalDate, flags, fromAddr, fromName, subject, snippet); err != nil {
+			internalDate, flags, meta); err != nil {
+			// The sender gets a temporary failure and will retry, but the
+			// operator needs to know why: without this the only symptom is a
+			// mailbox that never fills up.
+			s.backend.log.Error("store message failed",
+				"owner", owner, "error", err)
 			return &smtp.SMTPError{
 				Code:         451,
 				EnhancedCode: smtp.EnhancedCode{4, 3, 0},
@@ -391,7 +406,11 @@ func (s *session) context() context.Context { return context.Background() }
 // fillDMARCSignals evaluates DMARC for the message and records the outcome on
 // the session signals.
 func (s *session) fillDMARCSignals(ctx context.Context, data []byte, verifs []*dkim.Verification) {
-	fromAddr, _, _, _, _ := parseDisplay(data)
+	meta, describeErr := mail.Describe(data)
+	fromAddr := ""
+	if describeErr == nil {
+		fromAddr = meta.FromAddress
+	}
 	if fromAddr == "" {
 		return
 	}
@@ -524,61 +543,4 @@ func scoreSummary(sc Score) string {
 		parts = append(parts, fmt.Sprintf("%s(%g)", p.Name, p.Score))
 	}
 	return fmt.Sprintf("score %.1f [%s]", sc.Total, strings.Join(parts, ", "))
-}
-
-// parseDisplay extracts the display fields for a stored message: the From
-// address and name, the subject, the date, and a header snippet.
-func parseDisplay(data []byte) (fromAddr, fromName, subject string, internalDate time.Time, snippet string) {
-	reader := textproto.NewReader(bufio.NewReader(bytes.NewReader(data)))
-	headers := make(textproto.MIMEHeader)
-	var lines []string
-	for {
-		line, err := reader.ReadLine()
-		if err != nil {
-			break
-		}
-		if line == "" {
-			break
-		}
-		lines = append(lines, line)
-		if parts := strings.SplitN(line, ":", 2); len(parts) == 2 {
-			headers.Add(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
-		}
-	}
-
-	if froms := headers["From"]; len(froms) > 0 {
-		fromName, fromAddr = parseAddressField(froms[0])
-	}
-	if subjects := headers["Subject"]; len(subjects) > 0 {
-		subject = subjects[0]
-	}
-	internalDate = time.Now().UTC()
-	if dates := headers["Date"]; len(dates) > 0 {
-		if t, err := time.Parse(time.RFC1123Z, dates[0]); err == nil {
-			internalDate = t.UTC()
-		} else if t, err := time.Parse(time.RFC3339, dates[0]); err == nil {
-			internalDate = t.UTC()
-		}
-	}
-	if len(lines) > 0 {
-		snippet = strings.Join(lines[:min(5, len(lines))], " ")
-		if len(snippet) > 200 {
-			snippet = snippet[:200]
-		}
-	}
-	return fromAddr, fromName, subject, internalDate, snippet
-}
-
-// parseAddressField splits a From: header into display name and address.
-func parseAddressField(header string) (name, addr string) {
-	if i := strings.LastIndexByte(header, '<'); i >= 0 {
-		name = strings.TrimSpace(header[:i])
-		addr = strings.TrimSpace(header[i+1:])
-		if j := strings.IndexByte(addr, '>'); j >= 0 {
-			addr = strings.TrimSpace(addr[:j])
-		}
-		// A display name may carry a quoted string; keep it verbatim.
-		return name, addr
-	}
-	return "", strings.TrimSpace(header)
 }

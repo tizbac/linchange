@@ -54,12 +54,12 @@ type Config struct {
 
 // Pool manages the delivery worker pool.
 type Pool struct {
-	cfg    Config
-	logger *slog.Logger
-	db     *sqlx.DB
-	quit   chan struct{}
-	done   chan struct{}
-	active atomic.Int64
+	cfg     Config
+	logger  *slog.Logger
+	db      *sqlx.DB
+	quit    chan struct{}
+	done    chan struct{}
+	active  atomic.Int64
 	stopped atomic.Bool
 }
 
@@ -90,13 +90,13 @@ func FromConfig(appCfg *config.Config, logger *slog.Logger, db *sqlx.DB) *Pool {
 			Delay:       appCfg.Mail.Outbound.DSN.Delay,
 		},
 		SMTP: SMTPConfig{
-			Host:             appCfg.Mail.Outbound.SMTPHost,
-			Port:             appCfg.Mail.Outbound.SMTPPort,
-			TLS:              appCfg.Mail.Outbound.SMTPStartTLS,
-			ConnectTimeout:   appCfg.Mail.Outbound.ConnectTimeout,
-			CommandTimeout:   appCfg.Mail.Outbound.CommandTimeout,
-			Username:         appCfg.Mail.Outbound.SMTPUsername,
-			Password:         appCfg.Mail.Outbound.SMTPPassword,
+			Host:           appCfg.Mail.Outbound.SMTPHost,
+			Port:           appCfg.Mail.Outbound.SMTPPort,
+			TLS:            appCfg.Mail.Outbound.SMTPStartTLS,
+			ConnectTimeout: appCfg.Mail.Outbound.ConnectTimeout,
+			CommandTimeout: appCfg.Mail.Outbound.CommandTimeout,
+			Username:       appCfg.Mail.Outbound.SMTPUsername,
+			Password:       appCfg.Mail.Outbound.SMTPPassword,
 		},
 		Outbox:    NewOutboxRepository(db),
 		BlobStore: nil, // Must be set by the caller.
@@ -243,8 +243,8 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 		if key, pubKey, err := p.cfg.DKIMKeys.GetOrCreate(signingDomain); err == nil {
 			// Check if we already have a cached key.
 			signedBlob, err := dkim.Sign(blob, &dkim.SignOptions{
-				Domain:   signingDomain,
-				Selector: p.cfg.DKIMSelectorPrefix,
+				Domain:     signingDomain,
+				Selector:   p.cfg.DKIMSelectorPrefix,
 				PrivateKey: key,
 			})
 			if err == nil {

@@ -152,8 +152,10 @@ import {
                   <admin-field label="Access">
                     <select class="{{ inputClass }}" name="level" [(ngModel)]="memberLevel">
                       <option value="read">read</option>
-                      <option value="readwrite">read and write</option>
-                      <option value="fullcontrol">full control</option>
+                      <option value="read">read</option>
+                      <option value="contribute">contribute</option>
+                      <option value="editor">editor</option>
+                      <option value="owner">owner</option>
                     </select>
                   </admin-field>
                   <admin-button variant="primary" type="submit" [disabled]="busy()">Grant</admin-button>
@@ -183,7 +185,7 @@ export class AdminSharedMailboxesComponent implements OnInit {
   protected readonly memberFor = signal('');
 
   protected memberAddress = '';
-  protected memberLevel: SharedMailboxGrant['level'] = 'readwrite';
+  protected memberLevel: SharedMailboxGrant['level'] = 'editor';
   protected draft = {
     address: '',
     displayName: '',

@@ -66,38 +66,38 @@ const (
 type OutboxRecipientKind string
 
 const (
-	To   OutboxRecipientKind = "to"
-	CC   OutboxRecipientKind = "cc"
-	BCC  OutboxRecipientKind = "bcc"
+	To  OutboxRecipientKind = "to"
+	CC  OutboxRecipientKind = "cc"
+	BCC OutboxRecipientKind = "bcc"
 )
 
 // OutboxMessage is one row of the outbox table plus its recipients.
 type OutboxMessage struct {
-	ID            int64               `db:"id"`
-	SubmittedBy   string              `db:"submitted_by"`
-	EnvelopeFrom  string              `db:"envelope_from"`
-	BlobSHA256    []byte              `db:"blob_sha256"`
-	Size          int64               `db:"size"`
-	State         OutboxState         `db:"state"`
-	Attempts      int                 `db:"attempts"`
-	NextAttemptAt time.Time           `db:"next_attempt_at"`
-	LastError     string              `db:"last_error"`
-	FailedAt      sql.NullTime        `db:"failed_at"`
-	DSNAt         sql.NullTime        `db:"dsn_at"`
-	SentAt        sql.NullTime        `db:"sent_at"`
-	CreatedAt     time.Time           `db:"created_at"`
-	Recipients    []OutboxRecipient   `db:"-"`
+	ID            int64             `db:"id"`
+	SubmittedBy   string            `db:"submitted_by"`
+	EnvelopeFrom  string            `db:"envelope_from"`
+	BlobSHA256    []byte            `db:"blob_sha256"`
+	Size          int64             `db:"size"`
+	State         OutboxState       `db:"state"`
+	Attempts      int               `db:"attempts"`
+	NextAttemptAt time.Time         `db:"next_attempt_at"`
+	LastError     string            `db:"last_error"`
+	FailedAt      sql.NullTime      `db:"failed_at"`
+	DSNAt         sql.NullTime      `db:"dsn_at"`
+	SentAt        sql.NullTime      `db:"sent_at"`
+	CreatedAt     time.Time         `db:"created_at"`
+	Recipients    []OutboxRecipient `db:"-"`
 }
 
 // OutboxRecipient is one row of the outbox_recipients table.
 type OutboxRecipient struct {
-	Position    int               `db:"position"`
-	Address     string            `db:"address"`
+	Position    int                 `db:"position"`
+	Address     string              `db:"address"`
 	Kind        OutboxRecipientKind `db:"kind"`
-	State       RecipientState    `db:"state"`
-	Attempts    int               `db:"attempts"`
-	LastError   string            `db:"last_error"`
-	DeliveredAt sql.NullTime      `db:"delivered_at"`
+	State       RecipientState      `db:"state"`
+	Attempts    int                 `db:"attempts"`
+	LastError   string              `db:"last_error"`
+	DeliveredAt sql.NullTime        `db:"delivered_at"`
 }
 
 // ---------------------------------------------------------------------------
@@ -194,14 +194,14 @@ func (c BackoffConfig) CalculateBackoff(attempts int, createdAt time.Time) (time
 
 // SMTPConfig holds the connection parameters for the SMTP client.
 type SMTPConfig struct {
-	Host                 string
-	Port                 int
-	TLS                  bool
-	ConnectTimeout       time.Duration
-	CommandTimeout       time.Duration
-	Username             string
-	Password             string
-	InsecureSkipVerify   bool
+	Host               string
+	Port               int
+	TLS                bool
+	ConnectTimeout     time.Duration
+	CommandTimeout     time.Duration
+	Username           string
+	Password           string
+	InsecureSkipVerify bool
 }
 
 // smtpClient wraps an SMTP client and provides the Send method.
@@ -420,65 +420,6 @@ func GenerateDSN(cfg DSNConfig, msg OutboxMessage, failedRecipients []OutboxReci
 	fmt.Fprintf(&b, "\r\n")
 
 	return []byte(b.String()), nil
-}
-
-
-// ParseMessageTo extracts all recipient addresses from an RFC 5322 message.
-// It looks for To: and Cc: headers. Invalid addresses are silently skipped.
-// A full implementation would use go-message for proper MIME parsing.
-func ParseMessageTo(data []byte) ([]string, error) {
-	// Normalize line endings so we correctly handle \n, \r\n, or mixed.
-	raw := strings.ReplaceAll(string(data), "\r\n", "\n")
-	raw = strings.ReplaceAll(raw, "\r", "\n")
-
-	var addrs []string
-	lines := strings.Split(raw, "\n")
-	var currentHeader string
-	var headerValue strings.Builder
-	var sawToOrCc bool
-
-	flushHeader := func() {
-		h := strings.ToLower(strings.TrimSpace(currentHeader))
-		if h == "to" || h == "cc" {
-			sawToOrCc = true
-			for _, a := range strings.Split(headerValue.String(), ",") {
-				a = strings.TrimSpace(a)
-				addr, err := mail.ParseAddress(a)
-				if err != nil {
-					continue
-				}
-				addrs = append(addrs, addr.Address)
-			}
-		}
-		currentHeader = ""
-		headerValue.Reset()
-	}
-
-	inHeaders := true
-	for _, line := range lines {
-		if inHeaders {
-			if line == "" {
-				flushHeader()
-				inHeaders = false
-				continue
-			}
-			if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
-				headerValue.WriteString(" " + strings.TrimSpace(line))
-				continue
-			}
-			flushHeader()
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 {
-				currentHeader = strings.TrimSpace(parts[0])
-				headerValue.WriteString(strings.TrimSpace(parts[1]))
-			}
-		}
-	}
-
-	if !sawToOrCc {
-		return nil, errors.New("no To: or Cc: headers found")
-	}
-	return addrs, nil
 }
 
 // ---------------------------------------------------------------------------

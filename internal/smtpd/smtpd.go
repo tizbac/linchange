@@ -24,6 +24,7 @@ import (
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/delivery"
 	"github.com/linchange/linchange/internal/logging"
+	"github.com/linchange/linchange/internal/mail"
 	"github.com/linchange/linchange/internal/store"
 )
 
@@ -85,6 +86,29 @@ func (b *Backend) NewSession(conn *smtp.Conn) (smtp.Session, error) {
 		recipients: []string{},
 	}
 	return s, nil
+}
+
+// recipientAddrsFromHeaders returns the To and Cc addresses of a message.
+//
+// A message whose headers cannot be parsed yields nothing rather than an
+// error: the envelope recipients are already known, and refusing mail because a
+// header is malformed would reject messages that any other MTA delivers.
+func recipientAddrsFromHeaders(msg []byte) []string {
+	parsed, err := mail.Parse(msg)
+	if err != nil {
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	var addrs []string
+	for _, a := range parsed.Recipients() {
+		if a.Address == "" || seen[a.Address] {
+			continue
+		}
+		seen[a.Address] = true
+		addrs = append(addrs, a.Address)
+	}
+	return addrs
 }
 
 // AuthMechanisms returns the list of supported authentication mechanisms.
@@ -213,11 +237,11 @@ func (s *session) Data(r io.Reader) error {
 		}
 	}
 
-	// Extract recipient addresses from headers.
-	headerAddrs, err := delivery.ParseMessageTo(msg)
-	if err != nil {
-		s.backend.logger.Warn("ParseMessageTo failed, falling back to envelope recipients",
-			"from", s.from, "error", err)
+	// Extract recipient addresses from headers. The envelope is what actually
+	// gets delivered to, so it stays the source of truth; the headers only add
+	// per-recipient header kinds for the delivery report.
+	headerAddrs := recipientAddrsFromHeaders(msg)
+	if len(headerAddrs) == 0 {
 		headerAddrs = append(headerAddrs, s.recipients...)
 	}
 

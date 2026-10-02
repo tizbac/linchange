@@ -9,15 +9,15 @@ import (
 
 // Mailbox holds mailbox metadata for IMAP.
 type Mailbox struct {
-	ID           int64     `db:"id"`
-	Owner        string    `db:"owner"`
-	Name         string    `db:"name"`
-	ParentID     *int64    `db:"parent_id"`
-	UIDValidity  uint32    `db:"uidvalidity"`
-	UIDNext      uint32    `db:"uidnext"`
-	SpecialUse   *string   `db:"special_use"`
-	Subscribed   bool      `db:"subscribed"`
-	CreatedBy    *string   `db:"created_by"`
+	ID          int64   `db:"id"`
+	Owner       string  `db:"owner"`
+	Name        string  `db:"name"`
+	ParentID    *int64  `db:"parent_id"`
+	UIDValidity uint32  `db:"uidvalidity"`
+	UIDNext     uint32  `db:"uidnext"`
+	SpecialUse  *string `db:"special_use"`
+	Subscribed  bool    `db:"subscribed"`
+	CreatedBy   *string `db:"created_by"`
 }
 
 // MailboxRepo handles mailbox CRUD operations.

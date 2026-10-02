@@ -48,7 +48,9 @@ export interface Alias {
 export interface SharedMailboxGrant {
   shared_address: string;
   member_address: string;
-  level: 'read' | 'readwrite' | 'fullcontrol';
+  // The levels the server accepts. Anything else is refused by
+  // policy.GrantLevel.Valid(), so the UI must not invent its own names.
+  level: 'read' | 'contribute' | 'editor' | 'owner';
 }
 
 export interface SharedMailbox {

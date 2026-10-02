@@ -14,7 +14,6 @@
 package imapd
 
 import (
-	"bufio"
 	"context"
 	"crypto/tls"
 	"encoding/hex"
@@ -23,7 +22,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"net/textproto"
 	"strings"
 	"time"
 
@@ -35,6 +33,7 @@ import (
 	pwd "github.com/linchange/linchange/internal/auth/password"
 	"github.com/linchange/linchange/internal/auth/policy"
 	"github.com/linchange/linchange/internal/blobstore"
+	"github.com/linchange/linchange/internal/mail"
 	"github.com/linchange/linchange/internal/store"
 )
 
@@ -706,25 +705,35 @@ func (s *session) Append(mailbox string, r imap.LiteralReader, options *imap.App
 		return nil, fmt.Errorf("imap: store blob: %w", err)
 	}
 
-	// Parse the message to extract headers and flags.
-	fromAddr, fromName, subject, internalDate, flags, snippet := parseMessageHeaders(data)
+	// Describe the message once, for both the row and the address indexes.
+	meta, err := mail.Describe(data)
+	if err != nil {
+		return nil, fmt.Errorf("imap: describe message: %w", err)
+	}
 
-	// Insert the message.
-	result, err := s.backend.messageStore.Insert(ctx, s.backend.db, mb.ID, digest[:], size, internalDate, flags, fromAddr, fromName, subject, snippet)
+	// Insert reserves the UID and advances uidnext itself, so there is no
+	// second uidnext write here to race against.
+	internalDate := meta.Date
+	if options.Time.IsZero() {
+		internalDate = time.Now().UTC()
+	}
+
+	// The client names the flags it wants, and an appended message is Recent
+	// until this session has seen it.
+	flags := []string{`\Recent`}
+	for _, f := range options.Flags {
+		flags = append(flags, string(f))
+	}
+
+	result, err := s.backend.messageStore.Insert(ctx, s.backend.db, mb.ID, digest[:], size, internalDate, flags, meta)
 	if err != nil {
 		return nil, fmt.Errorf("imap: insert message: %w", err)
 	}
 
 	// Adjust quota.
-	_, err = s.backend.quotaRepo.Adjust(ctx, s.backend.db, s.user, int64(size), 1)
+	_, err = s.backend.quotaRepo.Adjust(ctx, s.backend.db, s.user, size, 1)
 	if err != nil {
 		return nil, fmt.Errorf("imap: adjust quota: %w", err)
-	}
-
-	// Update uidnext.
-	err = s.backend.mailboxStore.SetUIDNext(ctx, s.backend.db, mb.ID, result.UID+1)
-	if err != nil {
-		return nil, fmt.Errorf("imap: set uidnext: %w", err)
 	}
 
 	return &imap.AppendData{
@@ -1033,7 +1042,10 @@ func (s *session) Copy(numSet imap.NumSet, dest string) (*imap.CopyData, error) 
 			continue
 		}
 
-		result, err := s.backend.messageStore.Insert(ctx, s.backend.db, destMB.ID, digest[:], msg.Size, msg.InternalDate, msg.Flags, msg.FromAddress, msg.FromName, msg.Subject, msg.Snippet)
+		// A copy carries the source message's identity into the new folder, so
+		// that both copies of a conversation still thread together.
+		meta := msg.metadata()
+		result, err := s.backend.messageStore.Insert(ctx, s.backend.db, destMB.ID, digest[:], msg.Size, msg.InternalDate, msg.Flags, meta)
 		if err != nil {
 			continue
 		}
@@ -1075,49 +1087,41 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imap.NumSet, dest string
 		return fmt.Errorf("imap: move: %w", err)
 	}
 
-	var srcUIDs []uint32
-	var destUIDs []uint32
-	for _, msg := range messages {
-		var digest blobstore.Digest
-		copy(digest[:], msg.BlobSHA256)
-		_, err := s.backend.blobStore.Get(digest)
-		if err != nil {
-			continue
-		}
+	srcUIDs := make(imap.UIDSet, len(messages))
+	moving := make([]uint32, 0, len(messages))
+	for i, msg := range messages {
+		srcUIDs[i] = imap.UIDRange{Start: imap.UID(msg.UID), Stop: imap.UID(msg.UID)}
+		moving = append(moving, msg.UID)
+	}
 
-		result, err := s.backend.messageStore.Insert(ctx, s.backend.db, destMB.ID, digest[:], msg.Size, msg.InternalDate, msg.Flags, msg.FromAddress, msg.FromName, msg.Subject, msg.Snippet)
-		if err != nil {
-			continue
-		}
-		destUIDs = append(destUIDs, result.UID)
-		srcUIDs = append(srcUIDs, msg.UID)
+	// The rows are relocated, not reinserted, so a message keeps its message
+	// ID, thread key and address indexes across the move.
+	destUIDs, err := s.backend.messageStore.MoveTo(ctx, s.backend.db, s.selected.mailboxID, moving, destMB.ID)
+	if err != nil {
+		return fmt.Errorf("imap: move: %w", err)
+	}
 
-		err = s.backend.messageStore.DeleteByUID(ctx, s.backend.db, s.selected.mailboxID, msg.UID)
-		if err != nil {
-			continue
-		}
+	for range messages {
 		s.selected.messageCount--
 		w.WriteExpunge(s.selected.messageCount + 1)
 	}
 
-	uidSet := make(imap.UIDSet, len(srcUIDs))
-	for i, uid := range srcUIDs {
-		uidSet[i] = imap.UIDRange{Start: imap.UID(uid), Stop: imap.UID(uid)}
-	}
-
-	destUIDSet := make(imap.UIDSet, len(destUIDs))
-	for i, uid := range destUIDs {
-		destUIDSet[i] = imap.UIDRange{Start: imap.UID(uid), Stop: imap.UID(uid)}
-	}
-
-	copyData := &imap.CopyData{
+	w.WriteCopyData(&imap.CopyData{
 		UIDValidity: s.selected.uidValidity,
-		SourceUIDs:  uidSet,
-		DestUIDs:    destUIDSet,
-	}
-	w.WriteCopyData(copyData)
+		SourceUIDs:  srcUIDs,
+		DestUIDs:    imap.UIDSet(toUIDSet(destUIDs)),
+	})
 
 	return nil
+}
+
+// toUIDSet turns a UID list into the set form the IMAP response needs.
+func toUIDSet(uids []uint32) []imap.UIDRange {
+	ranges := make([]imap.UIDRange, 0, len(uids))
+	for _, uid := range uids {
+		ranges = append(ranges, imap.UIDRange{Start: imap.UID(uid), Stop: imap.UID(uid)})
+	}
+	return ranges
 }
 
 // ---------------------------------------------------------------------------
@@ -1176,90 +1180,6 @@ type messageHeaders struct {
 	subject      string
 	internalDate time.Time
 	flags        []string
-}
-
-func parseMessageHeaders(data []byte) (string, string, string, time.Time, []string, string) {
-	// Parse headers using textproto.
-	reader := textproto.NewReader(bufio.NewReader(strings.NewReader(string(data))))
-
-	// Skip empty lines at start.
-	headers := make(textproto.MIMEHeader)
-	var headerLines []string
-	for {
-		line, err := reader.ReadLine()
-		if err != nil {
-			break
-		}
-		if line == "" {
-			break // end of headers
-		}
-		headerLines = append(headerLines, line)
-		// Parse header line.
-		if parts := strings.SplitN(line, ":", 2); len(parts) == 2 {
-			name := strings.TrimSpace(parts[0])
-			value := strings.TrimSpace(parts[1])
-			headers.Add(name, value)
-		}
-	}
-
-	fromAddrs := headers["From"]
-	fromName := ""
-	fromAddr := ""
-	if len(fromAddrs) > 0 {
-		fromName, fromAddr = parseAddress(fromAddrs[0])
-	}
-
-	subject := ""
-	if subjects := headers["Subject"]; len(subjects) > 0 {
-		subject = subjects[0]
-	}
-
-	internalDate := time.Now().UTC()
-	if dates := headers["Date"]; len(dates) > 0 {
-		if t, err := time.Parse(time.RFC1123Z, dates[0]); err == nil {
-			internalDate = t.UTC()
-		} else if t, err := time.Parse(time.RFC3339, dates[0]); err == nil {
-			internalDate = t.UTC()
-		}
-	}
-
-	flags := []string{}
-	// Check for \Draft flag.
-	if drafts := headers["Draft-Status"]; len(drafts) > 0 {
-		if strings.Contains(strings.ToLower(drafts[0]), "lines") {
-			flags = append(flags, "\\Draft")
-		}
-	}
-
-	// Generate snippet from first few lines of headers.
-	snippet := ""
-	if len(headerLines) > 0 {
-		snippet = strings.Join(headerLines[:min(5, len(headerLines))], " ")
-		if len(snippet) > 200 {
-			snippet = snippet[:200]
-		}
-	}
-
-	return fromAddr, fromName, subject, internalDate, flags, snippet
-}
-
-func parseAddress(header string) (name, addr string) {
-	// Try to parse as email address.
-	// Handle: "Display Name" <email@domain>
-	if idx := strings.IndexByte(header, '<'); idx >= 0 {
-		name = strings.TrimSpace(header[:idx])
-		addr = strings.TrimSpace(header[idx+1:])
-		if len(addr) > 0 && addr[len(addr)-1] == '>' {
-			addr = addr[:len(addr)-1]
-		}
-		return name, addr
-	}
-	// Handle: email@domain
-	if strings.Contains(header, "@") {
-		parts := strings.Split(header, "@")
-		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
-	}
-	return "", strings.TrimSpace(header)
 }
 
 // ---------------------------------------------------------------------------
