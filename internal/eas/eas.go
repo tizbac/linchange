@@ -45,8 +45,8 @@ func (e *EAS) Handler() http.Handler {
 	r.Use(e.wbxmlMiddleware)
 
 	// Main ActiveSync endpoint
-	r.Post("/eas", e.handleEAS)
-	r.Get("/eas", e.handleEAS) // For OPTIONS/provisioning discovery
+	r.Post("/", e.handleEAS)
+	r.Get("/", e.handleEAS) // For OPTIONS/provisioning discovery
 
 	return r
 }

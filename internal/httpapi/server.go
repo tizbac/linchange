@@ -82,7 +82,7 @@ type Server struct {
 	// eas is the ActiveSync endpoint.
 	eas *eas.EAS
 	// mapihttp is the MAPI/HTTP endpoint for Outlook native.
-	mapihttp *mapihttp.MAPIHTTP
+	mapihttp *mapihttp.Server
 	// The repositories below back the read-only listings the web client needs:
 	// which aliases reach this mailbox, and which team mailboxes this member
 	// may open.
@@ -299,7 +299,12 @@ func New(opts Options) (*Server, error) {
 	easService := eas.New(cfg, pol)
 
 	// The MAPI/HTTP endpoint (Outlook native protocol).
-	mapihttpService := mapihttp.New(cfg, pol)
+	mapihttpService := mapihttp.New(&mapihttp.Config{
+		VersionMajor:   1,
+		VersionMinor:   0,
+		MaxPayloadSize: 10 * 1024 * 1024,
+		SessionTimeout: 30 * 60,
+	}, pol)
 
 	return &Server{
 		db:           opts.DB,

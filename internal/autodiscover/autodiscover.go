@@ -42,12 +42,12 @@ func (a *Autodiscover) Handler() http.Handler {
 	r := chi.NewRouter()
 
 	// POX endpoint - handles both POST (XML) and GET (legacy)
-	r.Post("/autodiscover/autodiscover.xml", a.handlePOX)
-	r.Get("/autodiscover/autodiscover.xml", a.handlePOX)
+	r.Post("/autodiscover.xml", a.handlePOX)
+	r.Get("/autodiscover.xml", a.handlePOX)
 
 	// Legacy redirect
-	r.Get("/autodiscover/autodiscover.svc", a.handleLegacyRedirect)
-	r.Get("/Autodiscover/Autodiscover.xml", a.handlePOX)
+	r.Get("/autodiscover.svc", a.handleLegacyRedirect)
+	r.Get("/Autodiscover.xml", a.handlePOX)
 
 	return r
 }
