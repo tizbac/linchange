@@ -260,7 +260,7 @@ exists rather than a wish list.
 | P4 | IMAP server | Thunderbird + `imapclient` conformance run | ✅ DONE |
 | P5 | POP3 server | `openssl s_client` command transcripts | ✅ DONE |
 | P6 | inbound `:25`; SPF/DKIM/DMARC; greylisting; junk routing | inbound fixture plus live test | ✅ DONE |
-| P7 | webmail: folders, list, read, compose, send, search, threading, attachments, aliases, shared mailboxes, rules | browser E2E | pending |
+| P7 | webmail: folders, list, read, compose, send, search, threading, attachments, aliases, shared mailboxes, rules | browser E2E | ✅ DONE |
 | P8 | LDAP/AD provider; sync; off-domain → admin-only rule | LDAP fixture | pending |
 | P9 | calendars: personal + workgroup; recurrence; iMIP REQUEST/REPLY/CANCEL; free/busy; FullCalendar UI | ICS round-trip and expansion tests | pending |
 | P10 | Autodiscover; EWS; ActiveSync | interop traces | pending |

@@ -8,6 +8,7 @@
 /certs/
 /.certs/
 linchange.dev.yaml
+.e2e-linchange.yaml
 
 # Web interface
 /web/node_modules/

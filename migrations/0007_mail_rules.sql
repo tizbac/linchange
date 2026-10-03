@@ -16,16 +16,17 @@ CREATE TABLE mail_rules (
     -- rules cannot shuffle between runs.
     priority      integer     NOT NULL DEFAULT 100,
     -- Conditions and actions are validated by the application. The schema
-    -- insists only that they are objects, because an array or a scalar here
-    -- would fail deep inside the delivery path instead of at the write.
-    conditions    jsonb       NOT NULL DEFAULT '{}'::jsonb,
+    -- insists only on their shape, because a wrong shape here would fail deep
+    -- inside the delivery path instead of at the write. Conditions are the
+    -- rules' list of tests (an array); actions the list of things to do.
+    conditions    jsonb       NOT NULL DEFAULT '[]'::jsonb,
     actions       jsonb       NOT NULL DEFAULT '[]'::jsonb,
     -- Whether later rules still run after this one matched. A rule that moves
     -- mail to Junk normally stops the chain, so one rule cannot undo another.
     stop_processing boolean  NOT NULL DEFAULT true,
     created_at    timestamptz NOT NULL DEFAULT now(),
     updated_at    timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT mail_rules_conditions_object CHECK (jsonb_typeof(conditions) = 'object'),
+    CONSTRAINT mail_rules_conditions_array CHECK (jsonb_typeof(conditions) = 'array'),
     CONSTRAINT mail_rules_actions_array   CHECK (jsonb_typeof(actions) = 'array'),
     CONSTRAINT mail_rules_priority_positive CHECK (priority >= 0)
 );

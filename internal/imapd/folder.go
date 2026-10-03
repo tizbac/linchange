@@ -161,18 +161,28 @@ func (r *MailboxRepo) SetSpecialUse(ctx context.Context, q store.Querier, id int
 // returns the number moved.
 //
 // Trashing is the default destructive action in a mail client because deleting
-// is the one the user should have to ask for twice. The folder is created on
+// is the one a user should have to ask for twice. The folder is created on
 // demand, so a caller does not have to check for it first.
 func (r *MailboxRepo) Trim(ctx context.Context, db *sqlx.DB, owner string, mailboxID int64, uids []uint32) (int, error) {
+	return r.MoveToNamed(ctx, db, owner, mailboxID, uids, "Trash")
+}
+
+// MoveToNamed moves messages into a named folder, creating it if it does not
+// exist, and returns how many moved.
+//
+// It is the one move every caller shares, because the reason a caller does not
+// create the folder first is the obvious one: two requests doing that at the
+// same time should not be a conflict.
+func (r *MailboxRepo) MoveToNamed(ctx context.Context, db *sqlx.DB, owner string, mailboxID int64, uids []uint32, name string) (int, error) {
 	if len(uids) == 0 {
 		return 0, nil
 	}
 
-	trashID, err := r.ensureNamed(ctx, db, owner, "Trash")
+	target, err := r.ensureNamed(ctx, db, owner, name)
 	if err != nil {
 		return 0, err
 	}
-	moved, err := new(MessageRepo).MoveTo(ctx, db, mailboxID, uids, trashID)
+	moved, err := new(MessageRepo).MoveTo(ctx, db, mailboxID, uids, target)
 	if err != nil {
 		return 0, err
 	}

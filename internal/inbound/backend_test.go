@@ -2,6 +2,7 @@ package inbound
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -155,6 +156,23 @@ func (f *inboundFixture) messages(t *testing.T, owner string) []storedMessage {
 		t.Fatalf("reading messages of %s: %v", owner, err)
 	}
 	return out
+}
+
+// seedRule stores one rule for owner, encoded the way the webmail API stores
+// rules: conditions and actions as JSON arrays the engine reads as a unit.
+func (f *inboundFixture) seedRule(t *testing.T, owner, name, conditions, actions string, stop bool) {
+	t.Helper()
+	if _, err := store.NewMailRules().Create(context.Background(), f.db, store.MailRule{
+		Owner:          owner,
+		Name:           name,
+		Enabled:        true,
+		Priority:       100,
+		Conditions:     json.RawMessage(conditions),
+		Actions:        json.RawMessage(actions),
+		StopProcessing: stop,
+	}); err != nil {
+		t.Fatalf("seeding rule %s: %v", name, err)
+	}
 }
 
 func (f *inboundFixture) quotaUsed(t *testing.T, owner string) int64 {
@@ -375,6 +393,127 @@ func TestInboundDeliversToSharedMailbox(t *testing.T) {
 	}
 	if used := f.quotaUsed(t, "support@example.com"); used != msgs[0].Size {
 		t.Errorf("shared quota used = %d, want %d", used, msgs[0].Size)
+	}
+}
+
+// A rule that matches files the message in the folder it names instead of
+// INBOX, and the folder is created on the way.
+func TestInboundFilesMessageInRuleFolder(t *testing.T) {
+	f := setupInbound(t, nil)
+	f.seedRule(t, "alice@example.com", "Newsletters",
+		`[{"field":"subject","operator":"contains","value":"newsletter"}]`,
+		`[{"type":"move","target":"Newsletters"}]`, true)
+	c := dialSMTP(t, f.addr)
+
+	if code, msg := c.cmd("MAIL FROM:<sender@example.com>"); code != 250 {
+		t.Fatalf("MAIL FROM = %d %s", code, msg)
+	}
+	if code, msg := c.cmd("RCPT TO:<alice@example.com>"); code != 250 {
+		t.Fatalf("RCPT TO = %d %s", code, msg)
+	}
+	if code, msg := c.data(inboundMessage("s@example.com", "alice@example.com", "The Monthly Newsletter", "hi")); code != 250 {
+		t.Fatalf("DATA = %d %s", code, msg)
+	}
+
+	var name string
+	if err := f.db.GetContext(context.Background(), &name,
+		`SELECT mb.name FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id
+		 WHERE mb.owner = 'alice@example.com'`); err != nil {
+		t.Fatalf("reading mailbox: %v", err)
+	}
+	if name != "Newsletters" {
+		t.Errorf("mailbox = %q, want Newsletters", name)
+	}
+}
+
+// A discard rule keeps the message out of the mailbox but the DATA still
+// succeeds: a refusal here would only prove the address exists, so the drop is
+// silent.
+func TestInboundDiscardsMessageByRule(t *testing.T) {
+	f := setupInbound(t, nil)
+	f.seedRule(t, "alice@example.com", "Spam trap",
+		`[{"field":"from","operator":"contains","value":"spambot"}]`,
+		`[{"type":"discard"}]`, true)
+	c := dialSMTP(t, f.addr)
+
+	if code, msg := c.cmd("MAIL FROM:<spambot@elsewhere.example>"); code != 250 {
+		t.Fatalf("MAIL FROM = %d %s", code, msg)
+	}
+	if code, msg := c.cmd("RCPT TO:<alice@example.com>"); code != 250 {
+		t.Fatalf("RCPT TO = %d %s", code, msg)
+	}
+	if code, msg := c.data(inboundMessage("Spambot <spambot@elsewhere.example>", "alice@example.com", "Deal", "hi")); code != 250 {
+		t.Fatalf("DATA = %d %s, want 250 (discarded, not refused)", code, msg)
+	}
+	if msgs := f.messages(t, "alice@example.com"); len(msgs) != 0 {
+		t.Fatalf("alice has %d messages, want 0", len(msgs))
+	}
+}
+
+// A forward rule sends a copy to another address while the message is still
+// filed for the owner: a forward is a copy, not a move.
+func TestInboundForwardsByRule(t *testing.T) {
+	f := setupInbound(t, nil)
+	f.seedRule(t, "alice@example.com", "Copy me",
+		`[{"field":"subject","operator":"contains","value":"copy"}]`,
+		`[{"type":"forward","target":"Copy <copy@elsewhere.example>"}]`, true)
+	c := dialSMTP(t, f.addr)
+
+	if code, msg := c.cmd("MAIL FROM:<sender@example.com>"); code != 250 {
+		t.Fatalf("MAIL FROM = %d %s", code, msg)
+	}
+	if code, msg := c.cmd("RCPT TO:<alice@example.com>"); code != 250 {
+		t.Fatalf("RCPT TO = %d %s", code, msg)
+	}
+	if code, msg := c.data(inboundMessage("s@example.com", "alice@example.com", "Please Copy This", "hi")); code != 250 {
+		t.Fatalf("DATA = %d %s", code, msg)
+	}
+
+	if msgs := f.messages(t, "alice@example.com"); len(msgs) != 1 {
+		t.Fatalf("alice has %d messages, want 1", len(msgs))
+	}
+	var count int
+	if err := f.db.GetContext(context.Background(), &count, `
+		SELECT count(*) FROM outbox o
+		JOIN outbox_recipients r ON r.outbox_id = o.id
+		WHERE o.submitted_by = 'alice@example.com'
+		  AND r.address = 'copy@elsewhere.example'`); err != nil {
+		t.Fatalf("reading outbox: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("queued forwards = %d, want 1", count)
+	}
+}
+
+// A rule that marks the message flagged and read files it with both flags, on
+// top of whatever the delivery path chose (nothing here, the sender is clean).
+func TestInboundAppliesRuleFlags(t *testing.T) {
+	f := setupInbound(t, nil)
+	f.seedRule(t, "alice@example.com", "Urgent",
+		`[{"field":"subject","operator":"contains","value":"urgent"}]`,
+		`[{"type":"mark_flagged"},{"type":"mark_read"}]`, true)
+	c := dialSMTP(t, f.addr)
+
+	if code, msg := c.cmd("MAIL FROM:<sender@example.com>"); code != 250 {
+		t.Fatalf("MAIL FROM = %d %s", code, msg)
+	}
+	if code, msg := c.cmd("RCPT TO:<alice@example.com>"); code != 250 {
+		t.Fatalf("RCPT TO = %d %s", code, msg)
+	}
+	if code, msg := c.data(inboundMessage("s@example.com", "alice@example.com", "Urgent: sign this", "hi")); code != 250 {
+		t.Fatalf("DATA = %d %s", code, msg)
+	}
+
+	msgs := f.messages(t, "alice@example.com")
+	if len(msgs) != 1 {
+		t.Fatalf("alice has %d messages, want 1", len(msgs))
+	}
+	got := map[string]bool{}
+	for _, fl := range msgs[0].Flags {
+		got[fl] = true
+	}
+	if !got["\\Flagged"] || !got["\\Seen"] {
+		t.Errorf("flags = %v, want both \\Flagged and \\Seen", msgs[0].Flags)
 	}
 }
 

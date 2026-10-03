@@ -492,7 +492,7 @@ func newServerWithImpersonationGrants(t *testing.T, db *sqlx.DB) *httpapi.Server
 	t.Helper()
 	cfg := testConfig()
 	cfg.Auth.Impersonation.RequireGrant = true
-	srv, err := httpapi.New(httpapi.Options{DB: db, Config: cfg})
+	srv, err := httpapi.New(httpapi.Options{DB: db, Config: cfg, Blobs: testBlobs(t)})
 	if err != nil {
 		t.Fatalf("building the server: %v", err)
 	}

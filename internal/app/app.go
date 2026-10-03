@@ -247,7 +247,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 	// is not the HTTP front end, in which case nothing is bound.
 	if addr := cfg.Listener.HTTP.Addr; addr != "" {
 		api, err := httpapi.New(httpapi.Options{
-			DB: db, Config: cfg, Logger: log, StaticDir: opts.StaticDir,
+			DB: db, Config: cfg, Logger: log, Blobs: blobs, StaticDir: opts.StaticDir,
 		})
 		if err != nil {
 			a.Close(context.Background())

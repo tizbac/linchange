@@ -186,3 +186,38 @@ func convertAddresses(in []*gomail.Address) []Address {
 	}
 	return out
 }
+
+// AddressList returns the decoded addresses of one header, or nil when the
+// header is absent or unusable.
+//
+// It is exported because the reader and the composer both need the individual
+// lists, not only the merged Recipients: a reply-all has to know who was in To
+// and who in Cc to put them back where the sender put them, and a reader shows
+// the lists under their own names.
+func (p *Parsed) AddressList(header string) []Address {
+	list, err := p.Header.AddressList(header)
+	if err != nil {
+		return nil
+	}
+	return convertAddresses(list)
+}
+
+// HeaderPair is one header field, for a details panel.
+type HeaderPair struct {
+	Name  string
+	Value string
+}
+
+// HeaderList returns the message's headers in the order they appeared.
+//
+// It is not decoded: a details panel shows what was sent, and a header whose
+// encoded words are unreadable is still evidence of what arrived. The values
+// are bounded by the caller.
+func (p *Parsed) HeaderList() []HeaderPair {
+	var out []HeaderPair
+	fields := p.Header.Fields()
+	for more := fields.Next(); more; more = fields.Next() {
+		out = append(out, HeaderPair{Name: fields.Key(), Value: fields.Value()})
+	}
+	return out
+}

@@ -5,6 +5,13 @@
         <div class="mx-auto flex max-w-5xl items-center justify-between px-6 py-3">
           <span class="text-lg font-semibold tracking-tight text-brand-700">linchange</span>
           <nav class="flex items-center gap-5">
+            <a
+              routerLink="/mail"
+              routerLinkActive="text-brand-700"
+              class="text-sm font-medium text-slate-600 transition hover:text-brand-700"
+            >
+              Mail
+            </a>
             @if (auth.isDomainAdmin()) {
               <a
                 routerLink="/admin/domains"

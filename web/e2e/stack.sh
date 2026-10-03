@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Boots the linchange stack for the browser end-to-end tests: a fresh
+# database, the server and the built web app. Every listener is moved off the
+# standard ports so the tests can run alongside a normal `make dev` instance.
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+
+DB=${E2E_DATABASE:-linchange_e2e}
+ADDR=${E2E_USER:-e2e-user@example.com}
+PASS=${E2E_PASSWORD:-'correct horse battery staple'}
+PORT=${E2E_PORT:-18080}
+
+test -f .env || { echo "e2e: missing .env; run `make dev-config` first" >&2; exit 1; }
+test -f linchange.dev.yaml || { echo "e2e: missing linchange.dev.yaml; run `make dev-config` first" >&2; exit 1; }
+test -f web/dist/linchange-web/browser/index.html || { echo "e2e: missing web build; run `cd web && npm run build` first" >&2; exit 1; }
+
+set -a; . ./.env; set +a
+
+go build -o bin/linchange ./cmd/linchange
+go run ./e2e/seed -config linchange.dev.yaml -database "$DB" -user "$ADDR" -password "$PASS"
+
+sed -E \
+  -e "s|^  url: .*|  url: postgres://linchange:linchange@127.0.0.1:55432/${DB}?sslmode=disable|" \
+  -e "s|^  smtp_inbound: .*|  smtp_inbound: { addr: \":1025\" }|" \
+  -e "s|^  smtp_submission: .*|  smtp_submission: { addr: \":1587\" }|" \
+  -e "s|^  imap: .*|  imap: { addr: \":1143\" }|" \
+  -e "s|^  pop3: .*|  pop3: { addr: \":1110\" }|" \
+  -e "s|^  imaps: .*|  imaps: { addr: \":1993\" }|" \
+  -e "s|^  pop3s: .*|  pop3s: { addr: \":1995\" }|" \
+  -e "s|^  smtp_submission_tls: .*|  smtp_submission_tls: { addr: \":1465\" }|" \
+  -e "s|^  http: .*|  http: { addr: \":${PORT}\" }|" \
+  linchange.dev.yaml > .e2e-linchange.yaml
+
+exec ./bin/linchange --config .e2e-linchange.yaml --web-dir web/dist/linchange-web/browser

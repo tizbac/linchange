@@ -5,6 +5,9 @@ import { ForgotPasswordComponent } from './forgot-password/forgot-password.compo
 import { LoginComponent } from './login/login.component';
 import { ResetPasswordComponent } from './reset-password/reset-password.component';
 import { SecondFactorComponent } from './second-factor/second-factor.component';
+import { MailComponent } from './mail/mail.component';
+import { MailComposeComponent } from './mail/mail.compose.component';
+import { MailRulesComponent } from './mail/mail.rules.component';
 import { AdminAliasesComponent } from './admin/admin-aliases.component';
 import { AdminAuditComponent } from './admin/admin-audit.component';
 import { AdminDomainsComponent } from './admin/admin-domains.component';
@@ -15,6 +18,15 @@ import { AdminUsersComponent } from './admin/admin-users.component';
 export const routes: Routes = [
   { path: '', pathMatch: 'full', component: DashboardComponent, canActivate: [requireAuth] },
   { path: 'dashboard', component: DashboardComponent, canActivate: [requireAuth] },
+  {
+    path: 'mail',
+    canActivate: [requireAuth],
+    children: [
+      { path: '', pathMatch: 'full', component: MailComponent },
+      { path: 'compose', component: MailComposeComponent },
+      { path: 'rules', component: MailRulesComponent },
+    ],
+  },
   { path: 'login', component: LoginComponent, canActivate: [onlyGuests] },
   { path: 'second-factor', component: SecondFactorComponent, canActivate: [onlyGuests] },
   { path: 'forgot-password', component: ForgotPasswordComponent, canActivate: [onlyGuests] },

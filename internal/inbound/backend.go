@@ -19,10 +19,12 @@ import (
 
 	"github.com/linchange/linchange/config"
 	"github.com/linchange/linchange/internal/blobstore"
+	"github.com/linchange/linchange/internal/delivery"
 	imapd "github.com/linchange/linchange/internal/imapd"
 	"github.com/linchange/linchange/internal/logging"
 	"github.com/linchange/linchange/internal/mail"
 	"github.com/linchange/linchange/internal/store"
+	"github.com/linchange/linchange/internal/webmail"
 )
 
 // defaultQuotaBytes applies when neither the user nor the domain sets a quota,
@@ -35,7 +37,8 @@ var errUnknownRecipient = errors.New("inbound: unknown recipient")
 
 // Backend implements smtp.Backend for the :25 inbound listener. It resolves
 // recipients, checks SPF/DKIM/DMARC, greylists first contacts and routes
-// messages into INBOX or Junk by spam score.
+// messages into INBOX or Junk by spam score, running each owner's rules on the
+// way in.
 type Backend struct {
 	db        *sqlx.DB
 	cfg       config.Config
@@ -49,6 +52,8 @@ type Backend struct {
 	quotas    *store.Quotas
 	mailboxes *imapd.MailboxRepo
 	messages  *imapd.MessageRepo
+	rules     *store.MailRules
+	outbox    *delivery.OutboxRepository
 }
 
 // NewBackend builds the inbound backend.
@@ -66,6 +71,8 @@ func NewBackend(db *sqlx.DB, cfg config.Config, log *slog.Logger, blobs *blobsto
 		quotas:    store.NewQuotas(),
 		mailboxes: imapd.NewMailboxRepo(),
 		messages:  imapd.NewMessageRepo(),
+		rules:     store.NewMailRules(),
+		outbox:    delivery.NewOutboxRepository(db),
 	}
 }
 
@@ -287,7 +294,7 @@ func (s *session) Data(r io.Reader) error {
 		}
 	}
 
-	meta, err := mail.Describe(data)
+	parsed, err := mail.Parse(data)
 	if err != nil {
 		return &smtp.SMTPError{
 			Code:         554,
@@ -295,17 +302,19 @@ func (s *session) Data(r io.Reader) error {
 			Message:      "message could not be parsed",
 		}
 	}
+	meta := parsed.Metadata()
 	internalDate := meta.Date
 	if internalDate.IsZero() {
 		internalDate = time.Now().UTC()
 	}
+	facts := webmail.NewMatchContext(parsed, int64(len(data)))
 
 	var flags []string
 	if junk {
 		flags = []string{"\\Junk"}
 	}
 
-	if err := s.deliver(ctx, digest, size, flags, meta, internalDate); err != nil {
+	if err := s.deliver(ctx, digest, size, flags, meta, internalDate, facts); err != nil {
 		return err
 	}
 
@@ -323,13 +332,19 @@ func (s *session) Data(r io.Reader) error {
 	return nil
 }
 
-// deliver stores the message in every recipient's INBOX.
+// deliver stores the message for every recipient, applying each owner's rules
+// on the way in.
 //
-// Quota is checked for all recipients first so a full mailbox is reported
-// before anything is written; a failure between the check and the insert is
-// possible in principle and would cost the sender a retry.
+// Quota is checked per recipient before its insert so a full mailbox is
+// reported before anything is written for it; a failure between the check and
+// the insert is possible in principle and would cost the sender a retry.
+//
+// Rules decide, per owner: whether the message is discarded at all, which
+// folder it is filed in, which flags it carries, and whether a copy goes out to
+// another address. A rule that cannot be read degrades to plain delivery
+// rather than to refusing the message.
 func (s *session) deliver(ctx context.Context, digest blobstore.Digest, size int64,
-	flags []string, meta mail.Metadata, internalDate time.Time,
+	flags []string, meta mail.Metadata, internalDate time.Time, facts webmail.MatchContext,
 ) error {
 	owners := make([]string, 0, len(s.owners))
 	seen := map[string]bool{}
@@ -340,7 +355,25 @@ func (s *session) deliver(ctx context.Context, digest blobstore.Digest, size int
 		}
 	}
 	for _, owner := range owners {
-		mbID, err := s.backend.ensureInbox(ctx, owner)
+		outcome, ok := s.backend.ownerOutcome(ctx, owner, facts)
+
+		// A discarded message is not stored for this owner, but a forward asked
+		// for in the same rule set still goes out: "send it to the spam trap and
+		// keep nothing" is the point of combining the two.
+		if ok && outcome.Discard {
+			s.backend.log.Info("inbound message discarded by rule",
+				"owner", owner, "rules", outcome.Matched)
+			if outcome.Forward != "" {
+				s.backend.queueForward(ctx, owner, digest, size, outcome.Forward)
+			}
+			continue
+		}
+
+		dest := "INBOX"
+		if ok && outcome.Destination != "" {
+			dest = outcome.Destination
+		}
+		mbID, err := s.backend.ensureMailbox(ctx, owner, dest)
 		if err != nil {
 			return &smtp.SMTPError{
 				Code:         451,
@@ -367,7 +400,7 @@ func (s *session) deliver(ctx context.Context, digest blobstore.Digest, size int
 			}
 		}
 		if _, err := s.backend.messages.Insert(ctx, s.backend.db, mbID, digest[:], size,
-			internalDate, flags, meta); err != nil {
+			internalDate, mergeFlags(flags, outcome.Flags), meta); err != nil {
 			// The sender gets a temporary failure and will retry, but the
 			// operator needs to know why: without this the only symptom is a
 			// mailbox that never fills up.
@@ -386,8 +419,81 @@ func (s *session) deliver(ctx context.Context, digest blobstore.Digest, size int
 				Message:      "unable to update quota",
 			}
 		}
+		if ok {
+			if len(outcome.Matched) > 0 {
+				s.backend.log.Info("rules applied to inbound message",
+					"owner", owner, "rules", outcome.Matched, "folder", dest)
+			}
+			if outcome.Forward != "" {
+				s.backend.queueForward(ctx, owner, digest, size, outcome.Forward)
+			}
+		}
 	}
 	return nil
+}
+
+// ownerOutcome runs the owner's enabled rules against the message facts.
+//
+// It reports whether the decision may be trusted: a failure to read or evaluate
+// the rules means the caller should deliver the ordinary way, because refusing
+// inbound mail over a settings read would turn a transient fault into lost mail.
+func (b *Backend) ownerOutcome(ctx context.Context, owner string, facts webmail.MatchContext) (webmail.RuleOutcome, bool) {
+	rows, err := b.rules.ListEnabled(ctx, b.db, owner)
+	if err != nil {
+		b.log.Warn("rules could not be read; delivering without them",
+			"owner", owner, "error", err)
+		return webmail.RuleOutcome{}, false
+	}
+	out, err := webmail.ApplyRules(rows, facts)
+	if err != nil {
+		b.log.Warn("rule evaluation failed; delivering without it",
+			"owner", owner, "error", err)
+		return webmail.RuleOutcome{}, false
+	}
+	return out, true
+}
+
+// queueForward enqueues a copy of the message for a rule-requested forward.
+//
+// The blob already holds the full message, so the forward reuses its digest and
+// the recipient gets exactly the bytes the owner received. The rule names the
+// recipient as an RFC 5322 address, possibly with a display name, so the bare
+// address is extracted before it is queued: the outbox stores what goes into an
+// RCPT TO, and a display name there would only break the delivery. A forward
+// that fails to queue is logged rather than fatal: the owner still has the
+// message, and a temporary SMTP failure would otherwise bounce mail that was
+// accepted.
+func (b *Backend) queueForward(ctx context.Context, owner string, digest blobstore.Digest, size int64, to string) {
+	addrs, err := mail.ParseAddressList(to)
+	if err != nil || len(addrs) == 0 || strings.TrimSpace(addrs[0].Address) == "" {
+		b.log.Warn("rule forward named no usable address", "owner", owner, "to", to, "error", err)
+		return
+	}
+	to = strings.ToLower(strings.TrimSpace(addrs[0].Address))
+	_, err = b.outbox.InsertMessage(ctx, nil, owner, owner, digest[:], size,
+		[]delivery.OutboxRecipient{{Position: 0, Address: to, Kind: delivery.To}})
+	if err != nil {
+		b.log.Warn("could not queue rule forward", "owner", owner, "to", to, "error", err)
+		return
+	}
+	b.log.Info("rule forward queued", "owner", owner, "to", to)
+}
+
+// mergeFlags joins the delivery flags (junk) with the rule flags, repeating
+// neither.
+func mergeFlags(base, extra []string) []string {
+	out := make([]string, 0, len(base)+len(extra))
+	seen := map[string]bool{}
+	for _, group := range [][]string{base, extra} {
+		for _, f := range group {
+			if seen[f] {
+				continue
+			}
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // Reset clears the transaction state.
@@ -486,18 +592,19 @@ func (b *Backend) mailbox(ctx context.Context, address string) (string, bool, er
 	return usr.Address, true, nil
 }
 
-// ensureInbox returns the id of the owner's INBOX, creating it on first use.
-func (b *Backend) ensureInbox(ctx context.Context, owner string) (int64, error) {
-	mb, err := b.mailboxes.GetByName(ctx, b.db, owner, "INBOX")
+// ensureMailbox returns the id of the owner's mailbox named name, creating it
+// on first use.
+func (b *Backend) ensureMailbox(ctx context.Context, owner, name string) (int64, error) {
+	mb, err := b.mailboxes.GetByName(ctx, b.db, owner, name)
 	if err == nil {
 		return mb.ID, nil
 	}
 	if !store.IsNotFound(err) {
 		return 0, err
 	}
-	if err := b.mailboxes.Create(ctx, b.db, owner, "INBOX", nil); err != nil {
+	if err := b.mailboxes.Create(ctx, b.db, owner, name, nil); err != nil {
 		if store.IsConflict(err) {
-			mb, gerr := b.mailboxes.GetByName(ctx, b.db, owner, "INBOX")
+			mb, gerr := b.mailboxes.GetByName(ctx, b.db, owner, name)
 			if gerr != nil {
 				return 0, gerr
 			}
@@ -505,7 +612,7 @@ func (b *Backend) ensureInbox(ctx context.Context, owner string) (int64, error) 
 		}
 		return 0, err
 	}
-	mb, err = b.mailboxes.GetByName(ctx, b.db, owner, "INBOX")
+	mb, err = b.mailboxes.GetByName(ctx, b.db, owner, name)
 	if err != nil {
 		return 0, err
 	}

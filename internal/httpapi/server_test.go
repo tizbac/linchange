@@ -21,6 +21,7 @@ import (
 	"github.com/linchange/linchange/config"
 	"github.com/linchange/linchange/internal/auth/password"
 	"github.com/linchange/linchange/internal/auth/totp"
+	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/httpapi"
 	"github.com/linchange/linchange/internal/store"
 )
@@ -187,9 +188,20 @@ func totpCode(t *testing.T, at time.Time) string {
 	return code
 }
 
+// testBlobs opens a blob store in the test's temporary directory.
+func testBlobs(t *testing.T) *blobstore.Store {
+	t.Helper()
+
+	blobs, err := blobstore.Open(blobstore.Options{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("opening the blob store: %v", err)
+	}
+	return blobs
+}
+
 func newServer(t *testing.T, db *sqlx.DB) *httpapi.Server {
 	t.Helper()
-	srv, err := httpapi.New(httpapi.Options{DB: db, Config: testConfig()})
+	srv, err := httpapi.New(httpapi.Options{DB: db, Config: testConfig(), Blobs: testBlobs(t)})
 	if err != nil {
 		t.Fatalf("building the server: %v", err)
 	}

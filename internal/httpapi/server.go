@@ -31,7 +31,10 @@ import (
 	"github.com/linchange/linchange/internal/auth/reset"
 	"github.com/linchange/linchange/internal/auth/token"
 	"github.com/linchange/linchange/internal/auth/totp"
+	"github.com/linchange/linchange/internal/blobstore"
+	"github.com/linchange/linchange/internal/delivery"
 	"github.com/linchange/linchange/internal/store"
+	"github.com/linchange/linchange/internal/webmail"
 )
 
 // maxAuthBody bounds a request body to what an auth payload can plausibly be,
@@ -55,6 +58,16 @@ type Server struct {
 	admin    *admin.Service
 	tokens   *token.Manager
 	sessions *store.Sessions
+	// mail is the webmail service: folders, messages, composing and rules. It
+	// is a separate object from the HTTP layer so that the same operations are
+	// reachable by delivery and by the tests, not only by a request.
+	mail *webmail.Service
+	// The repositories below back the read-only listings the web client needs:
+	// which aliases reach this mailbox, and which team mailboxes this member
+	// may open.
+	aliases *store.Aliases
+	shared  *store.SharedMailboxes
+	grants  *store.SharedMailboxGrants
 	// policies is held so a handler can answer a question about this
 	// deployment's switches. It is the same object the login path and the admin
 	// service decide with, so there is one answer rather than three.
@@ -67,6 +80,10 @@ type Options struct {
 	DB     *sqlx.DB
 	Config *config.Config
 	Logger *slog.Logger
+	// Blobs is the content-addressed store holding message bodies. The webmail
+	// API reads messages through it, so a server built without one cannot serve
+	// mail and says so at construction rather than at the first read.
+	Blobs *blobstore.Store
 	// StaticDir, when set, is the directory holding the built web app. The
 	// router serves its asset files and falls back to index.html for the
 	// client-side routes so the single-binary server can host the SPA too.
@@ -192,6 +209,30 @@ func New(opts Options) (*Server, error) {
 		return nil, err
 	}
 
+	// The webmail service is built here so the HTTP layer only calls methods on
+	// it. It is the same object the inbound delivery path will use to apply
+	// rules, so a rule behaves identically however a message arrived.
+	mailService, err := webmail.New(webmail.Options{
+		DB:       opts.DB,
+		Blobs:    opts.Blobs,
+		Logger:   log,
+		Hostname: cfg.Server.Hostname,
+		Outbound: delivery.Config{
+			SMTP: delivery.SMTPConfig{
+				Host:           cfg.Mail.Outbound.SMTPHost,
+				Port:           cfg.Mail.Outbound.SMTPPort,
+				TLS:            cfg.Mail.Outbound.SMTPStartTLS,
+				ConnectTimeout: cfg.Mail.Outbound.ConnectTimeout,
+				CommandTimeout: cfg.Mail.Outbound.CommandTimeout,
+				Username:       cfg.Mail.Outbound.SMTPUsername,
+				Password:       cfg.Mail.Outbound.SMTPPassword,
+			},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	return &Server{
 		db:        opts.DB,
 		log:       log,
@@ -200,6 +241,10 @@ func New(opts Options) (*Server, error) {
 		admin:     adm,
 		tokens:    tokens,
 		sessions:  store.NewSessions(),
+		mail:      mailService,
+		aliases:   store.NewAliases(),
+		shared:    store.NewSharedMailboxes(),
+		grants:    store.NewSharedMailboxGrants(),
 		staticDir: opts.StaticDir,
 	}, nil
 }
@@ -236,6 +281,11 @@ func (s *Server) Handler() http.Handler {
 		// not the router's: a route group that assumed "authenticated" meant
 		// "permitted" would be one refactor away from being wrong.
 		s.mountAdmin(r)
+
+		// The mail routes are for the signed-in user's own mailbox. They are
+		// mounted in the same authenticated group, and resolve the owner from
+		// the token rather than from the request.
+		s.mountMail(r)
 	})
 
 	// With a web build present, the same server hosts the SPA: asset files are
