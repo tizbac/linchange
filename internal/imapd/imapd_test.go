@@ -3,6 +3,7 @@ package imapd_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -16,6 +17,7 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/linchange/linchange/config"
+	"github.com/linchange/linchange/internal/auth/mailauth"
 	pwd "github.com/linchange/linchange/internal/auth/password"
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/imapd"
@@ -35,6 +37,10 @@ func testConfig(t *testing.T) *config.Config {
 }
 
 func setupServer(t *testing.T) (*imapd.Server, *sqlx.DB, string) {
+	return setupServerWithDirectory(t, &stubDirectory{})
+}
+
+func setupServerWithDirectory(t *testing.T, dir mailauth.Directory) (*imapd.Server, *sqlx.DB, string) {
 	t.Helper()
 
 	db := testdb.Migrated(t)
@@ -42,6 +48,7 @@ func setupServer(t *testing.T) (*imapd.Server, *sqlx.DB, string) {
 	blobs, err := blobstore.Open(blobstore.Options{
 		Root: t.TempDir(),
 	})
+
 	if err != nil {
 		t.Fatalf("open blobstore: %v", err)
 	}
@@ -52,13 +59,11 @@ func setupServer(t *testing.T) (*imapd.Server, *sqlx.DB, string) {
 	}
 
 	ctx := context.Background()
-	users := store.NewUsers()
 	aliases := store.NewAliases()
-	creds := store.NewCredentials()
 	sharedMailboxes := store.NewSharedMailboxes()
 	sharedGrants := store.NewSharedMailboxGrants()
 
-	if err := users.Create(ctx, db, store.CreateUserRequest{
+	if err := store.NewUsers().Create(ctx, db, store.CreateUserRequest{
 		Address:     "alice@example.com",
 		Source:      "local",
 		DisplayName: "Alice Test",
@@ -66,7 +71,7 @@ func setupServer(t *testing.T) (*imapd.Server, *sqlx.DB, string) {
 		t.Fatalf("create user: %v", err)
 	}
 
-	if err := creds.Set(ctx, db, "alice@example.com", hash); err != nil {
+	if err := store.NewCredentials().Set(ctx, db, "alice@example.com", hash); err != nil {
 		t.Fatalf("set credential: %v", err)
 	}
 
@@ -83,7 +88,9 @@ func setupServer(t *testing.T) (*imapd.Server, *sqlx.DB, string) {
 		Level: slog.LevelInfo,
 	}))
 
-	srv, err := imapd.New(db, blobs, logger, users, aliases, creds, sharedMailboxes, sharedGrants, cfg)
+	mailAuth := mailauth.New(db, logger, dir)
+
+	srv, err := imapd.New(db, blobs, logger, aliases, mailAuth, sharedMailboxes, sharedGrants, cfg)
 	if err != nil {
 		t.Fatalf("create imap server: %v", err)
 	}
@@ -1235,5 +1242,144 @@ func TestAppendLargeMessage(t *testing.T) {
 	}
 	if len(messages[0].BodySection[0].Bytes) != 50072 {
 		t.Errorf("expected body length 50072, got %d", len(messages[0].BodySection[0].Bytes))
+	}
+}
+
+// stubDirectory stands in for a real directory, so that the rule being tested is
+// the listener's rather than the bind's. The bind itself is exercised in
+// internal/auth/ldap against the protocol fixture.
+type stubDirectory struct {
+	ok   bool
+	err  error
+	seen []string
+}
+
+func (s *stubDirectory) Authenticate(_ context.Context, address, _ string) (bool, error) {
+	s.seen = append(s.seen, address)
+	return s.ok, s.err
+}
+
+// addDirectoryUser provisions the shape the reconcile leaves: a directory-backed
+// principal with no local credential row.
+func addDirectoryUser(t *testing.T, db *sqlx.DB, address string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := store.NewUsers().Create(ctx, db, store.CreateUserRequest{
+		Address: address, Source: "ldap", DisplayName: "Directory User",
+	}); err != nil {
+		t.Fatalf("create directory user: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO mailboxes (owner, name, uidvalidity, uidnext) VALUES ($1, 'INBOX', 1, 1)`,
+		address); err != nil {
+		t.Fatalf("create INBOX: %v", err)
+	}
+}
+
+// TestLoginWithDirectoryPassword is the reason the listener takes a verifier:
+// a directory-backed account signs in on the directory's answer, not on a
+// stored hash.
+func TestLoginWithDirectoryPassword(t *testing.T) {
+	dir := &stubDirectory{ok: true}
+	_, db, addr := setupServerWithDirectory(t, dir)
+	addDirectoryUser(t, db, "dana@corp.example.com")
+
+	client, err := imapclient.DialInsecure(addr, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	if err := client.Login("dana@corp.example.com", "from-the-directory").Wait(); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if len(dir.seen) != 1 || dir.seen[0] != "dana@corp.example.com" {
+		t.Errorf("the directory saw %v, want one attempt for dana", dir.seen)
+	}
+}
+
+// TestLoginDirectoryRefused checks the negative half: the directory's refusal is
+// a failed login.
+func TestLoginDirectoryRefused(t *testing.T) {
+	dir := &stubDirectory{ok: false}
+	_, db, addr := setupServerWithDirectory(t, dir)
+	addDirectoryUser(t, db, "dana@corp.example.com")
+
+	client, err := imapclient.DialInsecure(addr, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	if err := client.Login("dana@corp.example.com", "wrong").Wait(); err == nil {
+		t.Fatal("a password the directory refused must not log in")
+	}
+}
+
+// TestLoginDirectoryUnavailable proves the listener fails closed rather than
+// falling through to something else when the directory cannot be reached.
+func TestLoginDirectoryUnavailable(t *testing.T) {
+	dir := &stubDirectory{err: errors.New("the directory is unreachable")}
+	_, db, addr := setupServerWithDirectory(t, dir)
+	addDirectoryUser(t, db, "dana@corp.example.com")
+
+	client, err := imapclient.DialInsecure(addr, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	if err := client.Login("dana@corp.example.com", "whatever").Wait(); err == nil {
+		t.Fatal("an unreachable directory must not admit anyone")
+	}
+}
+
+// TestLoginWithoutCredentialIsRefused is the bypass. This account has no stored
+// password, which the listener used to read as "any password will do".
+func TestLoginWithoutCredentialIsRefused(t *testing.T) {
+	// No directory is wired up, so nothing can answer for a principal whose
+	// password nobody holds.
+	_, db, addr := setupServer(t)
+	addDirectoryUser(t, db, "dana@corp.example.com")
+
+	client, err := imapclient.DialInsecure(addr, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	if err := client.Login("dana@corp.example.com", "anything at all").Wait(); err == nil {
+		t.Fatal("an account with no stored password was admitted: this is the bypass")
+	}
+}
+
+// TestLoginDomainAdminRefused shows a principal that may sign in to the web still
+// cannot read mail.
+func TestLoginDomainAdminRefused(t *testing.T) {
+	dir := &stubDirectory{ok: true}
+	_, db, addr := setupServerWithDirectory(t, dir)
+
+	ctx := context.Background()
+	hash, err := pwd.Hash("admin-pw", config.New().Auth.Local.Argon2)
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	if err := store.NewUsers().Create(ctx, db, store.CreateUserRequest{
+		Address: "admin@example.com", Source: "domain_admin", DisplayName: "Admin",
+	}); err != nil {
+		t.Fatalf("create domain admin: %v", err)
+	}
+	if err := store.NewCredentials().Set(ctx, db, "admin@example.com", hash); err != nil {
+		t.Fatalf("set credential: %v", err)
+	}
+
+	client, err := imapclient.DialInsecure(addr, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	if err := client.Login("admin@example.com", "admin-pw").Wait(); err == nil {
+		t.Fatal("a domain admin must not be able to read mail")
 	}
 }

@@ -261,7 +261,7 @@ exists rather than a wish list.
 | P5 | POP3 server | `openssl s_client` command transcripts | ✅ DONE |
 | P6 | inbound `:25`; SPF/DKIM/DMARC; greylisting; junk routing | inbound fixture plus live test | ✅ DONE |
 | P7 | webmail: folders, list, read, compose, send, search, threading, attachments, aliases, shared mailboxes, rules | browser E2E | ✅ DONE |
-| P8 | LDAP/AD provider; sync; off-domain → admin-only rule | LDAP fixture | ✅ DONE |
+| P8 | LDAP/AD provider; sync; off-domain → admin-only rule; directory login on IMAP/SMTP/POP3 | LDAP fixture; per-listener login tests | ✅ DONE |
 | P9 | calendars: personal + workgroup; recurrence; iMIP REQUEST/REPLY/CANCEL; free/busy; FullCalendar UI | ICS round-trip and expansion tests | pending |
 | P10 | Autodiscover; EWS; ActiveSync | interop traces | pending |
 | P11 | MAPI/HTTP (Outlook-native), hand-written in Go | Outlook client connects; cross-checked against gromox | pending (last) |
@@ -305,6 +305,65 @@ database, and each correction is now pinned by a test in
   false, so a domain admin could have owned folders, opened IMAP sessions and
   been a shared mailbox member. Added a check constraint.
 - An empty envelope recipient could be queued; now rejected.
+
+### P8 notes: one answer to "who is this?"
+
+Directory-backed accounts are stored with **no local password row at all**,
+because the directory holds it. Each of the three mail listeners had its own
+copy of the login rule, and each copy treated a missing credential row as
+"there is no password to check, so let them in". With the reconcile in place
+that was not a latent hole but an open one on every port: every directory
+mailbox accepted any password over IMAP, submission and POP3.
+
+The fix and the feature are the same change. `internal/auth/mailauth` holds the
+one answer, and each listener calls it with the action it is about to perform
+(`ActionIMAP`, `ActionSMTP`, `ActionPOP3`):
+
+- Empty password is refused before anything is consulted, because a bind with no
+  password is an *anonymous* bind, which a directory answers successfully
+  without proving anything.
+- `LoadPrincipal` maps a disabled account to "not found", so a disabled person
+  is refused before their source is even known and cannot be told apart from
+  someone who does not exist.
+- The password is checked against whichever source owns the account — a stored
+  argon2id hash, or the directory — and a directory that cannot be reached
+  fails closed rather than falling through.
+- `policy.Can(ActionAuthenticate)` runs before the password is checked, because
+  that is the only question that may be asked of an identity nobody has proved
+  yet. `CanMailProtocol(action)` runs after, once it has one.
+- Every failure is one of two sentinels, `ErrRejected` and `ErrUnavailable`.
+  The distinction is for the log; the client is told the same thing either way,
+  so a caller cannot map refusals to account state.
+
+Deliberate non-goals, recorded so they are not mistaken for oversights:
+
+- **No lockout on the mail protocols.** The web path counts attempts per account
+  and per address. An IMAP or SMTP exchange has no way to present a challenge,
+  and the existing local-password path on these listeners never counted either.
+  A deployment that needs shared rate limiting should put it at the proxy. AD
+  applies its own lockout to the bind.
+- **`TOTPRequired` is left to `policy`.** `Can` refuses mail when a second
+  factor is required and registered, so if TOTP is ever turned on for these
+  principals it will deny them mail rather than silently admit them. That is
+  the safe direction, but it is a decision for `policy`, not for a listener.
+- **IMAP still advertises SASL `LOGIN` but implements only `PLAIN`**, and POP3
+  has no SASL at all. Pre-existing and orthogonal to authentication; the
+  listener's `Login` is called by both paths where present.
+
+Running with **no directory at all** stays a supported mode, and stays exactly
+as it was: `ldap` has no required keys and `Validate` has no rule mentioning it
+(pinned by `config/ldap_optional_test.go`); `ldapsync.Start` returns at once
+when sync is off or no provider is configured, so there is no goroutine and no
+directory traffic; and the verifier routes on the account's `source`, so with
+no directory nobody is ever routed to a bind and every login takes the local
+argon2id path exactly as before. `ldap_links` and `ldap_sync_state` have been in
+`0001` since P0 and P8 added no migration, so the two tables simply stay empty.
+
+The one behaviour worth knowing is a deployment that *turns LDAP off* after
+using it: the reconcile stops, so the accounts it provisioned remain but can no
+longer authenticate, because the bind fails closed. That is the correct
+direction — the alternative would be the bypass this change removed — but it is
+a deliberate lockout rather than an oversight.
 
 ## Configuration
 

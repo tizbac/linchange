@@ -12,7 +12,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/emersion/go-sasl"
@@ -20,7 +19,8 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/linchange/linchange/config"
-	pwd "github.com/linchange/linchange/internal/auth/password"
+	"github.com/linchange/linchange/internal/auth/mailauth"
+	"github.com/linchange/linchange/internal/auth/policy"
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/delivery"
 	"github.com/linchange/linchange/internal/logging"
@@ -32,9 +32,8 @@ import (
 type Backend struct {
 	db             *sqlx.DB
 	cfg            config.Submission
-	userStore      *store.Users
 	aliasStore     *store.Aliases
-	credStore      *store.Credentials
+	auth           *mailauth.Verifier
 	outboxRepo     *delivery.OutboxRepository
 	blobStore      *blobstore.Store
 	logger         *slog.Logger
@@ -46,9 +45,8 @@ type Backend struct {
 func NewBackend(
 	db *sqlx.DB,
 	cfg config.Submission,
-	users *store.Users,
 	aliases *store.Aliases,
-	credStore *store.Credentials,
+	auth *mailauth.Verifier,
 	outboxRepo *delivery.OutboxRepository,
 	blobStore *blobstore.Store,
 	log *slog.Logger,
@@ -57,9 +55,8 @@ func NewBackend(
 	return &Backend{
 		db:             db,
 		cfg:            cfg,
-		userStore:      users,
 		aliasStore:     aliases,
-		credStore:      credStore,
+		auth:           auth,
 		outboxRepo:     outboxRepo,
 		blobStore:      blobStore,
 		logger:         log,
@@ -138,45 +135,24 @@ func (s *session) Auth(mech string) (sasl.Server, error) {
 
 // authenticate validates credentials against the user store.
 func (s *session) authenticate(username string, password string) error {
-	usr, err := s.backend.userStore.Get(s.context(), s.backend.db, username)
+	principal, err := s.backend.auth.Authenticate(
+		s.context(), username, password, policy.ActionSMTP)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			pwd.DummyVerify(password)
-			return errors.New("invalid credentials")
+		// Every failure is reported the same way. An SMTP client is told only
+		// that the authentication failed; the reason belongs in the server log,
+		// and reporting it here would let a caller map refusals to account
+		// state.
+		if !errors.Is(err, mailauth.ErrRejected) && !errors.Is(err, mailauth.ErrUnavailable) {
+			s.backend.logger.Error("smtp login failed unexpectedly",
+				"user", username, "error", err)
 		}
-		return err
-	}
-
-	if !usr.Enabled {
-		return errors.New("account disabled")
-	}
-	if !usr.MailboxEnabled {
-		return errors.New("mail disabled")
-	}
-
-	// Check credentials.
-	cred, err := s.backend.credStore.Get(s.context(), s.backend.db, username)
-	if err != nil {
-		// No stored credential (LDAP user or similar).
-		if errors.Is(err, store.ErrNoCredential) || errors.Is(err, store.ErrNotFound) {
-			return nil
-		}
-		return err
-	}
-
-	// Compare password.
-	if strings.HasPrefix(cred.Hash, "$argon2") {
-		match, err := pwd.Verify(password, cred.Hash)
-		if err != nil {
-			return fmt.Errorf("verify password: %w", err)
-		}
-		if !match {
-			return errors.New("invalid credentials")
-		}
+		return errors.New("invalid credentials")
 	}
 
 	s.authenticated = true
-	s.from = username
+	// The canonical address, not what the client typed: the sender-identity
+	// check below compares against this, and it must be the stored spelling.
+	s.from = principal.Address
 	return nil
 }
 

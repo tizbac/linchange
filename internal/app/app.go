@@ -17,6 +17,8 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/linchange/linchange/config"
+	ldapauth "github.com/linchange/linchange/internal/auth/ldap"
+	"github.com/linchange/linchange/internal/auth/mailauth"
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/delivery"
 	"github.com/linchange/linchange/internal/dkim"
@@ -125,6 +127,16 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		return nil
 	})
 
+	// One directory client answers for every listener, so a provider is dialed
+	// and a DN cache is kept once rather than per surface. It is also given to
+	// the web login path by httpapi below, which is what keeps a browser and a
+	// mail client agreeing about who an account is.
+	directory := ldapauth.New(cfg.LDAP, store.NewLDAPLinks(), db, nil)
+	// One verifier answers for all three mail protocols. Sharing it is what
+	// stops them from drifting apart on who may log in and how the password is
+	// checked.
+	mailVerifier := mailauth.New(db, log, directory)
+
 	if cfg.Mail.Outbound.Concurrency > 0 {
 		pool := delivery.FromConfig(cfg, log, db)
 		poolCfg := pool.GetConfig()
@@ -167,9 +179,8 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		backend := smtpd.NewBackend(
 			db,
 			cfg.Mail.Submission,
-			store.NewUsers(),
 			store.NewAliases(),
-			store.NewCredentials(),
+			mailVerifier,
 			a.deliveryPool.GetConfig().Outbox,
 			blobs,
 			log,
@@ -196,9 +207,8 @@ func New(ctx context.Context, opts Options) (*App, error) {
 			db,
 			blobs,
 			log,
-			store.NewUsers(),
 			store.NewAliases(),
-			store.NewCredentials(),
+			mailVerifier,
 			store.NewSharedMailboxes(),
 			store.NewSharedMailboxGrants(),
 			cfg,
@@ -223,9 +233,8 @@ func New(ctx context.Context, opts Options) (*App, error) {
 			db,
 			blobs,
 			log,
-			store.NewUsers(),
 			store.NewAliases(),
-			store.NewCredentials(),
+			mailVerifier,
 			store.NewSharedMailboxes(),
 			store.NewSharedMailboxGrants(),
 			cfg,
@@ -264,6 +273,9 @@ func New(ctx context.Context, opts Options) (*App, error) {
 	if addr := cfg.Listener.HTTP.Addr; addr != "" {
 		api, err := httpapi.New(httpapi.Options{
 			DB: db, Config: cfg, Logger: log, Blobs: blobs, StaticDir: opts.StaticDir,
+			// The same directory instance the mail listeners use, so one
+			// provider is dialed and one DN cache is kept for the process.
+			Directory: directory,
 		})
 		if err != nil {
 			a.Close(context.Background())

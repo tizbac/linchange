@@ -30,7 +30,7 @@ import (
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapserver"
 	"github.com/linchange/linchange/config"
-	pwd "github.com/linchange/linchange/internal/auth/password"
+	"github.com/linchange/linchange/internal/auth/mailauth"
 	"github.com/linchange/linchange/internal/auth/policy"
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/mail"
@@ -71,9 +71,8 @@ func (s *Server) SetPlainAddr(addr string) { s.plainAddr = addr }
 type backend struct {
 	db              *sqlx.DB
 	blobStore       *blobstore.Store
-	userStore       *store.Users
 	aliasStore      *store.Aliases
-	credStore       *store.Credentials
+	auth            *mailauth.Verifier
 	mailboxStore    *MailboxRepo
 	messageStore    *MessageRepo
 	quotaRepo       *store.Quotas
@@ -87,8 +86,8 @@ type backend struct {
 // The listener addresses come from cfg, so that the ports the operator
 // configured are the ports that are bound.
 func New(db *sqlx.DB, blobs *blobstore.Store,
-	log *slog.Logger, users *store.Users, aliases *store.Aliases,
-	creds *store.Credentials,
+	log *slog.Logger, aliases *store.Aliases,
+	auth *mailauth.Verifier,
 	sharedMailboxes *store.SharedMailboxes, sharedGrants *store.SharedMailboxGrants,
 	cfg *config.Config,
 ) (*Server, error) {
@@ -99,9 +98,8 @@ func New(db *sqlx.DB, blobs *blobstore.Store,
 	b := &backend{
 		db:              db,
 		blobStore:       blobs,
-		userStore:       users,
 		aliasStore:      aliases,
-		credStore:       creds,
+		auth:            auth,
 		mailboxStore:    NewMailboxRepo(),
 		messageStore:    NewMessageRepo(),
 		quotaRepo:       store.NewQuotas(),
@@ -249,7 +247,6 @@ func (l imapLogger) Printf(format string, args ...interface{}) {
 type session struct {
 	backend       *backend
 	user          string
-	password      string
 	authenticated bool
 	selected      *selectedMailbox
 	readonly      bool
@@ -274,47 +271,26 @@ func (b *backend) NewSession() (imapserver.Session, error) {
 
 // Login authenticates a user via username/password.
 func (s *session) Login(username, password string) error {
-	// Look up the user.
-	usr, err := s.backend.userStore.Get(context.Background(), s.backend.db, username)
+	principal, err := s.backend.auth.Authenticate(
+		context.Background(), username, password, policy.ActionIMAP)
 	if err != nil {
-		if store.IsNotFound(err) {
-			return imapserver.ErrAuthFailed
+		// Every failure is reported the same way. An IMAP client is told only
+		// that the login failed; the reason belongs in the server log, and
+		// telling it here would let a caller map refusals to account state.
+		if !errors.Is(err, mailauth.ErrRejected) && !errors.Is(err, mailauth.ErrUnavailable) {
+			s.backend.logger.Error("imap login failed unexpectedly",
+				"user", username, "error", err)
 		}
-		return fmt.Errorf("imap: get user: %w", err)
-	}
-
-	if !usr.Enabled {
 		return imapserver.ErrAuthFailed
 	}
 
-	if !usr.MailboxEnabled {
-		return imapserver.ErrAuthFailed
-	}
-
-	// Check credentials.
-	cred, err := s.backend.credStore.Get(context.Background(), s.backend.db, username)
-	if err != nil {
-		if err == store.ErrNoCredential || store.IsNotFound(err) {
-			// No stored credential (LDAP user) — allow login if user exists.
-			return nil
-		}
-		return fmt.Errorf("imap: get credential: %w", err)
-	}
-
-	// Verify password.
-	match, err := verifyPassword(password, cred.Hash)
-	if err != nil {
-		return fmt.Errorf("imap: verify password: %w", err)
-	}
-	if !match {
-		return imapserver.ErrAuthFailed
-	}
-
-	s.user = username
-	s.password = password
+	// The canonical address, not whatever the client typed. Every mailbox and
+	// quota lookup below is keyed on it, and so is a shared mailbox grant, so
+	// this must be the stored spelling.
+	s.user = principal.Address
 	s.authenticated = true
 
-	s.backend.logger.Info("imap login", "user", username)
+	s.backend.logger.Info("imap login", "user", principal.Address)
 	return nil
 }
 
@@ -1157,17 +1133,6 @@ func (s *session) selectMailbox(name string, readOnly bool) error {
 	s.readonly = readOnly
 
 	return nil
-}
-
-// ---------------------------------------------------------------------------
-// Password verification
-// ---------------------------------------------------------------------------
-
-func verifyPassword(pw, hash string) (bool, error) {
-	if strings.HasPrefix(hash, "$argon2") {
-		return pwd.Verify(pw, hash)
-	}
-	return false, fmt.Errorf("unsupported hash: %s", hash[:min(len(hash), 10)])
 }
 
 // ---------------------------------------------------------------------------

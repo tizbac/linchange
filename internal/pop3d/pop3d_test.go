@@ -3,6 +3,7 @@ package pop3d_test
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -14,6 +15,7 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/linchange/linchange/config"
+	"github.com/linchange/linchange/internal/auth/mailauth"
 	pwd "github.com/linchange/linchange/internal/auth/password"
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/pop3d"
@@ -33,6 +35,10 @@ func testConfig(t *testing.T) *config.Config {
 }
 
 func setupServer(t *testing.T) (*pop3d.Server, *sqlx.DB, string) {
+	return setupServerWithDirectory(t, &stubDirectory{})
+}
+
+func setupServerWithDirectory(t *testing.T, dir mailauth.Directory) (*pop3d.Server, *sqlx.DB, string) {
 	t.Helper()
 
 	db := testdb.Migrated(t)
@@ -40,6 +46,7 @@ func setupServer(t *testing.T) (*pop3d.Server, *sqlx.DB, string) {
 	blobs, err := blobstore.Open(blobstore.Options{
 		Root: t.TempDir(),
 	})
+
 	if err != nil {
 		t.Fatalf("open blobstore: %v", err)
 	}
@@ -50,13 +57,11 @@ func setupServer(t *testing.T) (*pop3d.Server, *sqlx.DB, string) {
 	}
 
 	ctx := context.Background()
-	users := store.NewUsers()
 	aliases := store.NewAliases()
-	creds := store.NewCredentials()
 	sharedMailboxes := store.NewSharedMailboxes()
 	sharedGrants := store.NewSharedMailboxGrants()
 
-	if err := users.Create(ctx, db, store.CreateUserRequest{
+	if err := store.NewUsers().Create(ctx, db, store.CreateUserRequest{
 		Address:     "alice@example.com",
 		Source:      "local",
 		DisplayName: "Alice Test",
@@ -64,7 +69,7 @@ func setupServer(t *testing.T) (*pop3d.Server, *sqlx.DB, string) {
 		t.Fatalf("create user: %v", err)
 	}
 
-	if err := creds.Set(ctx, db, "alice@example.com", hash); err != nil {
+	if err := store.NewCredentials().Set(ctx, db, "alice@example.com", hash); err != nil {
 		t.Fatalf("set credential: %v", err)
 	}
 
@@ -81,7 +86,9 @@ func setupServer(t *testing.T) (*pop3d.Server, *sqlx.DB, string) {
 		Level: slog.LevelInfo,
 	}))
 
-	srv, err := pop3d.New(db, blobs, logger, users, aliases, creds, sharedMailboxes, sharedGrants, cfg)
+	mailAuth := mailauth.New(db, logger, dir)
+
+	srv, err := pop3d.New(db, blobs, logger, aliases, mailAuth, sharedMailboxes, sharedGrants, cfg)
 	if err != nil {
 		t.Fatalf("create pop3 server: %v", err)
 	}
@@ -359,4 +366,91 @@ func TestPOP3ListMultiple(t *testing.T) {
 	}
 
 	sendCommand(t, conn, scanner, "QUIT")
+}
+
+// stubDirectory stands in for a real directory, so that the rule being tested is
+// the listener's rather than the bind's.
+type stubDirectory struct {
+	ok   bool
+	err  error
+	seen []string
+}
+
+func (s *stubDirectory) Authenticate(_ context.Context, address, _ string) (bool, error) {
+	s.seen = append(s.seen, address)
+	return s.ok, s.err
+}
+
+// addDirectoryUser provisions the shape the reconcile leaves: a directory-backed
+// principal with no local credential row.
+func addDirectoryUser(t *testing.T, db *sqlx.DB, address string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := store.NewUsers().Create(ctx, db, store.CreateUserRequest{
+		Address: address, Source: "ldap", DisplayName: "Directory User",
+	}); err != nil {
+		t.Fatalf("create directory user: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO mailboxes (owner, name, uidvalidity, uidnext) VALUES ($1, 'INBOX', 1, 1)`,
+		address); err != nil {
+		t.Fatalf("create INBOX: %v", err)
+	}
+}
+
+// TestPOP3LoginWithDirectoryPassword covers the case the listener takes a
+// verifier for.
+func TestPOP3LoginWithDirectoryPassword(t *testing.T) {
+	dir := &stubDirectory{ok: true}
+	_, db, addr := setupServerWithDirectory(t, dir)
+	addDirectoryUser(t, db, "dana@corp.example.com")
+
+	conn, scanner := connectPOP3(t, addr)
+	if resp := sendCommand(t, conn, scanner, "USER dana@corp.example.com"); !strings.HasPrefix(resp, "+OK") {
+		t.Fatalf("USER: got %s", resp)
+	}
+	if resp := sendCommand(t, conn, scanner, "PASS from-the-directory"); !strings.HasPrefix(resp, "+OK") {
+		t.Fatalf("PASS: got %s", resp)
+	}
+	if len(dir.seen) != 1 || dir.seen[0] != "dana@corp.example.com" {
+		t.Errorf("the directory saw %v, want one attempt for dana", dir.seen)
+	}
+}
+
+// TestPOP3LoginDirectoryRefused is the negative half.
+func TestPOP3LoginDirectoryRefused(t *testing.T) {
+	dir := &stubDirectory{ok: false}
+	_, db, addr := setupServerWithDirectory(t, dir)
+	addDirectoryUser(t, db, "dana@corp.example.com")
+
+	conn, scanner := connectPOP3(t, addr)
+	sendCommand(t, conn, scanner, "USER dana@corp.example.com")
+	if resp := sendCommand(t, conn, scanner, "PASS wrong"); !strings.HasPrefix(resp, "-ERR") {
+		t.Fatalf("a refused password: got %s", resp)
+	}
+}
+
+// TestPOP3LoginDirectoryUnavailable fails closed rather than falling through.
+func TestPOP3LoginDirectoryUnavailable(t *testing.T) {
+	dir := &stubDirectory{err: errors.New("the directory is unreachable")}
+	_, db, addr := setupServerWithDirectory(t, dir)
+	addDirectoryUser(t, db, "dana@corp.example.com")
+
+	conn, scanner := connectPOP3(t, addr)
+	sendCommand(t, conn, scanner, "USER dana@corp.example.com")
+	if resp := sendCommand(t, conn, scanner, "PASS whatever"); !strings.HasPrefix(resp, "-ERR") {
+		t.Fatalf("an unreachable directory: got %s", resp)
+	}
+}
+
+// TestPOP3LoginWithoutCredentialIsRefused is the bypass this closed.
+func TestPOP3LoginWithoutCredentialIsRefused(t *testing.T) {
+	_, db, addr := setupServer(t)
+	addDirectoryUser(t, db, "dana@corp.example.com")
+
+	conn, scanner := connectPOP3(t, addr)
+	sendCommand(t, conn, scanner, "USER dana@corp.example.com")
+	if resp := sendCommand(t, conn, scanner, "PASS anything at all"); !strings.HasPrefix(resp, "-ERR") {
+		t.Fatalf("an account with no stored password was admitted: got %s", resp)
+	}
 }

@@ -19,14 +19,14 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"strings"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/migadu/go-pop3/pop3"
 	"github.com/migadu/go-pop3/pop3server"
 
 	"github.com/linchange/linchange/config"
-	pwd "github.com/linchange/linchange/internal/auth/password"
+	"github.com/linchange/linchange/internal/auth/mailauth"
+	"github.com/linchange/linchange/internal/auth/policy"
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/imapd"
 	"github.com/linchange/linchange/internal/store"
@@ -59,9 +59,8 @@ func (s *Server) SetPlainAddr(addr string) { s.plainAddr = addr }
 type backend struct {
 	db              *sqlx.DB
 	blobStore       *blobstore.Store
-	userStore       *store.Users
 	aliasStore      *store.Aliases
-	credStore       *store.Credentials
+	auth            *mailauth.Verifier
 	mailboxStore    *imapd.MailboxRepo
 	messageStore    *imapd.MessageRepo
 	quotaRepo       *store.Quotas
@@ -85,8 +84,8 @@ type session struct {
 // The listener addresses come from cfg, so that the ports the operator
 // configured are the ports that are bound.
 func New(db *sqlx.DB, blobs *blobstore.Store,
-	log *slog.Logger, users *store.Users, aliases *store.Aliases,
-	creds *store.Credentials,
+	log *slog.Logger, aliases *store.Aliases,
+	auth *mailauth.Verifier,
 	sharedMailboxes *store.SharedMailboxes, sharedGrants *store.SharedMailboxGrants,
 	cfg *config.Config,
 ) (*Server, error) {
@@ -97,9 +96,8 @@ func New(db *sqlx.DB, blobs *blobstore.Store,
 	b := &backend{
 		db:              db,
 		blobStore:       blobs,
-		userStore:       users,
 		aliasStore:      aliases,
-		credStore:       creds,
+		auth:            auth,
 		mailboxStore:    imapd.NewMailboxRepo(),
 		messageStore:    imapd.NewMessageRepo(),
 		quotaRepo:       store.NewQuotas(),
@@ -204,56 +202,33 @@ func (s *session) Close() error {
 }
 
 func (s *session) Login(ctx context.Context, username, password string) error {
-	// Look up the user.
-	usr, err := s.backend.userStore.Get(ctx, s.backend.db, username)
+	principal, err := s.backend.auth.Authenticate(ctx, username, password, policy.ActionPOP3)
 	if err != nil {
-		if store.IsNotFound(err) {
-			return &pop3server.Error{Code: "AUTH", Message: "authentication failed"}
+		// Every failure is reported the same way. A POP3 client is told only
+		// that the authentication failed; the reason belongs in the server log,
+		// and reporting it here would let a caller map refusals to account
+		// state.
+		if !errors.Is(err, mailauth.ErrRejected) && !errors.Is(err, mailauth.ErrUnavailable) {
+			s.backend.logger.Error("pop3 login failed unexpectedly",
+				"user", username, "error", err)
 		}
-		return fmt.Errorf("pop3: get user: %w", err)
-	}
-
-	if !usr.Enabled {
 		return &pop3server.Error{Code: "AUTH", Message: "authentication failed"}
 	}
 
-	if !usr.MailboxEnabled {
-		return &pop3server.Error{Code: "AUTH", Message: "authentication failed"}
-	}
+	// The canonical address, not what the client typed: the INBOX lookup below
+	// and every later stat are keyed on it.
+	s.username = principal.Address
 
-	// Check credentials.
-	cred, err := s.backend.credStore.Get(ctx, s.backend.db, username)
-	if err != nil {
-		if err == store.ErrNoCredential || store.IsNotFound(err) {
-			// No stored credential (LDAP user) — allow login if user exists.
-			s.username = username
-			s.password = password
-			s.backend.logger.Info("pop3 login", "user", username)
-			return nil
-		}
-		return fmt.Errorf("pop3: get credential: %w", err)
-	}
-
-	// Verify password.
-	match, err := verifyPassword(password, cred.Hash)
-	if err != nil {
-		return fmt.Errorf("pop3: verify password: %w", err)
-	}
-	if !match {
-		return &pop3server.Error{Code: "AUTH", Message: "authentication failed"}
-	}
-
-	s.username = username
-	s.password = password
-
-	// Find the user's INBOX.
-	mailbox, err := s.backend.mailboxStore.GetByName(context.Background(), s.backend.db, username, "INBOX")
+	// Find the user's INBOX. This is what makes the session usable — a login
+	// that succeeded but resolved no mailbox would report an empty inbox for
+	// ever rather than saying anything was wrong.
+	mailbox, err := s.backend.mailboxStore.GetByName(ctx, s.backend.db, s.username, "INBOX")
 	if err != nil {
 		return fmt.Errorf("pop3: find inbox: %w", err)
 	}
 	s.mailboxID = mailbox.ID
 
-	s.backend.logger.Info("pop3 login", "user", username)
+	s.backend.logger.Info("pop3 login", "user", s.username)
 	return nil
 }
 
@@ -528,11 +503,4 @@ func (s *session) Quit(ctx context.Context) (int, error) {
 	}
 
 	return 0, nil
-}
-
-func verifyPassword(pw, hash string) (bool, error) {
-	if strings.HasPrefix(hash, "$argon2") {
-		return pwd.Verify(pw, hash)
-	}
-	return false, fmt.Errorf("unsupported hash: %s", hash[:min(len(hash), 10)])
 }

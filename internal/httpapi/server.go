@@ -89,6 +89,12 @@ type Options struct {
 	// router serves its asset files and falls back to index.html for the
 	// client-side routes so the single-binary server can host the SPA too.
 	StaticDir string
+	// Directory authenticates the principals whose passwords a directory holds.
+	// The application passes the same instance to the mail listeners so a
+	// browser and a mail client agree about who an account is; left nil, one is
+	// built from the configuration, which is what a caller that has no other
+	// surface to share with wants.
+	Directory login.Directory
 }
 
 // New builds a Server from an open database and a loaded config.
@@ -109,6 +115,15 @@ func New(opts Options) (*Server, error) {
 	log := opts.Logger
 	if log == nil {
 		log = slog.Default()
+	}
+
+	// The directory is shared with the mail listeners when the caller supplied
+	// one, and built here when it did not. Either way it is never nil, because a
+	// nil Directory would let login.New substitute its denial for the whole
+	// application rather than for a deployment that merely has no directory.
+	directory := opts.Directory
+	if directory == nil {
+		directory = ldapauth.New(cfg.LDAP, store.NewLDAPLinks(), opts.DB, nil)
 	}
 
 	tokens, err := token.NewManager(cfg.Auth.JWT)
@@ -169,11 +184,11 @@ func New(opts Options) (*Server, error) {
 		Policy:       pol,
 		ChallengeTTL: cfg.Auth.Challenge.TTL,
 		// The directory backs the sign-ins of principals whose password it
-		// holds. It is always built, so a deployment without a configured
+		// holds. It is always present, so a deployment without a configured
 		// provider gets the login package's own denial, which is what refuses
 		// a directory account rather than letting it fall through to a stored
 		// hash.
-		Directory: ldapauth.New(cfg.LDAP, store.NewLDAPLinks(), opts.DB, nil),
+		Directory: directory,
 	})
 	if err != nil {
 		return nil, err
