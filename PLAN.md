@@ -309,6 +309,63 @@ database, and each correction is now pinned by a test in
   been a shared mailbox member. Added a check constraint.
 - An empty envelope recipient could be queued; now rejected.
 
+### P9 notes: calendars (in progress)
+
+What has landed so far in P9:
+
+- **internal/ical** — iCalendar parsing (golang-ical for parse only) and hand-written
+  CRLF-emitting serializer. Model covers UID, DTSTART/DTEND, RRULE (as literal
+  string), RECURRENCE-ID, EXDATE/RDATE, STATUS, TRANSP, ORGANIZER, ATTENDEE,
+  SEQUENCE. iTIP builders: Request, Reply, Cancel, Add. Method lives on Document,
+  not Event. Round-trip tests with expansion verify the serializer + parser agree.
+
+- **internal/recurrence** — Expansion engine built on rrule-go. Occurrences keep
+  wall-clock time across DST (expansion happens in the event's own zone). All-day
+  events advance by AddDate not 24h×n. Three bounding limits: density floor
+  (refuses FREQ=SECONDLY, FREQ=MINUTELY;INTERVAL<60), MaxOccurrences,
+  MaxWindow; all fail closed with an error, never an empty list. Zero Limits
+  falls back to DefaultLimits. 28 tests green.
+
+- **migrations/0008** — Added recurrence_id, timezone, all_day to events. Split
+  the UID unique index into master/override indexes so a moved occurrence and
+  its displaced slot coexist. Added attendee and recurrence indexes for fast
+  free/busy.
+
+- **internal/store** — Calendars (personal + workgroup), Events (master + detached
+  overrides), Attendees. ListInRange is one CTE: range scan to find candidate
+  UIDs, then all rows for those UIDs — because a moved-in occurrence isn't found
+  by its own dates and a moved-out one leaves a stale slot. Upsert revises in
+  place (keeps row id) rather than delete+reinsert.
+
+- **internal/auth/policy/calendar.go** — Three load-bearing differences from mail
+  rules: (1) Calendar actions are **not** in holdsMailAction, so a domain admin
+  without a mailbox still has a calendar. (2) Booking (ActionBookWorkgroup) and
+  administering (ActionAdministerWorkgroup) are different rights. (3) Free/busy
+  (ActionReadFreeBusy) is weaker than read-calendar and has a per-calendar
+  show_free_busy setting. 14 tests green.
+
+- **internal/calendar** — Service layer joining store + recurrence. Expand turns
+  stored rows into occurrences for a window, correctly handling:
+  - moved-out occurrence withdraws its old slot (detached instances never
+    filtered by window)
+  - moved-in occurrence appears (range query finds it by new dates)
+  - cancelled series/occurrence yields nothing
+  - unexpandable rule falls back to single occurrence + Skipped report
+  - row ids attached from Index (DB id has no place in wire model)
+  FreeBusy merges touching blocks (09:00–10:00 + 10:00–11:00 = one block).
+  Create/Update/Cancel with sequence bump and optimistic concurrency.
+  iTIP inbound: Apply handles REQUEST/REPLY/CANCEL/ADD, uses IsNewer
+  (sequence then DTSTAMP tiebreaker — critical for CANCEL carrying same
+  sequence as REQUEST). Outbound: RequestFor, ReplyFor, CancelFor with
+  correct recipient lists. 24 tests green.
+
+- **internal/httpapi/calendar.go** — REST API under /api/v1/calendars:
+  calendar CRUD, event CRUD with time-window listing, free/busy, iTIP inbound,
+  ICS download. Authenticated group, principal from token. mapErrorCode maps
+  policy denials → 403, store conflicts → 409, not found → 404.
+
+Next in P9: FullCalendar Angular UI in web/src/app/calendar.
+
 ### P8 notes: one answer to "who is this?"
 
 Directory-backed accounts are stored with **no local password row at all**,

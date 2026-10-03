@@ -8,6 +8,7 @@ import { SecondFactorComponent } from './second-factor/second-factor.component';
 import { MailComponent } from './mail/mail.component';
 import { MailComposeComponent } from './mail/mail.compose.component';
 import { MailRulesComponent } from './mail/mail.rules.component';
+import { CalendarComponent } from './calendar/calendar.component';
 import { AdminAliasesComponent } from './admin/admin-aliases.component';
 import { AdminAuditComponent } from './admin/admin-audit.component';
 import { AdminDomainsComponent } from './admin/admin-domains.component';
@@ -26,6 +27,11 @@ export const routes: Routes = [
       { path: 'compose', component: MailComposeComponent },
       { path: 'rules', component: MailRulesComponent },
     ],
+  },
+  {
+    path: 'calendar',
+    component: CalendarComponent,
+    canActivate: [requireAuth],
   },
   { path: 'login', component: LoginComponent, canActivate: [onlyGuests] },
   { path: 'second-factor', component: SecondFactorComponent, canActivate: [onlyGuests] },
