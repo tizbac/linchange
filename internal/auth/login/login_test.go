@@ -409,6 +409,84 @@ func TestPasswordLDAPSuccess(t *testing.T) {
 	}
 }
 
+// TestPasswordDomainAdminFromDirectory is the shape the reconcile provisions: a
+// domain admin with no stored credential, whose password the directory holds.
+func TestPasswordDomainAdminFromDirectory(t *testing.T) {
+	db := testMigratedDB(t)
+	seedFixture(t, db)
+	d := stdDeps(t)
+	d.dir = fakeDirectory{ok: true}
+	auth := newAuth(t, db, d)
+
+	got, err := auth.Password(context.Background(), db, req("admin@example.com", "from-the-directory"))
+	if err != nil {
+		t.Fatalf("Password: %v", err)
+	}
+	if got.Granted == nil {
+		t.Fatal("a domain admin with no stored password should be granted by the directory")
+	}
+	if got.Granted.Session.Address != "admin@example.com" {
+		t.Errorf("session principal = %q", got.Granted.Session.Address)
+	}
+}
+
+// TestPasswordDomainAdminDirectoryRejected covers the wrong password on that
+// same arrangement.
+func TestPasswordDomainAdminDirectoryRejected(t *testing.T) {
+	db := testMigratedDB(t)
+	seedFixture(t, db)
+	d := stdDeps(t)
+	d.dir = fakeDirectory{ok: false}
+	auth := newAuth(t, db, d)
+
+	if _, err := auth.Password(context.Background(), db, req("admin@example.com", "bad")); !errors.Is(err, login.ErrInvalidCredentials) {
+		t.Fatalf("directory rejection = %v, want ErrInvalidCredentials", err)
+	}
+	if n := accountFailures(t, db, "admin@example.com"); n != 1 {
+		t.Errorf("a rejected password should be recorded, got %d", n)
+	}
+}
+
+// TestPasswordDomainAdminLocalPasswordWins proves a domain admin who was given
+// a password here is checked against it, and that the directory is not consulted
+// as a second opinion on a credential we own.
+func TestPasswordDomainAdminLocalPasswordWins(t *testing.T) {
+	db := testMigratedDB(t)
+	seedFixture(t, db)
+	d := stdDeps(t)
+	d.dir = fakeDirectory{ok: false} // would refuse, if it were asked
+	setPassword(t, db, "admin@example.com", "correct horse battery staple", testArgon2())
+	auth := newAuth(t, db, d)
+
+	if _, err := auth.Password(context.Background(), db,
+		req("admin@example.com", "correct horse battery staple")); err != nil {
+		t.Fatalf("Password: %v", err)
+	}
+
+	// The stored password is the one that decides, so a wrong one fails even
+	// though the directory would have accepted anything.
+	if _, err := auth.Password(context.Background(), db, req("admin@example.com", "wrong")); !errors.Is(err, login.ErrInvalidCredentials) {
+		t.Fatalf("a wrong stored password = %v, want ErrInvalidCredentials", err)
+	}
+}
+
+// TestPasswordDomainAdminDirectoryUnavailable is the outage case, which must
+// fail closed rather than fall through to some other credential.
+func TestPasswordDomainAdminDirectoryUnavailable(t *testing.T) {
+	db := testMigratedDB(t)
+	seedFixture(t, db)
+	d := stdDeps(t)
+	d.dir = fakeDirectory{ok: true, err: errors.New("the directory is down")}
+	auth := newAuth(t, db, d)
+
+	if _, err := auth.Password(context.Background(), db, req("admin@example.com", "whatever")); !errors.Is(err, login.ErrDirectoryUnavailable) {
+		t.Fatalf("an unreachable directory = %v, want ErrDirectoryUnavailable", err)
+	}
+	if n := accountFailures(t, db, "admin@example.com"); n != 0 {
+		t.Errorf("an outage must not be counted as a failure, got %d", n)
+	}
+}
+
 func TestPasswordWithSecondFactorReturnsChallenge(t *testing.T) {
 	db := testMigratedDB(t)
 	seedFixture(t, db)

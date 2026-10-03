@@ -261,7 +261,7 @@ exists rather than a wish list.
 | P5 | POP3 server | `openssl s_client` command transcripts | ✅ DONE |
 | P6 | inbound `:25`; SPF/DKIM/DMARC; greylisting; junk routing | inbound fixture plus live test | ✅ DONE |
 | P7 | webmail: folders, list, read, compose, send, search, threading, attachments, aliases, shared mailboxes, rules | browser E2E | ✅ DONE |
-| P8 | LDAP/AD provider; sync; off-domain → admin-only rule | LDAP fixture | pending |
+| P8 | LDAP/AD provider; sync; off-domain → admin-only rule | LDAP fixture | ✅ DONE |
 | P9 | calendars: personal + workgroup; recurrence; iMIP REQUEST/REPLY/CANCEL; free/busy; FullCalendar UI | ICS round-trip and expansion tests | pending |
 | P10 | Autodiscover; EWS; ActiveSync | interop traces | pending |
 | P11 | MAPI/HTTP (Outlook-native), hand-written in Go | Outlook client connects; cross-checked against gromox | pending (last) |

@@ -25,6 +25,7 @@ import (
 
 	"github.com/linchange/linchange/config"
 	"github.com/linchange/linchange/internal/admin"
+	ldapauth "github.com/linchange/linchange/internal/auth/ldap"
 	"github.com/linchange/linchange/internal/auth/lockout"
 	"github.com/linchange/linchange/internal/auth/login"
 	"github.com/linchange/linchange/internal/auth/policy"
@@ -93,9 +94,10 @@ type Options struct {
 // New builds a Server from an open database and a loaded config.
 //
 // It wires the login and reset orchestrators the same way every other listener
-// does, which is the point of keeping authentication in one place. A concrete
-// LDAP provider is not wired yet: a nil Directory makes the login package deny
-// directory sign-ins rather than fall through to a stored hash.
+// does, which is the point of keeping authentication in one place. Directory
+// sign-ins go through the LDAP client built here from the configuration; with no
+// provider configured that client refuses, which is what keeps a directory
+// account from being answered by a stored hash.
 func New(opts Options) (*Server, error) {
 	if opts.DB == nil {
 		return nil, errors.New("httpapi: a database handle is required")
@@ -166,6 +168,12 @@ func New(opts Options) (*Server, error) {
 		},
 		Policy:       pol,
 		ChallengeTTL: cfg.Auth.Challenge.TTL,
+		// The directory backs the sign-ins of principals whose password it
+		// holds. It is always built, so a deployment without a configured
+		// provider gets the login package's own denial, which is what refuses
+		// a directory account rather than letting it fall through to a stored
+		// hash.
+		Directory: ldapauth.New(cfg.LDAP, store.NewLDAPLinks(), opts.DB, nil),
 	})
 	if err != nil {
 		return nil, err

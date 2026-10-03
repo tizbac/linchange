@@ -550,7 +550,21 @@ func (a *Authenticator) verify(
 	ctx context.Context, q store.Querier, principal policy.Principal, req Request, now time.Time,
 ) (string, error) {
 	switch principal.Source {
-	case policy.SourceLocal, policy.SourceDomainAdmin:
+	case policy.SourceLocal:
+		return a.verifyLocal(ctx, q, principal, req, now)
+
+	case policy.SourceDomainAdmin:
+		// A domain admin's password lives wherever the account was made. One
+		// made here carries a stored credential; one the reconcile provisioned
+		// from a directory carries none, because the directory holds it. So the
+		// absence of a credential decides, not the source alone, and both
+		// arrangements sign in the same way.
+		if _, err := a.credentials.Get(ctx, q, principal.Address); err != nil {
+			if errors.Is(err, store.ErrNoCredential) {
+				return "", a.verifyDirectory(ctx, q, principal, req, now)
+			}
+			return "", err
+		}
 		return a.verifyLocal(ctx, q, principal, req, now)
 
 	case policy.SourceLDAP:
@@ -568,8 +582,9 @@ func (a *Authenticator) verify(
 // verifyLocal checks a stored argon2id hash and, if the hash was made with
 // weaker parameters than are configured now, hands back a replacement.
 //
-// A domain admin authenticates here too: the requirement is that a domain admin
-// administers mail and never receives it, not that they have no password.
+// A domain admin reaches here when they have a password set here, which is
+// still allowed: the rule is that a domain admin administers mail and never
+// receives it, not that they have no password.
 func (a *Authenticator) verifyLocal(
 	ctx context.Context, q store.Querier, principal policy.Principal, req Request, now time.Time,
 ) (string, error) {

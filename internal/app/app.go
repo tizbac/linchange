@@ -23,6 +23,7 @@ import (
 	"github.com/linchange/linchange/internal/httpapi"
 	imapd "github.com/linchange/linchange/internal/imapd"
 	"github.com/linchange/linchange/internal/inbound"
+	"github.com/linchange/linchange/internal/ldapsync"
 	"github.com/linchange/linchange/internal/pop3d"
 	"github.com/linchange/linchange/internal/smtpd"
 	"github.com/linchange/linchange/internal/store"
@@ -43,7 +44,10 @@ type App struct {
 	imapServer   *imapd.Server
 	pop3Server   *pop3d.Server
 	dkimKeys     *dkim.Keys
-	StartedAt    time.Time
+	// syncer reconciles the directory-backed principals. It is always built and
+	// is inert unless the configuration enables it.
+	syncer    *ldapsync.Syncer
+	StartedAt time.Time
 
 	shutdownOnce sync.Once
 	closers      []func(context.Context) error
@@ -108,6 +112,18 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		return nil, err
 	}
 	a.Blobs = blobs
+
+	// The directory reconcile keeps the directory-backed principals in step
+	// with the directory. It runs on its own clock and is inert when the
+	// configuration does not enable it. Its Stop is registered here, after the
+	// database closer, because closers run in reverse: the reconcile must be
+	// finished writing before the connection it writes through is released.
+	a.syncer = ldapsync.New(cfg.LDAP, db, log, nil)
+	a.OnShutdown(func(context.Context) error {
+		a.syncer.Stop()
+		log.Info("directory reconcile stopped")
+		return nil
+	})
 
 	if cfg.Mail.Outbound.Concurrency > 0 {
 		pool := delivery.FromConfig(cfg, log, db)
@@ -282,6 +298,12 @@ func New(ctx context.Context, opts Options) (*App, error) {
 // Serve runs the HTTP listener until ctx is cancelled. A clean shutdown returns
 // nil; a bind or accept error is returned to the caller.
 func (a *App) Serve(ctx context.Context) error {
+	// The reconcile runs its first pass in the background, so starting the
+	// server is not delayed by a directory that is slow to answer.
+	if a.syncer != nil {
+		a.syncer.Start(ctx)
+	}
+
 	if a.deliveryPool != nil {
 		a.deliveryPool.Start(ctx)
 		go a.runDSNProcessor(ctx)
