@@ -155,6 +155,7 @@ internal/
   inbound/                   :25 inbound MTA: recipient resolution, greylisting, SPF/DKIM/
                              DMARC evaluation, spam scoring, routing into INBOX/Junk
   httpapi/                   chi router: rest/ | ews/ | eas/ | autodiscover/
+  caldav/                    P9a: CalDAV WebDAV endpoints (REPORT, MKCALENDAR, PROPPATCH)
   mapihttp/                  P11: MAPI/HTTP (Outlook-native), hand-written vs [MS-OXCMAPIHTTP]
   admin/                     domain-admin service layer, impersonation, audit
   ldapsync/                  periodic AD reconcile
@@ -262,7 +263,9 @@ exists rather than a wish list.
 | P6 | inbound `:25`; SPF/DKIM/DMARC; greylisting; junk routing | inbound fixture plus live test | ✅ DONE |
 | P7 | webmail: folders, list, read, compose, send, search, threading, attachments, aliases, shared mailboxes, rules | browser E2E | ✅ DONE |
 | P8 | LDAP/AD provider; sync; off-domain → admin-only rule; directory login on IMAP/SMTP/POP3 | LDAP fixture; per-listener login tests | ✅ DONE |
-| P9 | calendars: personal + workgroup; recurrence; iMIP REQUEST/REPLY/CANCEL; free/busy; FullCalendar UI | ICS round-trip and expansion tests | pending |
+| P9 | calendars: personal + workgroup; recurrence; iMIP REQUEST/REPLY/CANCEL; free/busy; FullCalendar UI | ICS round-trip and expansion tests | **active** |
+| P9a | CalDAV exposure (RFC 4791) — read/write calendars via standard WebDAV endpoints so Thunderbird, iOS, macOS Calendar and Evolution work out of the box | REPORT/Calendar-query, MKCALENDAR, PROPPATCH, multi-get tests | pending |
+| P9b | Docker container setup — single `Dockerfile` producing a runnable image; default run binds to container IP (no host port mapping in compose), port exposure added later by the operator | `docker build`, container boots and answers on `:8080`/`8443`/`25`/`587`/`143`/`110`/`993`/`995` | pending |
 | P10 | Autodiscover; EWS; ActiveSync | interop traces | pending |
 | P11 | MAPI/HTTP (Outlook-native), hand-written in Go | Outlook client connects; cross-checked against gromox | pending (last) |
 

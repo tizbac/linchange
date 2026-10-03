@@ -107,9 +107,15 @@ type seriesKey struct {
 //     nothing to withdraw it, because nothing in the window says anything about
 //     it. Detached instances are therefore never filtered by the window; the
 //     merged result is filtered instead.
+//
+// The window is checked against the limits once, here, rather than per series.
+// A window that is too wide is the caller's mistake and every series in the
+// query trips over it, so checking inside the loop would turn one error into N —
+// and would let a per-event fallback quietly return nothing for each event it
+// visited instead of reporting the problem.
 func Expand(ctx context.Context, rows []store.Event, w recurrence.Window, lim recurrence.Limits) (Expansion, error) {
-	if w.End.IsZero() || w.Start.IsZero() || !w.End.After(w.Start) {
-		return Expansion{}, recurrence.ErrEmptyWindow
+	if err := w.WithinLimits(lim); err != nil {
+		return Expansion{}, err
 	}
 	if err := ctx.Err(); err != nil {
 		return Expansion{}, err
@@ -451,12 +457,6 @@ func view(inst recurrence.Instance) View {
 type Busy struct {
 	Start time.Time `json:"start"`
 	End   time.Time `json:"end"`
-}
-
-// Availability is one person's answer.
-type Availability struct {
-	Address string `json:"address"`
-	Busy    []Busy `json:"busy"`
 }
 
 // Busy blocks for a window: the occurrences that occupy time.

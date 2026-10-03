@@ -534,9 +534,9 @@ func (s *Server) handleDeleteMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"deleted":        deleted,
-		"used_bytes":     usage.UsedBytes,
-		"message_count":  usage.MessageCount,
+		"deleted":       deleted,
+		"used_bytes":    usage.UsedBytes,
+		"message_count": usage.MessageCount,
 	})
 }
 

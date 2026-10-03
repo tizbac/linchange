@@ -56,6 +56,30 @@ type Window struct {
 	End   time.Time
 }
 
+// Validate reports whether the window describes a range at all.
+//
+// It is separate from the limits check because the two are different mistakes: an
+// inverted window is malformed input, while a window wider than MaxWindow is
+// well-formed but too much work.
+func (w Window) Validate() error {
+	if w.Start.IsZero() || w.End.IsZero() || !w.End.After(w.Start) {
+		return fmt.Errorf("%w: start %s, end %s", ErrEmptyWindow, w.Start, w.End)
+	}
+	return nil
+}
+
+// WithinLimits reports whether the window is narrow enough to expand.
+func (w Window) WithinLimits(l Limits) error {
+	if err := w.Validate(); err != nil {
+		return err
+	}
+	lim := l.OrDefault()
+	if w.End.Sub(w.Start) > lim.MaxWindow {
+		return fmt.Errorf("%w: %s exceeds %s", ErrWindowTooWide, w.End.Sub(w.Start), lim.MaxWindow)
+	}
+	return nil
+}
+
 // Limits bound the work one expansion may do. The zero value is replaced by
 // DefaultLimits rather than meaning "unbounded", so a caller that forgets to
 // set them gets protection instead of a hang.
@@ -75,7 +99,13 @@ var DefaultLimits = Limits{
 	MaxWindow:      5 * 366 * 24 * time.Hour,
 }
 
-func (l Limits) orDefault() Limits {
+// OrDefault fills in any unset limit from DefaultLimits.
+//
+// It is exported because a caller that batches several events has to be able to
+// make the same judgement about a window as the expansion it is about to run:
+// checking a window against a zero MaxWindow and then letting the expansion
+// substitute a default would refuse every request.
+func (l Limits) OrDefault() Limits {
 	if l.MaxOccurrences <= 0 {
 		l.MaxOccurrences = DefaultLimits.MaxOccurrences
 	}
@@ -129,7 +159,7 @@ func (i Instance) Overlaps(w Window) bool {
 // not applied here — see ApplyOverrides — because they live in separate rows
 // and the caller has to fetch them.
 func Expand(ctx context.Context, ev ical.Event, w Window, lim Limits) ([]Instance, error) {
-	lim = lim.orDefault()
+	lim = lim.OrDefault()
 	// Checked first so that an already-cancelled request costs nothing, and so
 	// that a caller which never reaches the generation loop still stops.
 	if err := ctx.Err(); err != nil {

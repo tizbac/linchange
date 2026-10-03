@@ -94,6 +94,21 @@ func (d *Denied) Error() string {
 	return "policy: denied: " + d.Code + ": " + d.Detail
 }
 
+// CodeOf returns the machine-readable reason behind an error, or "" when the
+// error is not a policy denial.
+//
+// It exists so that callers can put the code on the wire without knowing the
+// concrete denial type. The codes are part of the API contract, so a handler
+// that switched on the error string instead would break the moment a detail was
+// reworded.
+func CodeOf(err error) string {
+	var denied *Denied
+	if errors.As(err, &denied) {
+		return denied.Code
+	}
+	return ""
+}
+
 // Denial codes. These are part of the API contract, so they are constants
 // rather than inline strings.
 const (

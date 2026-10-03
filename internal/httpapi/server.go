@@ -33,6 +33,7 @@ import (
 	"github.com/linchange/linchange/internal/auth/token"
 	"github.com/linchange/linchange/internal/auth/totp"
 	"github.com/linchange/linchange/internal/blobstore"
+	"github.com/linchange/linchange/internal/calendar"
 	"github.com/linchange/linchange/internal/delivery"
 	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/webmail"
@@ -63,6 +64,10 @@ type Server struct {
 	// is a separate object from the HTTP layer so that the same operations are
 	// reachable by delivery and by the tests, not only by a request.
 	mail *webmail.Service
+	// calendar is the calendar service: occurrences, free/busy, iTIP.
+	// It is separate so that an inbound scheduling message and the HTTP API
+	// both apply the same logic.
+	calendar *calendar.Service
 	// The repositories below back the read-only listings the web client needs:
 	// which aliases reach this mailbox, and which team mailboxes this member
 	// may open.
@@ -256,6 +261,15 @@ func New(opts Options) (*Server, error) {
 		return nil, err
 	}
 
+	// The calendar service is built here so the HTTP layer and the inbound
+	// scheduling path both use the same logic. It holds the store repositories
+	// and the expansion limits from the configuration.
+	calService := calendar.NewService(
+		store.NewCalendars(),
+		store.NewEvents(),
+		store.NewWorkgroups(),
+	)
+
 	return &Server{
 		db:        opts.DB,
 		log:       log,
@@ -265,6 +279,7 @@ func New(opts Options) (*Server, error) {
 		tokens:    tokens,
 		sessions:  store.NewSessions(),
 		mail:      mailService,
+		calendar:  calService,
 		aliases:   store.NewAliases(),
 		shared:    store.NewSharedMailboxes(),
 		grants:    store.NewSharedMailboxGrants(),
@@ -309,6 +324,10 @@ func (s *Server) Handler() http.Handler {
 		// mounted in the same authenticated group, and resolve the owner from
 		// the token rather than from the request.
 		s.mountMail(r)
+
+		// The calendar routes are for the signed-in user's calendars and any
+		// workgroup calendars they may see. The same authenticated group applies.
+		s.mountCalendar(r)
 	})
 
 	// With a web build present, the same server hosts the SPA: asset files are
@@ -464,6 +483,45 @@ func (s *Server) writeJSON(w http.ResponseWriter, code int, v any) {
 // writeError is the one shape every failure response takes.
 func (s *Server) writeError(w http.ResponseWriter, code int, message string) {
 	s.writeJSON(w, code, map[string]string{"error": message})
+}
+
+// mapErrorCode returns the HTTP status code for an error.
+//
+// The policy denial codes map to 403, the store errors map to 404/409,
+// everything else is 500 or 400 depending on whether it's a client or server
+// fault. This keeps the logic in one place rather than scattered across handlers.
+func mapErrorCode(err error) int {
+	var denied *policy.Denied
+	if errors.As(err, &denied) {
+		switch denied.Code {
+		case policy.CodeNotCalendarOwner, policy.CodeWorkgroupClosed,
+			policy.CodeNotWorkgroupAdmin, policy.CodeFreeBusyHidden,
+			policy.CodeNotAWorkgroupCalendar:
+			return http.StatusForbidden
+		default:
+			return http.StatusForbidden
+		}
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		return http.StatusNotFound
+	}
+	if errors.Is(err, store.ErrConflict) {
+		return http.StatusConflict
+	}
+	if errors.Is(err, calendar.ErrDenied) {
+		return http.StatusForbidden
+	}
+	if errors.Is(err, calendar.ErrStale) {
+		return http.StatusConflict
+	}
+	if errors.Is(err, calendar.ErrBadRequest) {
+		return http.StatusBadRequest
+	}
+	if errors.Is(err, ErrInvalid) {
+		return http.StatusBadRequest
+	}
+	// Unknown: assume server error to be safe
+	return http.StatusInternalServerError
 }
 
 func notFound(w http.ResponseWriter, r *http.Request) {

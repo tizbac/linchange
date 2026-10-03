@@ -541,6 +541,40 @@ func (e *Events) insert(ctx context.Context, q Querier, req WriteEventRequest) (
 	return out, nil
 }
 
+// updateEvent replaces an event's contents while keeping its identity.
+//
+// The series key — calendar, UID and slot — is deliberately absent from the SET
+// list: it is what the row *is*, so changing it would be a different event rather
+// than a revision of this one. created_by is absent for the same reason: a
+// revision does not change who wrote the original.
+const updateEvent = `
+	UPDATE events SET
+		ical_blob = $2, dtstart = $3, dtend = $4, timezone = $5, all_day = $6,
+		rrule = $7, summary = $8, location = $9, method = $10, organizer = $11,
+		organizer_address = $12, status = $13, show_as = $14, sequence = $15,
+		dtstamp = $16, cancelled = $17
+	WHERE id = $1
+	RETURNING ` + eventColumns
+
+func (e *Events) update(ctx context.Context, q Querier, id int64, req WriteEventRequest) (Event, error) {
+	var out Event
+	err := q.GetContext(ctx, &out, updateEvent, id,
+		req.ICalBlob, req.DTStart, req.DTEnd, req.Timezone, req.AllDay, req.RRULE,
+		req.Summary, req.Location, req.Method, req.Organizer, req.OrganizerAddress,
+		req.Status, req.ShowAs, req.Sequence, req.DTStamp, req.Cancelled)
+	if err != nil {
+		if IsNotFound(err) {
+			return Event{}, ErrNotFound
+		}
+		return Event{}, fmt.Errorf("store: updating event: %w", err)
+	}
+	if err := e.replaceAttendees(ctx, q, out.ID, req.Attendees); err != nil {
+		return Event{}, err
+	}
+	out.Attendees = req.Attendees
+	return out, nil
+}
+
 // Upsert stores an event, replacing any existing row with the same
 // calendar, UID and recurrence slot.
 //
@@ -555,23 +589,34 @@ func (e *Events) Upsert(ctx context.Context, q Querier, req WriteEventRequest) (
 
 	var out Event
 	err := InQuerierTx(ctx, q, func(tx *sqlx.Tx) error {
-		// The conflict target cannot name a nullable column, so the update is
-		// written as a delete-then-insert. That is safe here because both
-		// statements run in this transaction and nothing outside it can see the
-		// gap.
-		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM events
+		// The series identity cannot be a conflict target, because
+		// recurrence_id is nullable and a partial unique index on the three
+		// columns is the only way to express it. So the row is found by hand
+		// and either revised in place or inserted.
+		//
+		// Revising in place rather than deleting and reinserting is not a
+		// detail. The row id is what every client holds, and a replacement
+		// that mints a new one leaves every open editor — and every bookmark,
+		// and every copy of the URL — pointing at an event that no longer
+		// exists. The unique index still has the last word, so a concurrent
+		// insert that got past the lookup is caught rather than duplicated.
+		var id int64
+		err := tx.GetContext(ctx, &id, `
+			SELECT id FROM events
 			WHERE calendar_id = $1 AND uid = $2
-			  AND recurrence_id IS NOT DISTINCT FROM $3`,
-			req.CalendarID, req.UID, req.RecurrenceID); err != nil {
-			return fmt.Errorf("store: replacing event: %w", err)
-		}
-		row, err := e.insert(ctx, tx, req)
-		if err != nil {
+			  AND recurrence_id IS NOT DISTINCT FROM $3
+			FOR UPDATE`,
+			req.CalendarID, req.UID, req.RecurrenceID)
+		switch {
+		case err == nil:
+			out, err = e.update(ctx, tx, id, req)
 			return err
+		case IsNotFound(err):
+			out, err = e.insert(ctx, tx, req)
+			return err
+		default:
+			return fmt.Errorf("store: locating event: %w", err)
 		}
-		out = row
-		return nil
 	})
 	if err != nil {
 		return Event{}, err
