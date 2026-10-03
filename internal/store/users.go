@@ -81,6 +81,7 @@ type Querier interface {
 	QueryxContext(ctx context.Context, query string, args ...any) (*sqlx.Rows, error)
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	NamedExecContext(ctx context.Context, query string, arg any) (sql.Result, error)
+	SelectContext(ctx context.Context, dest any, query string, args ...any) error
 }
 
 // assert both handle types satisfy the interface at compile time.

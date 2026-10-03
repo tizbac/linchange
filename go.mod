@@ -3,6 +3,7 @@ module github.com/linchange/linchange
 go 1.27.1
 
 require (
+	github.com/arran4/golang-ical v0.3.7
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/emersion/go-message v0.18.2
 	github.com/emersion/go-msgauth v0.7.0
@@ -16,6 +17,8 @@ require (
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/migadu/go-pop3 v0.1.4
 	github.com/pquerna/otp v1.5.0
+	github.com/robfig/cron/v3 v3.0.1
+	github.com/teambition/rrule-go v1.8.2
 	golang.org/x/crypto v0.57.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -27,8 +30,6 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
-	github.com/kr/text v0.2.0 // indirect
-	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect

@@ -159,6 +159,31 @@ func InTx(ctx context.Context, db *sqlx.DB, fn func(*sqlx.Tx) error) error {
 	return nil
 }
 
+// InQuerierTx runs fn inside a transaction, or directly when q already is one.
+//
+// Every repository takes a Querier so that a caller can compose several into one
+// transaction, which creates a problem for a repository that needs atomicity of
+// its own: it cannot open a nested transaction, and it must not insist the
+// caller opened one, because "these writes are atomic" is a property of the
+// repository rather than of whoever happened to call it.
+//
+// So a repository that needs a transaction asks for one here. Given a *sqlx.DB
+// it opens one; given a *sqlx.Tx it simply runs, because the caller's
+// transaction already covers it and PostgreSQL has no nested transaction to
+// nest into. Guessing wrong and opening a second connection would let the
+// repository's writes commit outside the caller's transaction, which is a
+// correctness bug that only appears under concurrency.
+func InQuerierTx(ctx context.Context, q Querier, fn func(*sqlx.Tx) error) error {
+	if tx, ok := q.(*sqlx.Tx); ok {
+		return fn(tx)
+	}
+	db, ok := q.(*sqlx.DB)
+	if !ok {
+		return fmt.Errorf("store: %T is neither a *sqlx.DB nor a *sqlx.Tx", q)
+	}
+	return InTx(ctx, db, fn)
+}
+
 // IsNotFound reports whether err represents a missing row, in the forms sqlx
 // and the pgx stdlib driver produce.
 func IsNotFound(err error) bool {
