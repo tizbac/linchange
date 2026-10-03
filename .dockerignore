@@ -1,0 +1,54 @@
+# .dockerignore - files excluded from Docker build context
+
+# Git
+.git
+.gitignore
+
+# Build artifacts
+linchange
+*.tar.gz
+dist/
+build/
+
+# Go
+vendor/
+
+# Node
+web/node_modules/
+web/dist/
+web/.angular/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test
+coverage/
+*.test
+
+# Config (secrets should not be in image)
+config/linchange.yaml
+config/*.local.yaml
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Misc
+*.tmp
+*.temp

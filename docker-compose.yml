@@ -1,58 +1,69 @@
-name: linchange
+# docker-compose.yml - for development and testing
+# 
+# Usage:
+#   docker compose up -d
+#   docker compose logs -f linchange
+#
+# The database password should be set via environment variable or .env file
 
-# Local development only. A production deployment should not expose PostgreSQL
-# to the host at all, and should not run the server from a bind-mounted source
-# tree.
 services:
   postgres:
     image: postgres:18-alpine
-    container_name: linchange-pg
+    container_name: linchange-postgres
     environment:
-      POSTGRES_USER: ${PG_USER:-linchange}
-      POSTGRES_PASSWORD: ${PG_PASS:-linchange}
-      POSTGRES_DB: ${PG_DB:-linchange}
-      # Deterministic collation so that string ordering does not change
-      # between the developer's machine and production. The server stores
-      # timestamps in UTC and does its own normalisation of addresses, so a
-      # locale-dependent database collation would only introduce surprises.
-      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
-    command:
-      - postgres
-      - -c
-      - max_connections=200
-      # Message search scans indexed metadata columns, so a larger shared
-      # buffer is worth more than a larger work_mem here.
-      - -c
-      - shared_buffers=512MB
-      - -c
-      - work_mem=16MB
-      - -c
-      - log_min_duration_statement=1000
-    ports:
-      - "${PG_PORT:-55432}:5432"
+      POSTGRES_USER: linchange
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-linchange}
+      POSTGRES_DB: linchange
     volumes:
-      # PostgreSQL 18 moved its data root from /var/lib/postgresql/data to
-      # /var/lib/postgresql/<version>. Mounting a single volume at
-      # /var/lib/postgresql keeps pg_upgrade inside the mount boundary.
-      - pgdata:/var/lib/postgresql
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-linchange} -d ${PG_DB:-linchange}"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U linchange"]
+      interval: 10s
       timeout: 5s
-      retries: 12
-      start_period: 10s
-    restart: unless-stopped
+      retries: 5
+    networks:
+      - linchange-network
 
-  # Optional: a throwaway SMTP sink for exercising the submission path without
-  # sending real mail. Enabled with `docker compose --profile tools up`.
-  mailsink:
-    image: axllent/mailpit:latest
-    container_name: linchange-mailsink
-    profiles: ["tools"]
+  linchange:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: linchange
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Database
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-linchange}
+      # JWT secret - CHANGE IN PRODUCTION
+      JWT_SECRET: ${JWT_SECRET:-changeme-in-production-use-long-random-string}
+      # LDAP bind password (if using LDAP)
+      LDAP_BIND_PASSWORD: ${LDAP_BIND_PASSWORD:-}
+    volumes:
+      # Config file (required)
+      - ./config/linchange.yaml:/app/config/linchange.yaml:ro
+      # Data directory for blobstore, ACME certs, etc.
+      - linchange_data:/var/lib/linchange
     ports:
-      - "8025:8025"   # web interface
-      - "1025:1025"  # SMTP
+      # Mail protocols
+      - "25:25"      # SMTP inbound (requires root/privileged)
+      - "587:587"    # SMTP submission
+      - "465:465"    # SMTP submission TLS
+      - "143:143"    # IMAP
+      - "993:993"    # IMAPS
+      - "110:110"    # POP3
+      - "995:995"    # POP3S
+      # HTTP
+      - "8080:8080"  # HTTP
+      - "8443:8443"  # HTTPS
+    networks:
+      - linchange-network
     restart: unless-stopped
 
 volumes:
-  pgdata:
+  postgres_data:
+  linchange_data:
+
+networks:
+  linchange-network:
+    driver: bridge

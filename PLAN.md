@@ -264,8 +264,8 @@ exists rather than a wish list.
 | P7 | webmail: folders, list, read, compose, send, search, threading, attachments, aliases, shared mailboxes, rules | browser E2E | ✅ DONE |
 | P8 | LDAP/AD provider; sync; off-domain → admin-only rule; directory login on IMAP/SMTP/POP3 | LDAP fixture; per-listener login tests | ✅ DONE |
 | P9 | calendars: personal + workgroup; recurrence; iMIP REQUEST/REPLY/CANCEL; free/busy; FullCalendar UI | ICS round-trip and expansion tests | **active** |
-| P9a | CalDAV exposure (RFC 4791) — read/write calendars via standard WebDAV endpoints so Thunderbird, iOS, macOS Calendar and Evolution work out of the box | REPORT/Calendar-query, MKCALENDAR, PROPPATCH, multi-get tests | pending |
-| P9b | Docker container setup — single `Dockerfile` producing a runnable image; default run binds to container IP (no host port mapping in compose), port exposure added later by the operator | `docker build`, container boots and answers on `:8080`/`8443`/`25`/`587`/`143`/`110`/`993`/`995` | pending |
+| P9a | CalDAV exposure (RFC 4791) — read/write calendars via standard WebDAV endpoints so Thunderbird, iOS, macOS Calendar and Evolution work out of the box | REPORT/Calendar-query, MKCALENDAR, PROPPATCH, multi-get tests | **done** |
+| P9b | Docker container setup — single `Dockerfile` producing a runnable image; default run binds to container IP (no host port mapping in compose), port exposure added later by the operator | `docker build`, container boots and answers on `:8080`/`8443`/`25`/`587`/`143`/`110`/`993`/`995` | **done** |
 | P10 | Autodiscover; EWS; ActiveSync | interop traces | pending |
 | P11 | MAPI/HTTP (Outlook-native), hand-written in Go | Outlook client connects; cross-checked against gromox | pending (last) |
 
@@ -309,9 +309,9 @@ database, and each correction is now pinned by a test in
   been a shared mailbox member. Added a check constraint.
 - An empty envelope recipient could be queued; now rejected.
 
-### P9 notes: calendars (in progress)
+### P9 notes: calendars
 
-What has landed so far in P9:
+What has landed in P9:
 
 - **internal/ical** — iCalendar parsing (golang-ical for parse only) and hand-written
   CRLF-emitting serializer. Model covers UID, DTSTART/DTEND, RRULE (as literal
@@ -364,7 +364,26 @@ What has landed so far in P9:
   ICS download. Authenticated group, principal from token. mapErrorCode maps
   policy denials → 403, store conflicts → 409, not found → 404.
 
-Next in P9: FullCalendar Angular UI in web/src/app/calendar.
+- **web/src/app/calendar** — FullCalendar v6 Angular UI with month/week/day/list
+  views, drag/resize to move events, click to view/edit/delete. Integrates with
+  the REST API for all operations.
+
+- **internal/caldav** — CalDAV server (RFC 4791) for standard calendar clients
+  (Thunderbird, iOS/macOS Calendar, Evolution, etc.). Implements:
+  - PROPFIND for calendar discovery and properties
+  - REPORT with calendar-query for time-range event queries
+  - PUT/GET/DELETE for event ICS management
+  - MKCALENDAR for calendar creation
+  - PROPPATCH for calendar property updates
+  - Well-known URL for auto-discovery
+  Mounted at `/caldav` on the HTTP server, uses the same calendar service and
+  store as the REST API and web UI.
+
+- **Dockerfile** — Multi-stage build: Node for Angular frontend, Go for backend,
+  Alpine runtime. Non-root user (UID 1000), health check on `/healthz`,
+  exposes all mail + HTTP ports. Operator provides config via volume mount
+  and maps ports as needed. Includes `docker-compose.yml` for local dev with
+  Postgres.
 
 ### P8 notes: one answer to "who is this?"
 

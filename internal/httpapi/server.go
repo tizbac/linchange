@@ -33,6 +33,7 @@ import (
 	"github.com/linchange/linchange/internal/auth/token"
 	"github.com/linchange/linchange/internal/auth/totp"
 	"github.com/linchange/linchange/internal/blobstore"
+	"github.com/linchange/linchange/internal/caldav"
 	"github.com/linchange/linchange/internal/calendar"
 	"github.com/linchange/linchange/internal/delivery"
 	"github.com/linchange/linchange/internal/store"
@@ -68,6 +69,8 @@ type Server struct {
 	// It is separate so that an inbound scheduling message and the HTTP API
 	// both apply the same logic.
 	calendar *calendar.Service
+	// caldav is the CalDAV server for standard calendar clients.
+	caldav *caldav.Server
 	// The repositories below back the read-only listings the web client needs:
 	// which aliases reach this mailbox, and which team mailboxes this member
 	// may open.
@@ -270,6 +273,10 @@ func New(opts Options) (*Server, error) {
 		store.NewWorkgroups(),
 	)
 
+	// The CalDAV server is built here for standard calendar clients (Thunderbird,
+	// iOS/macOS Calendar, Evolution, etc.). It uses the same calendar service.
+	caldavServer := caldav.NewServer("/caldav", calService, opts.DB)
+
 	return &Server{
 		db:        opts.DB,
 		log:       log,
@@ -280,6 +287,7 @@ func New(opts Options) (*Server, error) {
 		sessions:  store.NewSessions(),
 		mail:      mailService,
 		calendar:  calService,
+		caldav:    caldavServer,
 		aliases:   store.NewAliases(),
 		shared:    store.NewSharedMailboxes(),
 		grants:    store.NewSharedMailboxGrants(),
@@ -328,6 +336,9 @@ func (s *Server) Handler() http.Handler {
 		// The calendar routes are for the signed-in user's calendars and any
 		// workgroup calendars they may see. The same authenticated group applies.
 		s.mountCalendar(r)
+
+		// CalDAV routes are public but require auth middleware inside
+		r.Mount("/", s.caldav.Handler())
 	})
 
 	// With a web build present, the same server hosts the SPA: asset files are
