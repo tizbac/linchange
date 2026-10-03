@@ -156,6 +156,9 @@ internal/
                              DMARC evaluation, spam scoring, routing into INBOX/Junk
   httpapi/                   chi router: rest/ | ews/ | eas/ | autodiscover/
   caldav/                    P9a: CalDAV WebDAV endpoints (REPORT, MKCALENDAR, PROPPATCH)
+  autodiscover/              P10: Autodiscover POX (MS-OXDISCO)
+  ews/                       P10: Exchange Web Services SOAP endpoint
+  eas/                       P10: ActiveSync WBXML endpoint (MS-ASCMD)
   mapihttp/                  P11: MAPI/HTTP (Outlook-native), hand-written vs [MS-OXCMAPIHTTP]
   admin/                     domain-admin service layer, impersonation, audit
   ldapsync/                  periodic AD reconcile
@@ -216,16 +219,20 @@ there is exactly one definition of what a principal may do.
 ### Exchange endpoints
 
 - **Autodiscover** (MS-OXDISCO POX) — advertises IMAP, SMTP and EAS. Lets
-  Outlook for Windows build a working profile.
+  Outlook for Windows build a working profile. Endpoint: `/autodiscover/autodiscover.xml`
 - **EWS** — `FindItem`, `GetItem`, `CreateItem`, `UpdateItem`, `DeleteItem`,
-  `SendItem`, calendar items, `GetUserAvailability`, `ResolveNames`.
+  `SendItem`, calendar items, `GetUserAvailability`, `ResolveNames`,
+  `SyncFolderHierarchy`, `SyncFolderItems`. Endpoint: `/ews/exchange.asmx`
 - **ActiveSync** — `Provision`, `FolderSync`, `Sync`, `Ping`, `SendMail`,
-  `MoveItems`, reusing the `hstern/go-activesync/wbxml` codec.
+  `MoveItems`, `GetItemEstimate`, `FolderCreate/Delete/Update`,
+  `MeetingResponse`, `Search`, `Settings`, `ItemOperations`.
+  Endpoint: `/eas` (WBXML via `hstern/go-activesync/wbxml`).
+- **MAPI/HTTP** — Outlook native protocol. MAPI/HTTP transport + MAPI RPC
+  (ROP processing). Endpoints: `/mapi/emsmdb`, `/mapi/emsmdbd`,
+  `/mapi/nspi`, `/mapi/ab`. Property marshaling (MS-OXPROPS).
 - **Shared mailboxes** in Exchange use the standard delegation model
   (`shared_mailbox_grants`), not the `#` suffix, which is an IMAP/POP3/login
   convention only.
-
-### MAPI/HTTP (P11)
 
 The last phase. MAPI/HTTP is what Outlook for Windows speaks natively — the
 protocol real users will actually hit — so it is worth the cost even though it
@@ -266,7 +273,7 @@ exists rather than a wish list.
 | P9 | calendars: personal + workgroup; recurrence; iMIP REQUEST/REPLY/CANCEL; free/busy; FullCalendar UI | ICS round-trip and expansion tests | **active** |
 | P9a | CalDAV exposure (RFC 4791) — read/write calendars via standard WebDAV endpoints so Thunderbird, iOS, macOS Calendar and Evolution work out of the box | REPORT/Calendar-query, MKCALENDAR, PROPPATCH, multi-get tests | **done** |
 | P9b | Docker container setup — single `Dockerfile` producing a runnable image; default run binds to container IP (no host port mapping in compose), port exposure added later by the operator | `docker build`, container boots and answers on `:8080`/`8443`/`25`/`587`/`143`/`110`/`993`/`995` | **done** |
-| P10 | Autodiscover; EWS; ActiveSync | interop traces | pending |
+| P10 | Autodiscover; EWS; ActiveSync | interop traces | **active** |
 | P11 | MAPI/HTTP (Outlook-native), hand-written in Go | Outlook client connects; cross-checked against gromox | pending (last) |
 
 ### P0 notes
@@ -384,6 +391,42 @@ What has landed in P9:
   exposes all mail + HTTP ports. Operator provides config via volume mount
   and maps ports as needed. Includes `docker-compose.yml` for local dev with
   Postgres.
+
+### P10 notes: Exchange compatibility (in progress)
+
+What has landed in P10:
+
+- **internal/autodiscover** — Autodiscover service (MS-OXDISCO POX) for Outlook
+  automatic configuration. Handles POX requests at `/autodiscover/autodiscover.xml`
+  and returns IMAP/SMTP/POP3/EWS/EAS endpoints. Queries the domain table to
+  validate hosted domains.
+
+- **internal/ews** — Exchange Web Services endpoint at `/ews/exchange.asmx`.
+  SOAP-based API handling FindItem, GetItem, CreateItem, UpdateItem, DeleteItem,
+  SendItem, GetUserAvailability, ResolveNames, SyncFolderHierarchy,
+  SyncFolderItems. Built on the same store and policy as other protocols.
+
+- **internal/eas** — ActiveSync (MS-ASCMD) endpoint at `/eas`.
+  WBXML-encoded binary protocol using `hstern/go-activesync/wbxml` codec.
+  Commands: Provision, FolderSync, Sync, Ping, SendMail, MoveItems,
+  GetItemEstimate, FolderCreate/Delete/Update, MeetingResponse, Search,
+  Settings, ItemOperations. Shares store and policy.
+
+- **internal/mapihttp** — MAPI/HTTP (MS-OXCMAPIHTTP) endpoint at `/mapi`.
+  The native protocol for Outlook for Windows. Implements MAPI/HTTP transport
+  with MAPI RPC layer: Connect, Disconnect, Execute, Notify, GetBuffer,
+  ReleaseBuffer. ROP (Remote Operation) parsing and processing framework.
+  Property marshaling (MS-OXPROPS) with all standard property types.
+  Common property tags for messages, folders, recipients, attachments,
+  calendar, and store.
+
+All Exchange endpoints mounted at standard paths:
+- `/autodiscover/autodiscover.xml` (Autodiscover)
+- `/ews/exchange.asmx` (EWS)
+- `/eas` (ActiveSync)
+- `/mapi/emsmdb` (MAPI/HTTP)
+
+All share the same `store`, `policy`, and authentication infrastructure.
 
 ### P8 notes: one answer to "who is this?"
 

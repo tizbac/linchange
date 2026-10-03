@@ -25,6 +25,13 @@ import (
 
 	"github.com/linchange/linchange/config"
 	"github.com/linchange/linchange/internal/admin"
+	"github.com/linchange/linchange/internal/autodiscover"
+	"github.com/linchange/linchange/internal/calendar"
+	"github.com/linchange/linchange/internal/caldav"
+	"github.com/linchange/linchange/internal/delivery"
+	"github.com/linchange/linchange/internal/eas"
+	"github.com/linchange/linchange/internal/ews"
+	"github.com/linchange/linchange/internal/mapihttp"
 	ldapauth "github.com/linchange/linchange/internal/auth/ldap"
 	"github.com/linchange/linchange/internal/auth/lockout"
 	"github.com/linchange/linchange/internal/auth/login"
@@ -33,9 +40,6 @@ import (
 	"github.com/linchange/linchange/internal/auth/token"
 	"github.com/linchange/linchange/internal/auth/totp"
 	"github.com/linchange/linchange/internal/blobstore"
-	"github.com/linchange/linchange/internal/caldav"
-	"github.com/linchange/linchange/internal/calendar"
-	"github.com/linchange/linchange/internal/delivery"
 	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/webmail"
 )
@@ -71,6 +75,14 @@ type Server struct {
 	calendar *calendar.Service
 	// caldav is the CalDAV server for standard calendar clients.
 	caldav *caldav.Server
+	// autodiscover is the Autodiscover service for Outlook.
+	autodiscover *autodiscover.Autodiscover
+	// ews is the Exchange Web Services endpoint.
+	ews *ews.EWS
+	// eas is the ActiveSync endpoint.
+	eas *eas.EAS
+	// mapihttp is the MAPI/HTTP endpoint for Outlook native.
+	mapihttp *mapihttp.MAPIHTTP
 	// The repositories below back the read-only listings the web client needs:
 	// which aliases reach this mailbox, and which team mailboxes this member
 	// may open.
@@ -277,21 +289,37 @@ func New(opts Options) (*Server, error) {
 	// iOS/macOS Calendar, Evolution, etc.). It uses the same calendar service.
 	caldavServer := caldav.NewServer("/caldav", calService, opts.DB)
 
+	// The Autodiscover service for Outlook automatic configuration.
+	autodiscoverService := autodiscover.New(cfg, opts.DB)
+
+	// The EWS (Exchange Web Services) endpoint.
+	ewsService := ews.New(cfg, pol)
+
+	// The EAS (Exchange ActiveSync) endpoint.
+	easService := eas.New(cfg, pol)
+
+	// The MAPI/HTTP endpoint (Outlook native protocol).
+	mapihttpService := mapihttp.New(cfg, pol)
+
 	return &Server{
-		db:        opts.DB,
-		log:       log,
-		auth:      auth,
-		reset:     r,
-		admin:     adm,
-		tokens:    tokens,
-		sessions:  store.NewSessions(),
-		mail:      mailService,
-		calendar:  calService,
-		caldav:    caldavServer,
-		aliases:   store.NewAliases(),
-		shared:    store.NewSharedMailboxes(),
-		grants:    store.NewSharedMailboxGrants(),
-		staticDir: opts.StaticDir,
+		db:           opts.DB,
+		log:          log,
+		auth:         auth,
+		reset:        r,
+		admin:        adm,
+		tokens:       tokens,
+		sessions:     store.NewSessions(),
+		mail:         mailService,
+		calendar:     calService,
+		caldav:       caldavServer,
+		autodiscover: autodiscoverService,
+		ews:          ewsService,
+		eas:          easService,
+		mapihttp:     mapihttpService,
+		aliases:      store.NewAliases(),
+		shared:       store.NewSharedMailboxes(),
+		grants:       store.NewSharedMailboxGrants(),
+		staticDir:    opts.StaticDir,
 	}, nil
 }
 
@@ -340,6 +368,18 @@ func (s *Server) Handler() http.Handler {
 		// CalDAV routes are public but require auth middleware inside
 		r.Mount("/", s.caldav.Handler())
 	})
+
+	// Autodiscover (outside /api/v1 for Outlook compatibility)
+	r.Mount("/autodiscover", s.autodiscover.Handler())
+
+	// EWS (Exchange Web Services)
+	r.Mount("/ews", s.ews.Handler())
+
+	// EAS (Exchange ActiveSync)
+	r.Mount("/eas", s.eas.Handler())
+
+	// MAPI/HTTP (Outlook native)
+	r.Mount("/mapi", s.mapihttp.Handler())
 
 	// With a web build present, the same server hosts the SPA: asset files are
 	// served directly and every other GET is answered with the app shell, which
