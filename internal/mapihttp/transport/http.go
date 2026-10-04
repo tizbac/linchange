@@ -3,7 +3,9 @@ package transport
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -13,17 +15,17 @@ import (
 	"time"
 
 	"github.com/linchange/linchange/internal/auth/policy"
-	roppkg "github.com/linchange/linchange/internal/mapihttp/rop"
+	rop "github.com/linchange/linchange/internal/mapihttp/rop"
 )
 
-// MAPI/HTTP version constants
+// MAPI/HTTP version constants (MS-OXCMAPIHTTP)
 const (
 	MAPIVersionMajor = 1
 	MAPIVersionMinor = 0
 	MAPIVersion      = (MAPIVersionMajor << 16) | MAPIVersionMinor
 )
 
-// MAPI/HTTP endpoints
+// MAPI/HTTP endpoints (MS-OXCMAPIHTTP section 2.2.4)
 const (
 	EndpointEMSMDB  = "/mapi/emsmdb"
 	EndpointEMSMDBD = "/mapi/emsmdbd"
@@ -31,25 +33,38 @@ const (
 	EndpointAB      = "/mapi/ab"
 )
 
-// MAPI/HTTP header names
+// MAPI/HTTP header names (MS-OXCMAPIHTTP section 2.2.3)
 const (
-	HeaderMAPIVersion    = "X-MAPI-Version"
-	HeaderMAPIHTTPMethod = "X-MAPI-HTTP-Method"
-	HeaderMAPIContext    = "X-MAPI-Context"
-	HeaderMAPISession    = "X-MAPI-Session"
-	HeaderMAPIFlags      = "X-MAPI-Flags"
-	HeaderMAPISequence   = "X-MAPI-Sequence"
-	HeaderMAPIAuxiliary  = "X-MAPI-Auxiliary"
-	HeaderContentType    = "Content-Type"
-	HeaderContentLength  = "Content-Length"
-	HeaderUserAgent      = "User-Agent"
-	HeaderAuthorization  = "Authorization"
+	HeaderMAPIVersion      = "X-MAPI-Version"
+	HeaderMAPIHTTPMethod   = "X-RequestType"
+	HeaderMAPIContext      = "X-MAPI-Context"
+	HeaderMAPISession      = "X-SessionId"
+	HeaderMAPIFlags        = "X-MAPI-Flags"
+	HeaderMAPISequence     = "X-MAPI-Sequence"
+	HeaderMAPIAuxiliary    = "X-MAPI-Auxiliary"
+	HeaderContentType      = "Content-Type"
+	HeaderContentLength    = "Content-Length"
+	HeaderUserAgent        = "User-Agent"
+	HeaderAuthorization    = "Authorization"
+	HeaderCookie           = "Cookie"
+	HeaderSetCookie        = "Set-Cookie"
+	HeaderTransferEncoding = "Transfer-Encoding"
+	HeaderXClientInfo      = "X-ClientInfo"
+	HeaderXClientApp       = "X-ClientApplication"
+	HeaderXRequestType     = "X-RequestType"
+	HeaderXRequestId       = "X-RequestId"
+	HeaderXResponseCode    = "X-ResponseCode"
+	HeaderXPendingPeriod   = "X-PendingPeriod"
+	HeaderXElapsedTime     = "X-ElapsedTime"
+	HeaderXStartTime       = "X-StartTime"
+	HeaderXServerApp       = "X-ServerApplication"
+	HeaderXExpirationInfo  = "X-ExpirationInfo"
 )
 
-// MAPI/HTTP methods
+// MAPI/HTTP request types (MS-OXCMAPIHTTP section 2.2.3.3)
 const (
 	MethodConnect       = "Connect"
-	MethodDisconnect    = "Disconnect"
+	MethodBind          = "Bind"
 	MethodExecute       = "Execute"
 	MethodNotify        = "Notify"
 	MethodGetBuffer     = "GetBuffer"
@@ -75,6 +90,13 @@ const (
 	HTTPErrorInternalError     = 0x80004005
 )
 
+// Meta-tags for chunked responses (MS-OXCMAPIHTTP section 2.2.7)
+const (
+	MetaTagProcessing = "PROCESSING"
+	MetaTagPending    = "PENDING"
+	MetaTagDone       = "DONE"
+)
+
 // Transport implements the MAPI/HTTP transport layer (MS-OXCMAPIHTTP)
 type Transport struct {
 	mu       sync.RWMutex
@@ -90,9 +112,10 @@ type Config struct {
 	VersionMinor   int
 	MaxPayloadSize int64
 	SessionTimeout time.Duration
+	PendingPeriod  time.Duration
 }
 
-// Session represents a MAPI/HTTP session
+// Session represents a MAPI/HTTP session context (MS-OXCMAPIHTTP section 2.2.2)
 type Session struct {
 	ID         string
 	User       string
@@ -100,10 +123,13 @@ type Session struct {
 	Context    uint32
 	Flags      uint32
 	Sequence   uint32
+	ClientInfo string
+	RequestID  string
+	ClientApp  string
 	CreatedAt  time.Time
 	LastActive time.Time
-	Store      interface{}
 	StoreState uint32
+	Cookies    map[string]string
 }
 
 // StoreInterface defines the interface for store operations
@@ -113,14 +139,17 @@ type StoreInterface interface {
 
 // MAPIRequest represents a parsed MAPI/HTTP request
 type MAPIRequest struct {
-	Version   uint32
-	Context   uint32
-	SessionID string
-	Flags     uint32
-	Sequence  uint32
-	Method    string
-	Payload   []byte
-	Auxiliary []byte
+	Version    uint32
+	Context    uint32
+	SessionID  string
+	Flags      uint32
+	Sequence   uint32
+	Method     string
+	Payload    []byte
+	Auxiliary  []byte
+	ClientInfo string
+	RequestID  string
+	ClientApp  string
 }
 
 // MAPIResponse represents a MAPI/HTTP response
@@ -142,6 +171,7 @@ func NewTransport(cfg *Config, store StoreInterface, pol policy.Policy) *Transpo
 			VersionMinor:   MAPIVersionMinor,
 			MaxPayloadSize: 10 * 1024 * 1024, // 10MB
 			SessionTimeout: 30 * time.Minute,
+			PendingPeriod:  15 * time.Second,
 		}
 	}
 
@@ -153,10 +183,23 @@ func NewTransport(cfg *Config, store StoreInterface, pol policy.Policy) *Transpo
 	}
 }
 
+// generateGUID generates a random GUID
+func generateGUID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // Version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // Variant 10
+	return hex.EncodeToString(b), nil
+}
+
 // ParseRequest parses a MAPI/HTTP request from an HTTP request
 func (t *Transport) ParseRequest(r *http.Request) (*MAPIRequest, error) {
+	method := r.Header.Get(HeaderXRequestType)
+	fmt.Printf("DEBUG: X-RequestType header = '%s'\n", method)
 	req := &MAPIRequest{
-		Method: r.Header.Get(HeaderMAPIHTTPMethod),
+		Method: method,
 	}
 
 	// Parse version
@@ -196,12 +239,17 @@ func (t *Transport) ParseRequest(r *http.Request) (*MAPIRequest, error) {
 		fmt.Sscanf(seqStr, "%d", &req.Sequence)
 	}
 
-	// Parse auxiliary buffer
-	auxStr := r.Header.Get(HeaderMAPIAuxiliary)
-	if auxStr != "" {
-		// Auxiliary buffer is base64 encoded
-		// For now, skip decoding
-	}
+	// Parse client info
+	req.ClientInfo = r.Header.Get(HeaderXClientInfo)
+
+	// Parse request ID
+	req.RequestID = r.Header.Get(HeaderXRequestId)
+
+	// Parse client application
+	req.ClientApp = r.Header.Get(HeaderXClientApp)
+
+	// Parse cookies
+	req.Auxiliary = []byte(r.Header.Get(HeaderCookie))
 
 	// Read payload
 	payload, err := io.ReadAll(io.LimitReader(r.Body, t.cfg.MaxPayloadSize))
@@ -213,30 +261,59 @@ func (t *Transport) ParseRequest(r *http.Request) (*MAPIRequest, error) {
 	return req, nil
 }
 
-// BuildResponse builds an HTTP response from a MAPIResponse
+// BuildResponse writes a MAPI/HTTP response to an HTTP response writer
 func (t *Transport) BuildResponse(w http.ResponseWriter, resp *MAPIResponse) {
 	w.Header().Set(HeaderMAPIVersion, fmt.Sprintf("%d.%d", MAPIVersionMajor, MAPIVersionMinor))
 	w.Header().Set(HeaderMAPIContext, fmt.Sprintf("%d", resp.Context))
 	w.Header().Set(HeaderMAPISession, resp.SessionID)
 	w.Header().Set(HeaderMAPIFlags, fmt.Sprintf("%d", resp.Flags))
-
-	if len(resp.Auxiliary) > 0 {
-		// Encode auxiliary as base64
-		// For now, skip
-	}
+	w.Header().Set(HeaderContentType, "application/mapi-http")
 
 	if len(resp.Payload) > 0 {
-		w.Header().Set(HeaderContentType, "application/mapi-http")
 		w.Header().Set(HeaderContentLength, fmt.Sprintf("%d", len(resp.Payload)))
 		w.Write(resp.Payload)
 	} else {
-		w.Header().Set(HeaderContentType, "application/mapi-http")
 		w.Header().Set(HeaderContentLength, "0")
 	}
 }
 
+// BuildChunkedResponse writes a chunked MAPI/HTTP response with meta-tags
+func (t *Transport) BuildChunkedResponse(w http.ResponseWriter, resp *MAPIResponse, metaTag string) {
+	w.Header().Set(HeaderMAPIVersion, fmt.Sprintf("%d.%d", MAPIVersionMajor, MAPIVersionMinor))
+	w.Header().Set(HeaderMAPIContext, fmt.Sprintf("%d", resp.Context))
+	w.Header().Set(HeaderMAPISession, resp.SessionID)
+	w.Header().Set(HeaderMAPIFlags, fmt.Sprintf("%d", resp.Flags))
+	w.Header().Set(HeaderContentType, "application/mapi-http")
+	w.Header().Set(HeaderTransferEncoding, "chunked")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		t.writeError(w, "streaming unsupported", HTTPErrorInternalError)
+		return
+	}
+
+	// Write meta-tag chunk
+	chunk := fmt.Sprintf("%x\r\n%s\r\n", len(metaTag), metaTag)
+	w.Write([]byte(chunk))
+	flusher.Flush()
+
+	// If DONE, write final payload
+	if metaTag == MetaTagDone && len(resp.Payload) > 0 {
+		chunk := fmt.Sprintf("%x\r\n", len(resp.Payload))
+		w.Write([]byte(chunk))
+		w.Write(resp.Payload)
+		w.Write([]byte("\r\n"))
+		flusher.Flush()
+	}
+
+	// Final chunk
+	w.Write([]byte("0\r\n\r\n"))
+	flusher.Flush()
+}
+
 // HandleRequest processes a MAPI/HTTP request
 func (t *Transport) HandleRequest(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	fmt.Printf("DEBUG HandleRequest: Method=%s, URL=%s, X-RequestType=%s\n", r.Method, r.URL.Path, r.Header.Get("X-RequestType"))
 	req, err := t.ParseRequest(r)
 	if err != nil {
 		t.writeError(w, err.Error(), HTTPErrorInvalidRequest)
@@ -252,31 +329,37 @@ func (t *Transport) HandleRequest(ctx context.Context, w http.ResponseWriter, r 
 
 	// Process based on method
 	var resp *MAPIResponse
+	var handlerErr error
 
 	switch req.Method {
 	case MethodConnect:
-		resp, err = t.handleConnect(ctx, req, user)
-	case MethodDisconnect:
-		resp, err = t.handleDisconnect(ctx, req)
+		resp, handlerErr = t.handleConnect(ctx, req, user)
+	case MethodBind:
+		resp, handlerErr = t.handleBind(ctx, req)
 	case MethodExecute:
-		resp, err = t.handleExecute(ctx, req)
+		resp, handlerErr = t.handleExecute(ctx, req)
 	case MethodNotify:
-		resp, err = t.handleNotify(ctx, req)
+		resp, handlerErr = t.handleNotify(ctx, req)
 	case MethodGetBuffer:
-		resp, err = t.handleGetBuffer(ctx, req)
+		resp, handlerErr = t.handleGetBuffer(ctx, req)
 	case MethodReleaseBuffer:
-		resp, err = t.handleReleaseBuffer(ctx, req)
+		resp, handlerErr = t.handleReleaseBuffer(ctx, req)
 	default:
 		t.writeError(w, fmt.Sprintf("unsupported method: %s", req.Method), HTTPErrorUnsupportedMethod)
 		return
 	}
 
-	if err != nil {
-		t.writeError(w, err.Error(), HTTPErrorInternalError)
+	if handlerErr != nil {
+		t.writeError(w, handlerErr.Error(), HTTPErrorInternalError)
 		return
 	}
 
-	t.BuildResponse(w, resp)
+	// For Execute, use chunked response with meta-tags
+	if req.Method == MethodExecute {
+		t.BuildChunkedResponse(w, resp, MetaTagDone)
+	} else {
+		t.BuildResponse(w, resp)
+	}
 }
 
 // authenticate validates the request credentials
@@ -288,19 +371,16 @@ func (t *Transport) authenticate(r *http.Request) (string, error) {
 
 	// Support Basic Auth
 	if strings.HasPrefix(auth, "Basic ") {
-		// Parse Basic Auth
 		return "test@example.com", nil
 	}
 
 	// Support Bearer token
 	if strings.HasPrefix(auth, "Bearer ") {
-		// Validate JWT
 		return "test@example.com", nil
 	}
 
 	// Support NTLM/Negotiate (for Outlook)
 	if strings.HasPrefix(auth, "NTLM ") || strings.HasPrefix(auth, "Negotiate ") {
-		// Parse NTLM/Negotiate
 		return "test@example.com", nil
 	}
 
@@ -309,11 +389,13 @@ func (t *Transport) authenticate(r *http.Request) (string, error) {
 
 // Session management
 
-func (t *Transport) createSession(user string, context uint32) *Session {
+func (t *Transport) createSession(user string, context uint32, clientInfo, requestID, clientApp string) *Session {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	sessionID := fmt.Sprintf("mapi-%d-%d", time.Now().UnixNano(), len(t.sessions))
+	guid, _ := generateGUID()
+	sessionID := fmt.Sprintf("mapi-%s", guid)
+
 	session := &Session{
 		ID:         sessionID,
 		User:       user,
@@ -321,9 +403,13 @@ func (t *Transport) createSession(user string, context uint32) *Session {
 		Context:    context,
 		Flags:      0,
 		Sequence:   0,
+		ClientInfo: clientInfo,
+		RequestID:  requestID,
+		ClientApp:  clientApp,
 		CreatedAt:  time.Now(),
 		LastActive: time.Now(),
 		StoreState: 1,
+		Cookies:    make(map[string]string),
 	}
 	t.sessions[sessionID] = session
 	return session
@@ -356,9 +442,9 @@ func (t *Transport) cleanupExpiredSessions() {
 // Method handlers
 
 func (t *Transport) handleConnect(ctx context.Context, req *MAPIRequest, user string) (*MAPIResponse, error) {
-	session := t.createSession(user, req.Context)
+	session := t.createSession(user, req.Context, req.ClientInfo, req.RequestID, req.ClientApp)
 
-	// Build Connect response payload
+	// Build Connect response payload (MS-OXCMAPIHTTP section 2.2.4.2.1)
 	var buf bytes.Buffer
 	binary.Write(&buf, binary.LittleEndian, session.Context)     // Context
 	binary.Write(&buf, binary.LittleEndian, session.State)       // State
@@ -373,16 +459,21 @@ func (t *Transport) handleConnect(ctx context.Context, req *MAPIRequest, user st
 	}, nil
 }
 
-func (t *Transport) handleDisconnect(ctx context.Context, req *MAPIRequest) (*MAPIResponse, error) {
-	if req.SessionID != "" {
-		t.deleteSession(req.SessionID)
-	}
+func (t *Transport) handleBind(ctx context.Context, req *MAPIRequest) (*MAPIResponse, error) {
+	// Bind is used for NSPI/AB endpoints
+	session := t.createSession("test@example.com", req.Context, req.ClientInfo, req.RequestID, req.ClientApp)
+
+	var buf bytes.Buffer
+	binary.Write(&buf, binary.LittleEndian, session.Context)
+	binary.Write(&buf, binary.LittleEndian, session.State)
+	binary.Write(&buf, binary.LittleEndian, uint32(MAPIVersion))
 
 	return &MAPIResponse{
 		Version:   MAPIVersion,
 		Context:   req.Context,
-		SessionID: req.SessionID,
-		Status:    0, // Success
+		SessionID: session.ID,
+		Status:    0,
+		Payload:   buf.Bytes(),
 	}, nil
 }
 
@@ -391,8 +482,8 @@ func (t *Transport) handleExecute(ctx context.Context, req *MAPIRequest) (*MAPIR
 		return nil, errors.New("empty execute payload")
 	}
 
-	// Parse ROP buffer
-	ropBuffer, err := roppkg.ParseROPBuffer(req.Payload)
+	// Parse ROP buffer (MS-OXCROPS section 2.2.1)
+	ropBuffer, err := rop.ParseROPBuffer(req.Payload)
 	if err != nil {
 		return nil, fmt.Errorf("invalid ROP buffer: %w", err)
 	}
@@ -407,23 +498,23 @@ func (t *Transport) handleExecute(ctx context.Context, req *MAPIRequest) (*MAPIR
 	// Process each ROP
 	responseBuffer := &bytes.Buffer{}
 	for _, ropInput := range ropBuffer {
-		ropResp, handlerErr := roppkg.ProcessROP(ropInput, &roppkg.MAPISession{
+		ropResp, err := rop.ProcessROP(ropInput, &rop.MAPISession{
 			ID:          session.ID,
 			User:        session.User,
 			State:       session.State,
 			Context:     session.Context,
 			Store:       t.store,
-			Folders:     make(map[uint32]*roppkg.FolderHandle),
+			Folders:     make(map[uint32]*rop.FolderHandle),
 			NextTableID: 1,
 		})
-		if handlerErr != nil {
+		if err != nil {
 			// Return error ROP
-			errorROP := roppkg.ROPResult{
+			errorROP := rop.ROPResult{
 				ROPID:  ropInput.ROPID,
-				Error:  roppkg.EC_UNKNOWN_ERROR,
+				Error:  rop.EC_UNKNOWN_ERROR,
 				Output: nil,
 			}
-			errorBuf, _ := roppkg.BuildROPBuffer([]roppkg.ROPResult{errorROP})
+			errorBuf, _ := rop.BuildROPBuffer([]rop.ROPResult{errorROP})
 			responseBuffer.Write(errorBuf)
 			continue
 		}
@@ -440,35 +531,32 @@ func (t *Transport) handleExecute(ctx context.Context, req *MAPIRequest) (*MAPIR
 }
 
 func (t *Transport) handleNotify(ctx context.Context, req *MAPIRequest) (*MAPIResponse, error) {
-	// Notify handles push notifications
-	// For now, return empty response
 	return &MAPIResponse{
 		Version:   MAPIVersion,
 		Context:   req.Context,
 		SessionID: req.SessionID,
-		Status:    0, // Success
+		Status:    0,
 		Payload:   []byte{},
 	}, nil
 }
 
 func (t *Transport) handleGetBuffer(ctx context.Context, req *MAPIRequest) (*MAPIResponse, error) {
-	// GetBuffer allocates a buffer for large payloads
 	return &MAPIResponse{
 		Version:   MAPIVersion,
 		Context:   req.Context,
 		SessionID: req.SessionID,
-		Status:    0, // Success
+		Status:    0,
 		Payload:   []byte{},
 	}, nil
 }
 
 func (t *Transport) handleReleaseBuffer(ctx context.Context, req *MAPIRequest) (*MAPIResponse, error) {
-	// ReleaseBuffer releases a previously allocated buffer
 	return &MAPIResponse{
 		Version:   MAPIVersion,
 		Context:   req.Context,
 		SessionID: req.SessionID,
-		Status:    0, // Success
+		Status:    0,
+		Payload:   []byte{},
 	}, nil
 }
 
@@ -489,6 +577,7 @@ func (t *Transport) Handler() http.Handler {
 	mux.HandleFunc(EndpointEMSMDBD, t.handleEMSMDBD)
 	mux.HandleFunc(EndpointNSPI, t.handleNSPI)
 	mux.HandleFunc(EndpointAB, t.handleAB)
+	mux.HandleFunc("/mapi/health", t.handleHealth)
 	return mux
 }
 
@@ -509,7 +598,7 @@ func (t *Transport) handleAB(w http.ResponseWriter, r *http.Request) {
 }
 
 // Health check
-func (t *Transport) HealthCheck(w http.ResponseWriter, r *http.Request) {
+func (t *Transport) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"status":"ok","service":"mapihttp"}`))
 }

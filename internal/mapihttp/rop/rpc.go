@@ -12,90 +12,90 @@ import (
 
 // ROP IDs (Remote Operation codes from MS-OXCROPS)
 const (
-	ROP_NOOP                 = 0x00
-	ROP_LOGON                = 0x01
-	ROP_LOGOFF               = 0x02
-	ROP_OPEN_MESSAGE         = 0x03
-	ROP_OPEN_ATTACHMENT      = 0x04
-	ROP_CREATE_MESSAGE       = 0x05
-	ROP_GET_MESSAGE_STATUS   = 0x06
-	ROP_SET_MESSAGE_STATUS   = 0x07
-	ROP_SAVE_CHANGES_MESSAGE = 0x08
-	ROP_DELETE_MESSAGES      = 0x09
-	ROP_GET_MESSAGE_PATH     = 0x0A
-	ROP_OPEN_FOLDER          = 0x0B
-	ROP_CREATE_FOLDER        = 0x0C
-	ROP_DELETE_FOLDER        = 0x0D
-	ROP_GET_FOLDER_TABLE     = 0x0E
-	ROP_SET_FOLDER_PROPERTIES = 0x0F
-	ROP_GET_PROPS            = 0x10
-	ROP_SET_PROPS            = 0x11
-	ROP_GET_PROP_LIST        = 0x12
-	ROP_OPEN_AB              = 0x13
-	ROP_GET_SEARCH_CRITERIA  = 0x13
-	ROP_GET_HIERARCHY_TABLE  = 0x14
-	ROP_GET_CONTENTS_TABLE   = 0x15
-	ROP_GET_ROWS             = 0x16
-	ROP_SEEK_ROW             = 0x17
-	ROP_SEEK_ROW_BOOKMARK    = 0x18
-	ROP_GET_ROW              = 0x19
-	ROP_ABORT                = 0x1A
-	ROP_PROGRESS             = 0x1B
-	ROP_TRANSFER_DATA        = 0x1C
-	ROP_BUFFER_TOO_SMALL     = 0x1D
-	ROP_SET_COLUMNS          = 0x1E
-	ROP_SORT_TABLE           = 0x1F
-	ROP_RESTRICT             = 0x20
-	ROP_CREATE_BOOKMARK      = 0x21
-	ROP_FREE_BOOKMARK        = 0x22
-	ROP_GET_COLLAPSED_ROWS   = 0x23
-	ROP_EXPAND_ROW           = 0x24
-	ROP_COLLAPSE_ROW         = 0x25
-	ROP_GET_COLLAPSE_STATE   = 0x26
-	ROP_SET_COLLAPSE_STATE   = 0x27
-	ROP_RESOLVE_NAMES        = 0x28
-	ROP_RESOLVE_NAMES_W      = 0x29
-	ROP_ADDRESS_TYPES        = 0x2A
-	ROP_GET_ADDRESS_TYPES    = 0x2B
-	ROP_GET_DEFAULT_DIR      = 0x2C
-	ROP_GET_SPECIAL_TABLE    = 0x2D
-	ROP_GET_TEMPLATE_INFO    = 0x2E
-	ROP_OPEN_TEMPLATE        = 0x2F
-	ROP_GET_MATCHES          = 0x30
-	ROP_FAST_TRANSFER_SOURCE_GET_BUFFER = 0x31
-	ROP_FAST_TRANSFER_SOURCE_PUT_BUFFER = 0x32
-	ROP_FAST_TRANSFER_DEST_GET_BUFFER   = 0x33
-	ROP_FAST_TRANSFER_DEST_PUT_BUFFER   = 0x34
-	ROP_GET_NEW_MAIL         = 0x35
-	ROP_GET_NEW_MAIL_EX      = 0x36
+	ROP_NOOP                             = 0x00
+	ROP_LOGON                            = 0x01
+	ROP_LOGOFF                           = 0x02
+	ROP_OPEN_MESSAGE                     = 0x03
+	ROP_OPEN_ATTACHMENT                  = 0x04
+	ROP_CREATE_MESSAGE                   = 0x05
+	ROP_GET_MESSAGE_STATUS               = 0x06
+	ROP_SET_MESSAGE_STATUS               = 0x07
+	ROP_SAVE_CHANGES_MESSAGE             = 0x08
+	ROP_DELETE_MESSAGES                  = 0x09
+	ROP_GET_MESSAGE_PATH                 = 0x0A
+	ROP_OPEN_FOLDER                      = 0x0B
+	ROP_CREATE_FOLDER                    = 0x0C
+	ROP_DELETE_FOLDER                    = 0x0D
+	ROP_GET_FOLDER_TABLE                 = 0x0E
+	ROP_SET_FOLDER_PROPERTIES            = 0x0F
+	ROP_GET_PROPS                        = 0x10
+	ROP_SET_PROPS                        = 0x11
+	ROP_GET_PROP_LIST                    = 0x12
+	ROP_OPEN_AB                          = 0x13
+	ROP_GET_SEARCH_CRITERIA              = 0x13
+	ROP_GET_HIERARCHY_TABLE              = 0x14
+	ROP_GET_CONTENTS_TABLE               = 0x15
+	ROP_GET_ROWS                         = 0x16
+	ROP_SEEK_ROW                         = 0x17
+	ROP_SEEK_ROW_BOOKMARK                = 0x18
+	ROP_GET_ROW                          = 0x19
+	ROP_ABORT                            = 0x1A
+	ROP_PROGRESS                         = 0x1B
+	ROP_TRANSFER_DATA                    = 0x1C
+	ROP_BUFFER_TOO_SMALL                 = 0x1D
+	ROP_SET_COLUMNS                      = 0x1E
+	ROP_SORT_TABLE                       = 0x1F
+	ROP_RESTRICT                         = 0x20
+	ROP_CREATE_BOOKMARK                  = 0x21
+	ROP_FREE_BOOKMARK                    = 0x22
+	ROP_GET_COLLAPSED_ROWS               = 0x23
+	ROP_EXPAND_ROW                       = 0x24
+	ROP_COLLAPSE_ROW                     = 0x25
+	ROP_GET_COLLAPSE_STATE               = 0x26
+	ROP_SET_COLLAPSE_STATE               = 0x27
+	ROP_RESOLVE_NAMES                    = 0x28
+	ROP_RESOLVE_NAMES_W                  = 0x29
+	ROP_ADDRESS_TYPES                    = 0x2A
+	ROP_GET_ADDRESS_TYPES                = 0x2B
+	ROP_GET_DEFAULT_DIR                  = 0x2C
+	ROP_GET_SPECIAL_TABLE                = 0x2D
+	ROP_GET_TEMPLATE_INFO                = 0x2E
+	ROP_OPEN_TEMPLATE                    = 0x2F
+	ROP_GET_MATCHES                      = 0x30
+	ROP_FAST_TRANSFER_SOURCE_GET_BUFFER  = 0x31
+	ROP_FAST_TRANSFER_SOURCE_PUT_BUFFER  = 0x32
+	ROP_FAST_TRANSFER_DEST_GET_BUFFER    = 0x33
+	ROP_FAST_TRANSFER_DEST_PUT_BUFFER    = 0x34
+	ROP_GET_NEW_MAIL                     = 0x35
+	ROP_GET_NEW_MAIL_EX                  = 0x36
 	ROP_FAST_TRANSFER_DEST_GET_BUFFER_EX = 0x37
 	ROP_FAST_TRANSFER_DEST_PUT_BUFFER_EX = 0x38
-	ROP_READ_STREAM          = 0x39
-	ROP_WRITE_STREAM         = 0x3A
-	ROP_COMMIT_STREAM        = 0x3B
-	ROP_GET_STREAM_SIZE      = 0x3C
-	ROP_LOCK_REGION_STREAM   = 0x3D
-	ROP_UNLOCK_REGION_STREAM = 0x3E
-	ROP_COPY_TO              = 0x3F
-	ROP_COPY_PROPS           = 0x40
-	ROP_MOVE_COPY            = 0x41
-	ROP_HARD_DELETE_MESSAGES = 0x42
-	ROP_EMPTY_FOLDER         = 0x43
-	ROP_GET_RULES_TABLE      = 0x44
-	ROP_MODIFY_RULES         = 0x45
-	ROP_GET_ACL_TABLE        = 0x46
-	ROP_MODIFY_ACL           = 0x47
+	ROP_READ_STREAM                      = 0x39
+	ROP_WRITE_STREAM                     = 0x3A
+	ROP_COMMIT_STREAM                    = 0x3B
+	ROP_GET_STREAM_SIZE                  = 0x3C
+	ROP_LOCK_REGION_STREAM               = 0x3D
+	ROP_UNLOCK_REGION_STREAM             = 0x3E
+	ROP_COPY_TO                          = 0x3F
+	ROP_COPY_PROPS                       = 0x40
+	ROP_MOVE_COPY                        = 0x41
+	ROP_HARD_DELETE_MESSAGES             = 0x42
+	ROP_EMPTY_FOLDER                     = 0x43
+	ROP_GET_RULES_TABLE                  = 0x44
+	ROP_MODIFY_RULES                     = 0x45
+	ROP_GET_ACL_TABLE                    = 0x46
+	ROP_MODIFY_ACL                       = 0x47
 )
 
 // ROP Error codes
 const (
-	EC_SUCCESS         = 0x00000000
-	EC_NOT_FOUND       = 0x8004010F
-	EC_ACCESS_DENIED   = 0x80070005
-	EC_INVALID_PARAM   = 0x80070057
-	EC_NOT_ENOUGH_MEM  = 0x8007000E
+	EC_SUCCESS          = 0x00000000
+	EC_NOT_FOUND        = 0x8004010F
+	EC_ACCESS_DENIED    = 0x80070005
+	EC_INVALID_PARAM    = 0x80070057
+	EC_NOT_ENOUGH_MEM   = 0x8007000E
 	EC_BUFFER_TOO_SMALL = 0x8007007A
-	EC_UNKNOWN_ERROR   = 0x80004005
+	EC_UNKNOWN_ERROR    = 0x80004005
 )
 
 // ROPResult represents the result of a ROP execution.
@@ -107,9 +107,9 @@ type ROPResult struct {
 
 // ROPInput represents a parsed ROP request.
 type ROPInput struct {
-	ROPID   byte
-	Opcode  byte
-	Input   []byte
+	ROPID  byte
+	Opcode byte
+	Input  []byte
 }
 
 // BufferSize represents the size prefix for ROP buffers (2 bytes, little-endian).
@@ -176,12 +176,12 @@ func BuildROPBuffer(results []ROPResult) ([]byte, error) {
 
 // ROPLogonInput represents the input for ROP_LOGON (MS-OXCROPS 2.2.1.1)
 type ROPLogonInput struct {
-	LogonFlags   uint32
-	OpenFlags    uint32
-	StoreState   uint32
-	FolderID     [8]byte
-	FolderCount  uint16
-	FolderIDs    [][8]byte
+	LogonFlags  uint32
+	OpenFlags   uint32
+	StoreState  uint32
+	FolderID    [8]byte
+	FolderCount uint16
+	FolderIDs   [][8]byte
 }
 
 // ParseROPLogonInput parses the ROP_LOGON input buffer.
@@ -223,10 +223,10 @@ func (o *ROPLogonOutput) Serialize() ([]byte, error) {
 
 // ROPGetPropsInput represents input for ROP_GET_PROPS
 type ROPGetPropsInput struct {
-	RopID       byte
-	Flags       uint32
+	RopID            byte
+	Flags            uint32
 	PropertyTagCount uint16
-	PropertyTags  []props.PropertyTag
+	PropertyTags     []props.PropertyTag
 }
 
 // ParseROPGetPropsInput parses ROP_GET_PROPS input.
@@ -252,9 +252,9 @@ func ParseROPGetPropsInput(data []byte) (*ROPGetPropsInput, error) {
 
 // ROPGetPropsOutput represents output for ROP_GET_PROPS
 type ROPGetPropsOutput struct {
-	ErrorCode     uint32
-	RowCount      uint16
-	PropertyRows  []props.PropertyRow
+	ErrorCode    uint32
+	RowCount     uint16
+	PropertyRows []props.PropertyRow
 }
 
 // Serialize serializes ROPGetPropsOutput
@@ -274,9 +274,9 @@ func (o *ROPGetPropsOutput) Serialize() ([]byte, error) {
 
 // ROPSetPropsInput represents input for ROP_SET_PROPS
 type ROPSetPropsInput struct {
-	RopID       byte
-	Flags       uint32
-	Row         props.PropertyRow
+	RopID byte
+	Flags uint32
+	Row   props.PropertyRow
 }
 
 // ParseROPSetPropsInput parses ROP_SET_PROPS input.
@@ -313,8 +313,8 @@ func (o *ROPSetPropsOutput) Serialize() ([]byte, error) {
 
 // ROPGetContentsTableInput represents input for ROP_GET_CONTENTS_TABLE
 type ROPGetContentsTableInput struct {
-	Flags       uint32
-	TableFlags  uint32
+	Flags      uint32
+	TableFlags uint32
 }
 
 // ROPGetContentsTableOutput represents output for ROP_GET_CONTENTS_TABLE
@@ -333,9 +333,9 @@ func (o *ROPGetContentsTableOutput) Serialize() ([]byte, error) {
 
 // ROPSetColumnsInput represents input for ROP_SET_COLUMNS
 type ROPSetColumnsInput struct {
-	Flags           uint32
+	Flags            uint32
 	PropertyTagCount uint16
-	PropertyTags    []props.PropertyTag
+	PropertyTags     []props.PropertyTag
 }
 
 // ROPSetColumnsOutput represents output for ROP_SET_COLUMNS
@@ -352,15 +352,15 @@ func (o *ROPSetColumnsOutput) Serialize() ([]byte, error) {
 
 // ROPGetRowsInput represents input for ROP_GET_ROWS
 type ROPGetRowsInput struct {
-	Flags       uint32
-	RowCount    int32
+	Flags    uint32
+	RowCount int32
 }
 
 // ROPGetRowsOutput represents output for ROP_GET_ROWS
 type ROPGetRowsOutput struct {
-	ErrorCode   uint32
-	RowCount    uint16
-	Rows        []props.PropertyRow
+	ErrorCode uint32
+	RowCount  uint16
+	Rows      []props.PropertyRow
 }
 
 // Serialize serializes the output
@@ -380,9 +380,9 @@ func (o *ROPGetRowsOutput) Serialize() ([]byte, error) {
 
 // ROPSeekRowInput represents input for ROP_SEEK_ROW
 type ROPSeekRowInput struct {
-	Flags       uint32
-	Origin      int32
-	Offset      int32
+	Flags  uint32
+	Origin int32
+	Offset int32
 }
 
 // ROPSeekRowOutput represents output for ROP_SEEK_ROW
@@ -424,9 +424,9 @@ func (o *ROPGetRowOutput) Serialize() ([]byte, error) {
 
 // ROPGetPropsSpecificInput represents input for ROP_GET_PROPS with specific properties
 type ROPGetPropsSpecificInput struct {
-	Flags           uint32
+	Flags            uint32
 	PropertyTagCount uint16
-	PropertyTags    []props.PropertyTag
+	PropertyTags     []props.PropertyTag
 }
 
 // Helper function to read bytes
@@ -441,9 +441,9 @@ func readBytes(r io.Reader, n int) []byte {
 // SuccessLogonOutput creates a successful logon response
 func SuccessLogonOutput(storeState uint32) *ROPLogonOutput {
 	return &ROPLogonOutput{
-		ErrorCode:  EC_SUCCESS,
-		StoreState: storeState,
-		FolderCount: 0,
+		ErrorCode:     EC_SUCCESS,
+		StoreState:    storeState,
+		FolderCount:   0,
 		HasNamedProps: 1,
 	}
 }
@@ -451,7 +451,7 @@ func SuccessLogonOutput(storeState uint32) *ROPLogonOutput {
 // ErrorLogonOutput creates a failed logon response
 func ErrorLogonOutput(ec uint32) *ROPLogonOutput {
 	return &ROPLogonOutput{
-		ErrorCode: ec,
+		ErrorCode:  ec,
 		StoreState: 0,
 	}
 }
@@ -589,12 +589,12 @@ func ProcessROP(input ROPInput, session *MAPISession) (ROPResult, error) {
 
 // Placeholder session type - will be replaced with actual session
 type MAPISession struct {
-	ID        string
-	User      string
-	State     uint32
-	Context   uint32
-	Store     interface{} // Will be *store.Store
-	Folders   map[uint32]*FolderHandle
+	ID          string
+	User        string
+	State       uint32
+	Context     uint32
+	Store       interface{} // Will be *store.Store
+	Folders     map[uint32]*FolderHandle
 	NextTableID uint32
 }
 

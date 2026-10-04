@@ -256,7 +256,7 @@ ON CONFLICT (address) DO UPDATE SET display_name = EXCLUDED.display_name, enable
 # Set admin password (using argon2id hash for "DemoAdmin123!")
 docker compose --env-file "$ENV_FILE" -f docker-compose.yml exec -T postgres psql -U linchange -d linchange -c "
 INSERT INTO credentials (address, password_hash)
-VALUES ('admin@localhost', '\$argon2id\$v=19\$m=65536,t=3,p=4\$AAECAwQFBgcICQoLDA0ODw==\$ROkAE0vGKswRptWqEJY6KAbzwHHSnT8fIKSs2VrJfIU=')
+VALUES ('admin@localhost', '\$argon2id\$v=19\$m=65536,t=3,p=4\$AAECAwQFBgcICQoLDA0ODw\$ROkAE0vGKswRptWqEJY6KAbzwHHSnT8fIKSs2VrJfIU')
 ON CONFLICT (address) DO UPDATE SET password_hash = EXCLUDED.password_hash;
 " 2>&1
 
