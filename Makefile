@@ -115,7 +115,7 @@ dev-certs: ## Generate a self-signed certificate for local development
 up: ## Start PostgreSQL for local development
 	$(COMPOSE) up -d postgres
 	@echo "waiting for PostgreSQL..."
-	@until docker exec linchange-pg pg_isready -U $(PG_USER) >/dev/null 2>&1; do sleep 1; done
+	@until $(COMPOSE) exec -T postgres pg_isready -U $(PG_USER) >/dev/null 2>&1; do sleep 1; done
 	@echo "PostgreSQL is ready on $(PG_HOST):$(PG_PORT)"
 
 .PHONY: down

@@ -17,6 +17,10 @@ services:
       POSTGRES_DB: linchange
     volumes:
       - postgres_data:/var/lib/postgresql
+    ports:
+      # Published so the Go integration tests can reach it (make up, then
+      # make test-integration). Nothing else should use this port.
+      - "${LINCHANGE_TEST_PG_PORT:-55432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U linchange"]
       interval: 10s
@@ -46,17 +50,20 @@ services:
       # Data directory for blobstore, ACME certs, etc.
       - linchange_data:/var/lib/linchange
     ports:
-      # Mail protocols
-      - "25:25"      # SMTP inbound (requires root/privileged)
-      - "587:587"    # SMTP submission
-      - "465:465"    # SMTP submission TLS
-      - "143:143"    # IMAP
-      - "993:993"    # IMAPS
-      - "110:110"    # POP3
-      - "995:995"    # POP3S
+      # Mail protocols. Host ports are deliberately non-standard - the standard
+      # port with a 5 in front - so a development box can run this next to its
+      # own mail server without binding the privileged ports. The container side
+      # stays standard. Override any of these with the matching variable.
+      - "${LINCHANGE_SMTP_PORT:-5025}:25"               # SMTP inbound
+      - "${LINCHANGE_SUBMISSION_PORT:-5587}:587"        # SMTP submission
+      - "${LINCHANGE_SMTPS_PORT:-5465}:465"             # SMTP submission TLS
+      - "${LINCHANGE_IMAP_PORT:-5143}:143"              # IMAP
+      - "${LINCHANGE_IMAPS_PORT:-5993}:993"             # IMAPS
+      - "${LINCHANGE_POP3_PORT:-5110}:110"              # POP3
+      - "${LINCHANGE_POP3S_PORT:-5995}:995"             # POP3S
       # HTTP
-      - "8080:8080"  # HTTP
-      - "8443:8443"  # HTTPS
+      - "${LINCHANGE_HTTP_PORT:-58080}:8080"            # HTTP
+      - "${LINCHANGE_HTTPS_PORT:-58443}:8443"           # HTTPS
     networks:
       - linchange-network
     restart: unless-stopped
@@ -79,15 +86,17 @@ services:
       - ./config/linchange.demo.yaml:/app/config/linchange.demo.yaml:ro
       - linchange_data:/var/lib/linchange
     ports:
-      - "25:25"
-      - "587:587"
-      - "465:465"
-      - "143:143"
-      - "993:993"
-      - "110:110"
-      - "995:995"
-      - "8080:8080"
-      - "8443:8443"
+      # Same non-standard host ports as the production-like service above, so
+      # the two profiles cannot collide.
+      - "${LINCHANGE_SMTP_PORT:-5025}:25"
+      - "${LINCHANGE_SUBMISSION_PORT:-5587}:587"
+      - "${LINCHANGE_SMTPS_PORT:-5465}:465"
+      - "${LINCHANGE_IMAP_PORT:-5143}:143"
+      - "${LINCHANGE_IMAPS_PORT:-5993}:993"
+      - "${LINCHANGE_POP3_PORT:-5110}:110"
+      - "${LINCHANGE_POP3S_PORT:-5995}:995"
+      - "${LINCHANGE_HTTP_PORT:-58080}:8080"
+      - "${LINCHANGE_HTTPS_PORT:-58443}:8443"
     networks:
       - linchange-network
     restart: unless-stopped

@@ -419,6 +419,35 @@ type Exchange struct {
 	EAS          EAS          `yaml:"eas"`
 	// Organization is reported in Autodiscover and EWS responses.
 	Organization string `yaml:"organization"`
+	// Advertised is the port set Autodiscover reports to clients. A zero value
+	// means the standard port for the protocol, which is what a server on the
+	// public internet wants. Anything else - a container publishing 143 as 5143,
+	// a reverse proxy on 8443 - has to be stated here, because a client that
+	// believes the standard port is talking to a mail server that is not there.
+	Advertised Ports `yaml:"advertised"`
+}
+
+// Ports are the externally visible ports of the mail and web listeners. Each
+// zero entry means the standard port for that service.
+type Ports struct {
+	IMAP   int `yaml:"imap"`
+	IMAPS  int `yaml:"imaps"`
+	POP3   int `yaml:"pop3"`
+	POP3S  int `yaml:"pop3s"`
+	SMTP   int `yaml:"smtp"`
+	SMTPS  int `yaml:"smtps"`
+	Submit int `yaml:"submission"`
+	HTTP   int `yaml:"http"`
+	HTTPS  int `yaml:"https"`
+}
+
+// Or returns the advertised port for a service, falling back to standard when
+// the deployment did not override it.
+func (p Ports) Or(advertised, standard int) int {
+	if advertised != 0 {
+		return advertised
+	}
+	return standard
 }
 
 // Autodiscover serves the MS-OXDISCO POX endpoint.

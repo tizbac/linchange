@@ -122,7 +122,7 @@ mail:
     dsn:
       enabled: true
       delay: 4h
-      from_address: postmaster@demo.linchange.local
+      from_address: postmaster@localhost
   dkim:
     selector_prefix: s
     key_bits: 2048
@@ -140,6 +140,20 @@ exchange:
     path: /ews/exchange.asmx
   eas:
     path: /eas
+  # The host publishes the listeners on non-standard ports - the standard port
+  # with a 5 in front - so Autodiscover has to describe those, not the ports
+  # the server binds inside the container. Keep these in step with the ports
+  # published in docker-compose.yml.
+  advertised:
+    imap: 5143
+    imaps: 5993
+    pop3: 5110
+    pop3s: 5995
+    smtp: 5025
+    smtps: 5465
+    submission: 5587
+    http: 58080
+    https: 58443
 
 logging:
   level: debug

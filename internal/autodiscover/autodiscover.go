@@ -140,13 +140,19 @@ func (a *Autodiscover) buildResponse(localPart, domain, requestType string) *POX
 }
 
 // buildProtocols constructs the protocol configuration for the response.
+//
+// The ports come from the advertised set rather than the standard ones, because
+// a client reads this to decide where to connect. A deployment that publishes
+// IMAP on 5143 - which is what the demo container does - has to be described
+// accurately here or the client is sent to a port nothing is listening on.
 func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Protocol {
+	adv := a.cfg.Exchange.Advertised
 	protocols := []Protocol{
 		// IMAP
 		{
 			Type:        "IMAP",
 			Server:      hostname,
-			Port:        993,
+			Port:        adv.Or(adv.IMAPS, 993),
 			SSL:         "On",
 			AuthPackage: "NTLM",
 			LoginName:   "{{EmailAddress}}",
@@ -154,7 +160,7 @@ func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Proto
 		{
 			Type:        "IMAP",
 			Server:      internalHostname,
-			Port:        143,
+			Port:        adv.Or(adv.IMAP, 143),
 			SSL:         "Off",
 			AuthPackage: "NTLM",
 			LoginName:   "{{EmailAddress}}",
@@ -163,7 +169,7 @@ func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Proto
 		{
 			Type:        "SMTP",
 			Server:      hostname,
-			Port:        587,
+			Port:        adv.Or(adv.Submit, 587),
 			SSL:         "On",
 			AuthPackage: "NTLM",
 			LoginName:   "{{EmailAddress}}",
@@ -171,7 +177,7 @@ func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Proto
 		{
 			Type:        "SMTP",
 			Server:      internalHostname,
-			Port:        25,
+			Port:        adv.Or(adv.SMTP, 25),
 			SSL:         "Off",
 			AuthPackage: "NTLM",
 			LoginName:   "{{EmailAddress}}",
@@ -180,7 +186,7 @@ func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Proto
 		{
 			Type:        "POP3",
 			Server:      hostname,
-			Port:        995,
+			Port:        adv.Or(adv.POP3S, 995),
 			SSL:         "On",
 			AuthPackage: "NTLM",
 			LoginName:   "{{EmailAddress}}",
@@ -188,7 +194,7 @@ func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Proto
 		{
 			Type:        "POP3",
 			Server:      internalHostname,
-			Port:        110,
+			Port:        adv.Or(adv.POP3, 110),
 			SSL:         "Off",
 			AuthPackage: "NTLM",
 			LoginName:   "{{EmailAddress}}",
@@ -200,8 +206,8 @@ func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Proto
 		protocols = append(protocols, Protocol{
 			Type:        "EXCH",
 			Server:      hostname,
-			ASUrl:       fmt.Sprintf("https://%s/ews/exchange.asmx", hostname),
-			OABUrl:      fmt.Sprintf("https://%s/oab", hostname),
+			ASUrl:       a.exchangeURL(hostname, "/ews/exchange.asmx"),
+			OABUrl:      a.exchangeURL(hostname, "/oab"),
 			SSL:         "On",
 			AuthPackage: "NTLM",
 			LoginName:   "{{EmailAddress}}",
@@ -211,7 +217,7 @@ func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Proto
 		protocols = append(protocols, Protocol{
 			Type:        "EXPR",
 			Server:      hostname,
-			ASUrl:       fmt.Sprintf("https://%s/eas", hostname),
+			ASUrl:       a.exchangeURL(hostname, "/eas"),
 			SSL:         "On",
 			AuthPackage: "NTLM",
 			LoginName:   "{{EmailAddress}}",
@@ -219,6 +225,24 @@ func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Proto
 	}
 
 	return protocols
+}
+
+// exchangeURL builds the URL of an Exchange endpoint, using TLS unless the
+// deployment says otherwise.
+func (a *Autodiscover) exchangeURL(hostname, path string) string {
+	scheme := "https"
+	port := a.cfg.Exchange.Advertised.Or(a.cfg.Exchange.Advertised.HTTPS, 443)
+	if port == 80 {
+		scheme = "http"
+	}
+	if isDefaultPort(scheme, port) {
+		return fmt.Sprintf("%s://%s%s", scheme, hostname, path)
+	}
+	return fmt.Sprintf("%s://%s:%d%s", scheme, hostname, port, path)
+}
+
+func isDefaultPort(scheme string, port int) bool {
+	return (scheme == "http" && port == 80) || (scheme == "https" && port == 443)
 }
 
 // writeError writes an error response.

@@ -1,0 +1,144 @@
+package autodiscover
+
+import (
+	"testing"
+
+	"github.com/linchange/linchange/config"
+)
+
+// find returns the protocol of the given type listening on the given port, or
+// nil. Tests care about the pairing, so the lookup is by both fields.
+func find(protocols []Protocol, typ string, port int) *Protocol {
+	for i := range protocols {
+		if protocols[i].Type == typ && protocols[i].Port == port {
+			return &protocols[i]
+		}
+	}
+	return nil
+}
+
+// Without an advertised set the response has to carry the standard ports, which
+// is what a server on the public internet answers with.
+func TestBuildProtocolsReportsStandardPortsByDefault(t *testing.T) {
+	a := &Autodiscover{cfg: config.New()}
+	protocols := a.buildProtocols("mail.example.com", "203.0.113.10")
+
+	for _, want := range []struct {
+		typ  string
+		port int
+	}{
+		{"IMAP", 993},
+		{"IMAP", 143},
+		{"SMTP", 587},
+		{"SMTP", 25},
+		{"POP3", 995},
+		{"POP3", 110},
+	} {
+		if find(protocols, want.typ, want.port) == nil {
+			t.Errorf("no %s protocol on port %d in the response", want.typ, want.port)
+		}
+	}
+}
+
+// A deployment that publishes the listeners elsewhere - the demo container maps
+// 143 to 5143 - has to be described accurately, or the client is handed a port
+// nothing is listening on.
+func TestBuildProtocolsReportsAdvertisedPorts(t *testing.T) {
+	cfg := config.New()
+	cfg.Exchange.Advertised = config.Ports{
+		IMAP:   5143,
+		IMAPS:  5993,
+		POP3:   5110,
+		POP3S:  5995,
+		SMTP:   5025,
+		SMTPS:  5465,
+		Submit: 5587,
+		HTTP:   58080,
+		HTTPS:  58443,
+	}
+	a := &Autodiscover{cfg: cfg}
+	protocols := a.buildProtocols("localhost", "127.0.0.1")
+
+	for _, want := range []struct {
+		typ  string
+		port int
+	}{
+		{"IMAP", 5143},
+		{"IMAP", 5993},
+		{"SMTP", 5587},
+		{"SMTP", 5025},
+		{"POP3", 5110},
+		{"POP3", 5995},
+	} {
+		if find(protocols, want.typ, want.port) == nil {
+			t.Errorf("no %s protocol on advertised port %d in the response", want.typ, want.port)
+		}
+	}
+
+	// The standard ports must not also be advertised, or a client may pick
+	// either one and only one of them works.
+	for _, stale := range []struct {
+		typ  string
+		port int
+	}{
+		{"IMAP", 143},
+		{"IMAP", 993},
+		{"SMTP", 25},
+		{"SMTP", 587},
+		{"POP3", 110},
+		{"POP3", 995},
+	} {
+		if p := find(protocols, stale.typ, stale.port); p != nil {
+			t.Errorf("advertised ports should replace %s %d, but it is still offered", stale.typ, stale.port)
+		}
+	}
+}
+
+// The EWS and ActiveSync URLs are absolute, so an advertised HTTPS port has to
+// appear in them too.
+func TestExchangeURLUsesAdvertisedHTTPSPort(t *testing.T) {
+	cfg := config.New()
+	cfg.Exchange.Enabled = true
+	cfg.Exchange.Advertised = config.Ports{HTTPS: 58443}
+	a := &Autodiscover{cfg: cfg}
+
+	protocols := a.buildProtocols("localhost", "127.0.0.1")
+
+	var ews, eas *Protocol
+	for i := range protocols {
+		switch protocols[i].Type {
+		case "EXCH":
+			ews = &protocols[i]
+		case "EXPR":
+			eas = &protocols[i]
+		}
+	}
+	if ews == nil {
+		t.Fatal("no EXCH protocol when exchange is enabled")
+	}
+	if eas == nil {
+		t.Fatal("no EXPR protocol when exchange is enabled")
+	}
+	if want := "https://localhost:58443/ews/exchange.asmx"; ews.ASUrl != want {
+		t.Errorf("EWS URL = %q, want %q", ews.ASUrl, want)
+	}
+	if want := "https://localhost:58443/eas"; eas.ASUrl != want {
+		t.Errorf("ActiveSync URL = %q, want %q", eas.ASUrl, want)
+	}
+}
+
+// A deployment on the standard HTTPS port must not carry an explicit port in
+// the URL, since some clients are literal about it.
+func TestExchangeURLOmitsStandardPorts(t *testing.T) {
+	cfg := config.New()
+	cfg.Exchange.Enabled = true
+	a := &Autodiscover{cfg: cfg}
+
+	protocols := a.buildProtocols("mail.example.com", "203.0.113.10")
+
+	for _, p := range protocols {
+		if p.Type == "EXCH" && p.ASUrl != "https://mail.example.com/ews/exchange.asmx" {
+			t.Errorf("EWS URL = %q, want no explicit port", p.ASUrl)
+		}
+	}
+}

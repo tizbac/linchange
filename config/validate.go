@@ -449,6 +449,7 @@ func (v *validator) validateExchange() {
 	if c.Exchange.EWS.Enabled && !strings.HasPrefix(c.Exchange.EWS.Path, "/") {
 		v.addf("exchange.ews.path must start with /")
 	}
+	v.validateAdvertisedPorts(c.Exchange.Advertised)
 	if c.Exchange.EAS.Enabled {
 		if !strings.HasPrefix(c.Exchange.EAS.Path, "/") {
 			v.addf("exchange.eas.path must start with /")
@@ -466,6 +467,30 @@ func (v *validator) validateExchange() {
 	}
 	if c.Listener.HTTPS.Enabled() && !c.TLSEnabled() {
 		v.addf("listeners.https is set but no TLS certificate is configured")
+	}
+}
+
+// validateAdvertisedPorts rejects advertised ports outside the valid range. A
+// port of zero is not an error: it is how a deployment says "the standard port
+// for this protocol", which is the common case.
+func (v *validator) validateAdvertisedPorts(p Ports) {
+	for _, f := range []struct {
+		name string
+		port int
+	}{
+		{"imap", p.IMAP},
+		{"imaps", p.IMAPS},
+		{"pop3", p.POP3},
+		{"pop3s", p.POP3S},
+		{"smtp", p.SMTP},
+		{"smtps", p.SMTPS},
+		{"submission", p.Submit},
+		{"http", p.HTTP},
+		{"https", p.HTTPS},
+	} {
+		if f.port < 0 || f.port > 65535 {
+			v.addf("exchange.advertised.%s port %d is out of range (0 means the standard port)", f.name, f.port)
+		}
 	}
 }
 

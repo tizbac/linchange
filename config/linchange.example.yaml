@@ -251,6 +251,20 @@ exchange:
     path: /eas
     max_ping_interval: 3540
     max_sync_items: 512
+  # Ports Autodiscover tells clients to connect to. Leave every one of them at
+  # 0 - the default - when this server is reached on the standard ports. Set
+  # them only when the host publishes the listeners elsewhere, such as a
+  # container mapping 143 to 5143 or a reverse proxy in front of 443.
+  advertised:
+    imap: 0
+    imaps: 0
+    pop3: 0
+    pop3s: 0
+    smtp: 0
+    smtps: 0
+    submission: 0
+    http: 0
+    https: 0
 
 logging:
   level: info
