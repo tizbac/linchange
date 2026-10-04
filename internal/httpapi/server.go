@@ -369,10 +369,13 @@ func (s *Server) Handler() http.Handler {
 		// The calendar routes are for the signed-in user's calendars and any
 		// workgroup calendars they may see. The same authenticated group applies.
 		s.mountCalendar(r)
-
-		// CalDAV routes are public but require auth middleware inside
-		r.Mount("/", s.caldav.Handler())
 	})
+
+	// CalDAV is not part of the REST surface: a calendar client is handed
+	// /.well-known/caldav or /caldav and follows it, so the endpoint has to sit
+	// where those point. Mounting it under /api/v1 worked only for a caller who
+	// already knew the path, which no calendar client does.
+	r.Mount("/", s.caldav.Handler())
 
 	// Autodiscover (outside /api/v1 for Outlook compatibility)
 	r.Mount("/autodiscover", s.autodiscover.Handler())

@@ -90,10 +90,13 @@ func (s *Server) Handler() http.Handler {
 				r.Delete("/", s.handleDeleteEvent)
 			})
 		})
-
-		// Well-known URL for auto-discovery
-		r.Get("/.well-known/caldav", s.handleWellKnown)
 	})
+
+	// RFC 6764 puts the discovery URI at the root of the origin, not under the
+	// service prefix: a client that is given only a domain name requests
+	// /.well-known/caldav. Nested inside s.prefix it would have answered at
+	// /caldav/.well-known/caldav, which nothing looks for.
+	r.Get("/.well-known/caldav", s.handleWellKnown)
 
 	return r
 }

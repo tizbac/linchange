@@ -105,5 +105,7 @@ ENV LINCHANGE_CONFIG=/app/config/linchange.yaml \
 # No default config is provided - the server will fail fast if missing
 ENTRYPOINT ["./linchange"]
 
-# Default command runs the server with the config file
-CMD ["--config", "/app/config/linchange.yaml"]
+# Default command runs the server with the config file. --web-dir points at the
+# web app built by the frontend stage above; without it the server has nothing
+# to serve at / and every browser request is a 404.
+CMD ["--config", "/app/config/linchange.yaml", "--web-dir", "/app/static"]

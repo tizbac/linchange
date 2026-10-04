@@ -37,12 +37,17 @@ func New(cfg *config.Config, pol policy.Policy) *EWS {
 }
 
 // Handler returns the HTTP handler for EWS endpoints.
+//
+// The route is relative to the mount point: the server mounts this handler at
+// /ews, so "/ews/exchange.asmx" here would only answer at
+// /ews/ews/exchange.asmx, which is not where Exchange clients - or the URL
+// Autodiscover hands them - look.
 func (e *EWS) Handler() http.Handler {
 	r := chi.NewRouter()
 	r.Use(e.soapMiddleware)
 
-	// Main EWS endpoint
-	r.Post("/ews/exchange.asmx", e.handleSOAP)
+	// Main EWS endpoint, at the path MS-OXECWS specifies.
+	r.Post("/exchange.asmx", e.handleSOAP)
 
 	return r
 }
@@ -78,11 +83,15 @@ func (e *EWS) handleSOAP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Process the request based on SOAP action
-	action := r.Header.Get("SOAPAction")
+	action := soapActionName(r.Header.Get("SOAPAction"))
 	if action == "" {
-		// Try to get from body - parse the first element name from raw body
-		// This is a simplified approach; in production you'd use a proper XML parser
-		action = "FindItem"
+		// Not every client sets SOAPAction. MS-OXECWS identifies the operation by
+		// the element in the body, so fall back to that rather than guessing.
+		action = envelope.Body.Operation()
+	}
+	if action == "" {
+		e.writeSOAPFault(w, "Invalid SOAP envelope", http.StatusBadRequest)
+		return
 	}
 
 	// Route to appropriate handler
@@ -124,6 +133,22 @@ func (e *EWS) handleSOAP(w http.ResponseWriter, r *http.Request) {
 	_ = xml.NewEncoder(w).Encode(resp)
 }
 
+// soapActionName extracts the operation from a SOAPAction header. The header
+// holds a URI - typically
+// "http://schemas.microsoft.com/exchange/services/2006/messages/FindItem" - and
+// sometimes the empty string, so the last path segment is the operation name.
+func soapActionName(header string) string {
+	header = strings.TrimSpace(header)
+	header = strings.Trim(header, `"`)
+	if header == "" {
+		return ""
+	}
+	if i := strings.LastIndex(header, "/"); i >= 0 {
+		return header[i+1:]
+	}
+	return header
+}
+
 // ---------------------------------------------------------------------------
 // Operation Handlers (stubs - need full implementation)
 // ---------------------------------------------------------------------------
@@ -131,7 +156,7 @@ func (e *EWS) handleSOAP(w http.ResponseWriter, r *http.Request) {
 func (e *EWS) handleFindItem(env SOAPEnvelope) (*SOAPEnvelope, error) {
 	// TODO: Implement FindItem - list messages in a folder
 	return e.buildResponse("FindItemResponse", map[string]string{
-		"ResponseClass": "Success",
+		"ResponseClass":    "Success",
 		"TotalItemsInView": "0",
 	})
 }
@@ -203,18 +228,27 @@ func (e *EWS) handleSyncFolderItems(env SOAPEnvelope) (*SOAPEnvelope, error) {
 // SOAP Helpers
 // ---------------------------------------------------------------------------
 
+// soapEnvelopeNS is the SOAP 1.1 envelope namespace. Struct tags have to name
+// it in full: "soap:Envelope" in a tag is read as the namespace "soap", which
+// no envelope declares, so every request failed to unmarshal and was answered
+// "Invalid SOAP envelope".
+const soapEnvelopeNS = "http://schemas.xmlsoap.org/soap/envelope/"
+
+// messagesNS is the EWS operations namespace (MS-OXECWS).
+const messagesNS = "http://schemas.microsoft.com/exchange/services/2006/messages"
+
 type SOAPEnvelope struct {
-	XMLName xml.Name `xml:"soap:Envelope"`
-	XmlnsSoap string `xml:"xmlns:soap,attr"`
-	XmlnsT   string `xml:"xmlns:t,attr"`
-	XmlnsM   string `xml:"xmlns:m,attr"`
-	Header   *SOAPHeader `xml:"soap:Header,omitempty"`
-	Body     *SOAPBody  `xml:"soap:Body"`
+	XMLName   xml.Name    `xml:"http://schemas.xmlsoap.org/soap/envelope/ Envelope"`
+	XmlnsSoap string      `xml:"xmlns:soap,attr"`
+	XmlnsT    string      `xml:"xmlns:t,attr"`
+	XmlnsM    string      `xml:"xmlns:m,attr"`
+	Header    *SOAPHeader `xml:"http://schemas.xmlsoap.org/soap/envelope/ Header,omitempty"`
+	Body      *SOAPBody   `xml:"http://schemas.xmlsoap.org/soap/envelope/ Body"`
 }
 
 type SOAPHeader struct {
-	RequestServerVersion *RequestServerVersion `xml:"t:RequestServerVersion,omitempty"`
-	SerializedSecurityContext *string `xml:"t:SerializedSecurityContext,omitempty"`
+	RequestServerVersion      *RequestServerVersion `xml:"http://schemas.microsoft.com/exchange/services/2006/types RequestServerVersion,omitempty"`
+	SerializedSecurityContext *string               `xml:"http://schemas.microsoft.com/exchange/services/2006/types SerializedSecurityContext,omitempty"`
 }
 
 type RequestServerVersion struct {
@@ -222,28 +256,55 @@ type RequestServerVersion struct {
 }
 
 type SOAPBody struct {
-	Children []xml.Token `xml:",any"`
+	// Inner is the raw XML of the body's children, which is where the operation
+	// and its arguments live. Holding it as a string is what lets the operation
+	// handlers decode the shape each operation needs without every envelope
+	// field being spelled out here.
+	Inner string `xml:",innerxml"`
 }
 
+// Operation returns the name of the requested operation: the local name of the
+// first element inside s:Body. That element is the operation in MS-OXECWS -
+// FindItem, GetItem, CreateItem and the rest - and it is what dispatch keys on
+// when the SOAPAction header is absent.
+func (b *SOAPBody) Operation() string {
+	if b == nil {
+		return ""
+	}
+	dec := xml.NewDecoder(strings.NewReader(b.Inner))
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			// io.EOF here just means the body held nothing but whitespace.
+			return ""
+		}
+		if start, ok := tok.(xml.StartElement); ok {
+			return start.Name.Local
+		}
+	}
+}
+
+// typesNS is the EWS types namespace (MS-OXECWS).
+const typesNS = "http://schemas.microsoft.com/exchange/services/2006/types"
+
+// buildResponse wraps an operation's response element in a SOAP envelope. The
+// body is assembled as text rather than as a struct because each operation
+// returns a different element shape, and the element name is the one thing the
+// transport has to get exactly right.
 func (e *EWS) buildResponse(action string, fields map[string]string) (*SOAPEnvelope, error) {
-	// Build a minimal successful SOAP response
 	inner := ""
 	for k, v := range fields {
-		inner += fmt.Sprintf("<t:%s>%s</t:%s>", k, v, k)
+		inner += fmt.Sprintf("<t:%s>%s</t:%s>", k, xmlEscape(v), k)
 	}
 
-	env := SOAPEnvelope{
-		XmlnsSoap: "http://schemas.xmlsoap.org/soap/envelope/",
-		XmlnsT:    "http://schemas.microsoft.com/exchange/services/2006/types",
-		XmlnsM:    "http://schemas.microsoft.com/exchange/services/2006/messages",
+	return &SOAPEnvelope{
+		XmlnsSoap: soapEnvelopeNS,
+		XmlnsT:    typesNS,
+		XmlnsM:    messagesNS,
 		Body: &SOAPBody{
-			Children: []xml.Token{},
+			Inner: fmt.Sprintf(`<m:%s>%s</m:%s>`, action, inner, action),
 		},
-	}
-
-	// The body content needs proper XML marshaling
-	// For now return minimal envelope
-	return &env, nil
+	}, nil
 }
 
 func (e *EWS) writeSOAPFault(w http.ResponseWriter, message string, code int) {
@@ -267,11 +328,17 @@ func (e *EWS) writeSOAPFault(w http.ResponseWriter, message string, code int) {
 	w.Write([]byte(fault))
 }
 
+// xmlEscape escapes a string for inclusion in element content.
+//
+// This has to be real escaping, not decoration: the fault text quotes back the
+// operation name, which arrives in the SOAPAction header and is therefore under
+// the caller's control. A caller sending &lt; in that header would otherwise
+// get markup of their choosing reflected into the response.
 func xmlEscape(s string) string {
-	s = strings.ReplaceAll(s, "&", "&")
-	s = strings.ReplaceAll(s, "<", "<")
-	s = strings.ReplaceAll(s, ">", ">")
-	s = strings.ReplaceAll(s, "\"", "\"")
-	s = strings.ReplaceAll(s, "'", "'")
-	return s
+	var b strings.Builder
+	if err := xml.EscapeText(&b, []byte(s)); err != nil {
+		// EscapeText only fails if the writer fails, and strings.Builder does not.
+		return ""
+	}
+	return b.String()
 }

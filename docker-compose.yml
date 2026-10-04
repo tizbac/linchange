@@ -101,7 +101,7 @@ services:
       - linchange-network
     restart: unless-stopped
     profiles: ["demo"]
-    command: ["--config", "/app/config/linchange.demo.yaml"]
+    command: ["--config", "/app/config/linchange.demo.yaml", "--web-dir", "/app/static"]
 
 volumes:
   postgres_data:
