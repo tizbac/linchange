@@ -10,7 +10,7 @@ import {
   OnDestroy,
   ElementRef,
 } from '@angular/core';
-import { FullCalendarModule } from '@fullcalendar/angular';
+import { FullCalendarModule, FullCalendarComponent } from '@fullcalendar/angular';
 import {
   CalendarOptions,
   EventClickArg,
@@ -18,6 +18,7 @@ import {
   DateSelectArg,
   EventApi,
   Calendar,
+  DatesSetArg,
 } from '@fullcalendar/core';
 import { EventResizeDoneArg } from '@fullcalendar/interaction';
 import dayGridPlugin from '@fullcalendar/daygrid';
@@ -35,6 +36,7 @@ import {
   FreeBusyRequest,
   FreeBusyResponse,
   Availability,
+  ICalEvent,
 } from '../core/calendar/calendar.models';
 import { formatDateTime, formatDate, startOfDay, endOfDay, toRFC3339, parseRFC3339 } from '../core/calendar/ui';
 import { NgIf, NgFor, NgClass } from '@angular/common';
@@ -347,7 +349,10 @@ import { CalIcon } from '../core/calendar/ui';
 })
 export class CalendarComponent implements AfterViewInit, OnDestroy {
   private readonly api = inject(CalendarApi);
-  private readonly calendarRef = viewChild.required<ElementRef<HTMLElement>>('fullCalendar');
+  // The FullCalendar component instance, not the DOM element. The wrapper is
+  // what holds the live CalendarApi, so typing this as ElementRef<HTMLElement>
+  // would hand back a div with no view on it.
+  private readonly calendarRef = viewChild.required<FullCalendarComponent>('fullCalendar');
 
   // State
   readonly calendars = signal<CalendarModel[]>([]);
@@ -379,6 +384,12 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
   }
 
   // FullCalendar options
+  //
+  // calendarApi is the live handle on the calendar FullCalendar built for us.
+  // Nothing else can hand it over: the wrapper component creates it internally,
+  // and the only way to reach it is through the component reference below. That
+  // is why ngAfterViewInit has to ask for it explicitly, and why every use is
+  // guarded rather than asserted with a non-null assertion.
   private calendarApi: Calendar | null = null;
 
   readonly calendarOptions: CalendarOptions = {
@@ -409,9 +420,17 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
     eventContent: this.renderEventContent.bind(this),
   };
 
-  ngAfterViewInit(): void {
-    this.loadCalendars();
-    this.loadEvents();
+  async ngAfterViewInit(): Promise<void> {
+    // The CalendarApi exists only once the wrapper has rendered, so this is the
+    // first moment it can be read. Until it is, every handler below would find
+    // a null api and dereference it.
+    this.calendarApi = this.calendarRef().getApi();
+
+    // The calendars have to be known before the events are fetched: the fetch
+    // asks each calendar in turn, so starting it first would only ever load the
+    // first range of calendars to arrive.
+    await this.loadCalendars();
+    await this.loadEvents();
   }
 
   ngOnDestroy(): void {
@@ -428,19 +447,24 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
   }
 
   private async loadEvents(): Promise<void> {
-    const cal = this.calendarApi!;
+    const cal = this.calendarApi;
+    if (!cal) return;
     const view = cal.view;
     const start = toRFC3339(view.activeStart);
     const end = toRFC3339(view.activeEnd);
 
     this.loading.set(true);
     try {
-      // Get events from all visible calendars
-      const calendarIds = this.calendars().map(c => c.id);
+      // The visible range replaces what was loaded, it does not add to it.
+      // Appending meant every navigation, and every refetch after a save,
+      // doubled the events on screen.
+      const found: EventModel[] = [];
+      const calendarIds = this.calendars().map((c) => c.id);
       for (const id of calendarIds) {
         const res = await this.api.listEvents(id, start, end);
-        this.events.update(prev => [...prev, ...res.events]);
+        found.push(...res.events);
       }
+      this.events.set(found);
       this.updateFullCalendarEvents();
     } catch (err) {
       console.error('Failed to load events:', err);
@@ -450,7 +474,8 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
   }
 
   private updateFullCalendarEvents(): void {
-    const cal = this.calendarApi!;
+    const cal = this.calendarApi;
+    if (!cal) return;
     cal.removeAllEvents();
     for (const ev of this.events()) {
       cal.addEvent(this.toFullCalendarEvent(ev));
@@ -467,6 +492,11 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
       backgroundColor: this.calendarColor(ev.calendarId),
       borderColor: this.calendarColor(ev.calendarId),
       extendedProps: {
+        // eventId and uid are carried here as well as id, because the handlers
+        // work from extendedProps while editing and from id while dragging, and
+        // a save built from one of them has to be able to find the other.
+        eventId: ev.eventId,
+        uid: ev.uid,
         summary: ev.summary,
         location: ev.location,
         timezone: ev.timezone,
@@ -489,26 +519,29 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
 
   // View navigation
   prev(): void {
-    this.calendarApi!.prev();
+    this.calendarApi?.prev();
   }
 
   next(): void {
-    this.calendarApi!.next();
+    this.calendarApi?.next();
   }
 
   today(): void {
-    this.calendarApi!.today();
+    this.calendarApi?.today();
   }
 
   changeView(viewName: string): void {
     this.view.set(viewName as any);
-    this.calendarApi!.changeView(viewName);
+    this.calendarApi?.changeView(viewName);
   }
 
-  handleDatesSet(arg: any): void {
-    const cal = this.calendarApi!;
-    this.title.set(cal.view.title);
-    this.loadEvents();
+  handleDatesSet(arg: DatesSetArg): void {
+    // The range is read from the argument FullCalendar passes rather than from
+    // the stored api: the argument is the one describing the range that was just
+    // set, which is not necessarily the range the api already reflects while
+    // this is being called.
+    this.title.set(arg.view.title);
+    void this.loadEvents();
   }
 
   // Event interactions
@@ -517,7 +550,6 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
   }
 
   handleDateSelect(arg: DateSelectArg): void {
-    const cal = this.calendarApi!;
     const start = toRFC3339(arg.start);
     const end = toRFC3339(arg.end);
     const defaultCal = this.calendars().find(c => c.is_default) || this.calendars()[0];
@@ -569,15 +601,14 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
         expectedSequence: ext.sequence,
       });
       // Reload events to sync
-      this.loadEvents();
+      void this.loadEvents();
     } catch (err) {
       console.error('Failed to move event:', err);
-      this.loadEvents(); // Refetch to revert UI
+      void this.loadEvents(); // Refetch to revert UI
     }
   }
 
   openCreateEvent(): void {
-    const cal = this.calendarApi!;
     const defaultCal = this.calendars().find(c => c.is_default) || this.calendars()[0];
     if (!defaultCal) return;
 
@@ -615,7 +646,36 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
       timezone: ext.timezone,
       sequence: ext.sequence,
     };
-    this.editingEvent.set(ext as EventModel);
+    // editingEvent is what the modal reads to decide whether it is editing or
+    // creating, so it has to be the model as the API returned it. Handing it
+    // extendedProps instead meant the modal read a record with no eventId and
+    // titled an edit of an existing event "New Event".
+    this.editingEvent.set(this.eventModelFor(event));
+  }
+
+  // eventModelFor rebuilds the model an EventApi was made from. The mapping runs
+  // the other way too, in toFullCalendarEvent, so this is its inverse.
+  private eventModelFor(event: EventApi): EventModel {
+    const ext = event.extendedProps as any;
+    const startDate = event.start ? new Date(event.start) : new Date();
+    return {
+      eventId: parseInt(event.id, 10),
+      calendarId: ext.calendarId,
+      uid: ext.uid,
+      recurrenceId: ext.recurrenceId,
+      summary: ext.summary,
+      location: ext.location,
+      start: startDate.toISOString(),
+      end: (event.end ? new Date(event.end) : new Date(startDate.getTime() + 3600000)).toISOString(),
+      allDay: event.allDay,
+      timezone: ext.timezone,
+      status: ext.status,
+      organizer: ext.organizer,
+      organizerAddress: ext.organizerAddress,
+      sequence: ext.sequence,
+      overridden: ext.overridden,
+      attendees: ext.attendees || [],
+    };
   }
 
   async saveEvent(): Promise<void> {
@@ -624,8 +684,12 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
 
     this.saving.set(true);
     try {
-      const eventData: any = {
-        uid: form.id ? this.events().find(e => e.eventId === form.id)?.uid : undefined,
+      const eventData: ICalEvent = {
+        // The uid names the series, so it comes from the event being edited
+        // rather than from a new one. A save without it leaves the server to
+        // invent a uid and quietly create a second event instead of updating
+        // the one the user is looking at.
+        uid: form.id ? this.events().find((e) => e.eventId === form.id)?.uid : undefined,
         summary: form.title,
         location: form.location,
         start: form.start,
@@ -646,7 +710,7 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
         await this.api.createEvent(form.calendarId, { event: eventData });
       }
       this.closeEditModal();
-      this.loadEvents();
+      void this.loadEvents();
     } catch (err) {
       console.error('Failed to save event:', err);
       alert('Failed to save event: ' + (err as Error).message);
@@ -665,7 +729,7 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
     try {
       await this.api.deleteEvent(calendarId, eventId);
       this.closeEventDetail();
-      this.loadEvents();
+      void this.loadEvents();
     } catch (err) {
       console.error('Failed to delete event:', err);
       alert('Failed to delete event: ' + (err as Error).message);
