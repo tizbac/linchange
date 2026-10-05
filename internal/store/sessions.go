@@ -130,6 +130,7 @@ type sessionRow struct {
 	Enabled            bool           `db:"enabled"`
 	MailboxEnabled     bool           `db:"mailbox_enabled"`
 	MustChangePassword bool           `db:"must_change_password"`
+	IsDomainAdmin      bool           `db:"is_domain_admin"`
 }
 
 // sessionSelect joins the user row on, so a session cannot report attributes
@@ -138,7 +139,8 @@ const sessionSelect = `
 	SELECT s.id, s.address, s.impersonating, host(s.ip) AS ip_host,
 	       s.user_agent, s.created_at, s.last_seen_at, s.absolute_expires_at,
 	       s.revoked_at,
-	       u.source, u.enabled, u.mailbox_enabled, u.must_change_password
+	       u.source, u.enabled, u.mailbox_enabled, u.must_change_password,
+	       u.is_domain_admin
 	FROM sessions s
 	JOIN users u ON u.address = s.address`
 
@@ -158,6 +160,7 @@ func (r sessionRow) toSession() Session {
 			Enabled:            r.Enabled,
 			MailboxEnabled:     r.MailboxEnabled,
 			MustChangePassword: r.MustChangePassword,
+			IsDomainAdmin:      r.IsDomainAdmin,
 		},
 	}
 	if r.RevokedAt.Valid {
@@ -198,7 +201,7 @@ func (s *Sessions) Create(ctx context.Context, q Querier, req CreateSessionReque
 	// has to be pointed at somebody who can actually hold mail, or there is
 	// nothing to impersonate into.
 	if req.Impersonating != "" {
-		if principal.Source != policy.SourceDomainAdmin {
+		if !principal.DomainAdmin() {
 			return out, fmt.Errorf("store: %s is not a domain admin", req.Address)
 		}
 		target, terr := LoadPrincipal(ctx, q, req.Impersonating)

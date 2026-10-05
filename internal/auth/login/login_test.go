@@ -123,10 +123,13 @@ func seedFixture(t *testing.T, db *sqlx.DB) {
 		{"admin@example.com", "admin", "domain_admin", false, true},
 		{"carol@example.com", "carol", "local", true, false},
 	} {
+		// The domain_admin source carries the administration grant with it, and
+		// the schema refuses a domain admin that is not one.
 		exec(t, db,
-			`INSERT INTO users (address, address_local, source, mailbox_enabled, enabled)
-			 VALUES ($1, $2, $3, $4, $5)`,
-			u.address, u.local, u.source, u.mailbox, u.enabled)
+			`INSERT INTO users (address, address_local, source, mailbox_enabled, enabled, is_domain_admin)
+			 VALUES ($1, $2, $3, $4, $5, $6)`,
+			u.address, u.local, u.source, u.mailbox, u.enabled,
+			u.source == "domain_admin")
 	}
 }
 

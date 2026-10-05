@@ -338,9 +338,9 @@ compose exec -T postgres psql -U linchange -d linchange -c "INSERT INTO domains 
 # Create the demo admin user via database
 echo -e "${YELLOW}Creating admin user...${NC}"
 compose exec -T postgres psql -U linchange -d linchange -c "
-INSERT INTO users (address, source, display_name, enabled, mailbox_enabled, quota_bytes, daily_send_limit, timezone, language, must_change_password, address_local, created_at, updated_at)
-VALUES ('admin@localhost', 'local', 'Demo Admin', true, true, 10737418240, 500, 'UTC', 'en', false, 'admin@localhost', now(), now())
-ON CONFLICT (address) DO UPDATE SET display_name = EXCLUDED.display_name, enabled = EXCLUDED.enabled, mailbox_enabled = EXCLUDED.mailbox_enabled;
+INSERT INTO users (address, source, display_name, enabled, mailbox_enabled, is_domain_admin, quota_bytes, daily_send_limit, timezone, language, must_change_password, address_local, created_at, updated_at)
+VALUES ('admin@localhost', 'local', 'Demo Admin', true, true, true, 10737418240, 500, 'UTC', 'en', false, 'admin@localhost', now(), now())
+ON CONFLICT (address) DO UPDATE SET display_name = EXCLUDED.display_name, enabled = EXCLUDED.enabled, mailbox_enabled = EXCLUDED.mailbox_enabled, is_domain_admin = EXCLUDED.is_domain_admin;
 " 2>&1
 
 # Set admin password (using argon2id hash for "DemoAdmin123!")
@@ -372,6 +372,18 @@ if [[ -z "$ADMIN_TOKEN" ]]; then
     echo -e "${YELLOW}Admin login did not succeed. The server is up; see the logs below.${NC}"
 else
     echo -e "${GREEN}Admin login successful!${NC}"
+
+    # The web interface only offers the Admin link when the server says the
+    # session administers, so verify that here rather than leaving an operator
+    # to work out why the link is missing.
+    echo -e "${YELLOW}Checking the admin dashboard is reachable...${NC}"
+    ME_IS_ADMIN=$(curl -sf "${DEMO_BASE_URL}/api/v1/auth/me" \
+        -H "Authorization: Bearer ${ADMIN_TOKEN}" | jq -r '.is_domain_admin // false' 2>/dev/null || true)
+    if [[ "$ME_IS_ADMIN" == "true" ]]; then
+        echo -e "${GREEN}Admin dashboard enabled: ${DEMO_BASE_URL}/admin/domains${NC}"
+    else
+        echo -e "${RED}/auth/me reports is_domain_admin=${ME_IS_ADMIN:-unknown}, so the Admin link stays hidden.${NC}"
+    fi
 fi
 
 echo ""

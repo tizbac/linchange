@@ -27,7 +27,8 @@ func LoadPrincipal(ctx context.Context, q Querier, address string) (policy.Princ
 	}
 
 	const query = `
-		SELECT address, source, enabled, mailbox_enabled, must_change_password
+		SELECT address, source, enabled, mailbox_enabled, must_change_password,
+		       is_domain_admin
 		FROM users
 		WHERE address = $1 AND deleted_at IS NULL`
 
@@ -52,6 +53,7 @@ type principalRow struct {
 	Enabled            bool   `db:"enabled"`
 	MailboxEnabled     bool   `db:"mailbox_enabled"`
 	MustChangePassword bool   `db:"must_change_password"`
+	IsDomainAdmin      bool   `db:"is_domain_admin"`
 }
 
 // principal converts a row into a policy identity.
@@ -66,6 +68,7 @@ func (r principalRow) principal() policy.Principal {
 		Enabled:            r.Enabled,
 		MailboxEnabled:     r.MailboxEnabled,
 		MustChangePassword: r.MustChangePassword,
+		IsDomainAdmin:      r.IsDomainAdmin,
 		Authenticated:      false,
 	}
 }

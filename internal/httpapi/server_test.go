@@ -131,10 +131,12 @@ func seedUser(t *testing.T, db *sqlx.DB, address, source string, mailbox, enable
 	if i := strings.IndexByte(address, '@'); i >= 0 {
 		local = address[:i]
 	}
+	// The domain_admin source carries the administration grant with it, so the
+	// row has to say so: the schema refuses a domain admin who is not one.
 	exec(t, db,
-		`INSERT INTO users (address, address_local, source, mailbox_enabled, enabled)
-		 VALUES ($1, $2, $3, $4, $5)`,
-		address, local, source, mailbox, enabled)
+		`INSERT INTO users (address, address_local, source, mailbox_enabled, enabled, is_domain_admin)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		address, local, source, mailbox, enabled, source == "domain_admin")
 }
 
 func setPassword(t *testing.T, db *sqlx.DB, address, plaintext string) {

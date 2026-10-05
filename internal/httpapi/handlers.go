@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/linchange/linchange/internal/auth/login"
-	"github.com/linchange/linchange/internal/auth/policy"
 	"github.com/linchange/linchange/internal/auth/reset"
 	"github.com/linchange/linchange/internal/auth/token"
 	"github.com/linchange/linchange/internal/store"
@@ -212,7 +211,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		Source:                     string(principal.Source),
 		Enabled:                    principal.Enabled,
 		MailboxEnabled:             principal.MailboxEnabled,
-		IsDomainAdmin:              principal.Source == policy.SourceDomainAdmin,
+		IsDomainAdmin:              principal.DomainAdmin(),
 		Impersonating:              session.Impersonating,
 		MustChangePassword:         principal.MustChangePassword,
 		ImpersonationRequiresGrant: s.policies.Impersonation.RequireGrant,

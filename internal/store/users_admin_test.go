@@ -203,6 +203,144 @@ func TestUsersUpdateKeepsADomainAdminMailboxFree(t *testing.T) {
 	}
 }
 
+// A local user may be granted administration while keeping its mailbox. This is
+// the ordinary administrator of a small deployment, and it is the shape the demo
+// user has: without it the admin pages are unreachable for anyone who receives
+// mail.
+func TestUsersCreateGrantsAdministrationToAMailboxHolder(t *testing.T) {
+	db := testMigratedDB(t)
+	users := store.NewUsers()
+	ctx := context.Background()
+
+	if err := users.Create(ctx, db, store.CreateUserRequest{
+		Address: "root@example.com", Source: policy.SourceLocal,
+		DisplayName: "Root", IsDomainAdmin: true,
+	}); err != nil {
+		t.Fatalf("creating an administrator: %v", err)
+	}
+
+	got, err := users.Get(ctx, db, "root@example.com")
+	if err != nil {
+		t.Fatalf("getting user: %v", err)
+	}
+	if !got.IsDomainAdmin {
+		t.Error("is_domain_admin = false, want the grant to have been stored")
+	}
+	if !got.MailboxEnabled {
+		t.Error("mailbox_enabled = false; an administrator who holds mail kept its mailbox")
+	}
+
+	// And the grant has to reach the policy identity, because that is what
+	// every protocol and route actually reads. LoadPrincipal reports who
+	// somebody is and not that they have proved it, so the credential paths
+	// are the ones that set Authenticated and this test stands in for one.
+	principal, err := store.LoadPrincipal(ctx, db, "root@example.com")
+	if err != nil {
+		t.Fatalf("loading principal: %v", err)
+	}
+	if !principal.DomainAdmin() {
+		t.Error("LoadPrincipal did not report the administrator")
+	}
+	principal.Authenticated = true
+	if err := principal.Can(policy.ActionAdminister); err != nil {
+		t.Errorf("the administrator was refused administration: %v", err)
+	}
+	if err := principal.Can(policy.ActionIMAP); err != nil {
+		t.Errorf("the administrator was refused IMAP: %v", err)
+	}
+}
+
+// An ordinary local user is not an administrator until somebody says so.
+func TestUsersCreateLeavesAnOrdinaryUserWithoutAdministration(t *testing.T) {
+	db := testMigratedDB(t)
+	ctx := context.Background()
+
+	if err := store.NewUsers().Create(ctx, db, store.CreateUserRequest{
+		Address: "alice@example.com", Source: policy.SourceLocal,
+	}); err != nil {
+		t.Fatalf("creating user: %v", err)
+	}
+	principal, err := store.LoadPrincipal(ctx, db, "alice@example.com")
+	if err != nil {
+		t.Fatalf("loading principal: %v", err)
+	}
+	if principal.DomainAdmin() {
+		t.Error("an ordinary user was granted administration by default")
+	}
+	if err := principal.Can(policy.ActionAdminister); !policy.IsDenied(err, policy.CodeNotDomainAdmin) {
+		t.Errorf("an ordinary user was allowed to administer: %v", err)
+	}
+}
+
+// The two sources that cannot hold the grant get the answer from the store
+// rather than a check violation, and the repository refuses to write the
+// combination in the first place.
+func TestUsersRefusesTheAdministrationGrantWhereItCannotApply(t *testing.T) {
+	db := testMigratedDB(t)
+	users := store.NewUsers()
+	ctx := context.Background()
+
+	if err := users.Create(ctx, db, store.CreateUserRequest{
+		Address: "shared@example.com", Source: policy.SourceShared,
+		IsDomainAdmin: true,
+	}); err != nil {
+		t.Fatalf("creating a shared mailbox: %v", err)
+	}
+	got, err := users.Get(ctx, db, "shared@example.com")
+	if err != nil {
+		t.Fatalf("getting the shared mailbox: %v", err)
+	}
+	if got.IsDomainAdmin {
+		t.Error("a shared mailbox was granted administration; it can never authenticate")
+	}
+
+	// The same on an update, since update replaces the whole row.
+	if err := users.Update(ctx, db, "shared@example.com", store.UpdateUserRequest{
+		Enabled: true, MailboxEnabled: true, IsDomainAdmin: true,
+	}); err != nil {
+		t.Fatalf("updating the shared mailbox: %v", err)
+	}
+	if got, err = users.Get(ctx, db, "shared@example.com"); err != nil {
+		t.Fatalf("getting the shared mailbox: %v", err)
+	}
+	if got.IsDomainAdmin {
+		t.Error("an update granted administration to a shared mailbox")
+	}
+}
+
+// The grant follows the domain_admin source in both directions, so a domain
+// admin can be neither demoted nor turned into a shared mailbox by a write.
+func TestUsersKeepsADomainAdminAnAdministrator(t *testing.T) {
+	db := testMigratedDB(t)
+	users := store.NewUsers()
+	ctx := context.Background()
+
+	if err := users.Create(ctx, db, store.CreateUserRequest{
+		Address: "admin@example.com", Source: policy.SourceDomainAdmin,
+	}); err != nil {
+		t.Fatalf("creating domain admin: %v", err)
+	}
+	got, err := users.Get(ctx, db, "admin@example.com")
+	if err != nil {
+		t.Fatalf("getting user: %v", err)
+	}
+	if !got.IsDomainAdmin {
+		t.Error("a domain_admin row was created without the administration grant")
+	}
+
+	if err := users.Update(ctx, db, "admin@example.com", store.UpdateUserRequest{
+		Enabled: true, MailboxEnabled: false,
+	}); err != nil {
+		t.Fatalf("updating domain admin: %v", err)
+	}
+	if got, err = users.Get(ctx, db, "admin@example.com"); err != nil {
+		t.Fatalf("getting user: %v", err)
+	}
+	if !got.IsDomainAdmin {
+		t.Error("an update revoked a domain admin's administration")
+	}
+}
+
 func TestUsersSetEnabled(t *testing.T) {
 	db := testMigratedDB(t)
 	users := store.NewUsers()

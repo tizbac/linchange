@@ -47,6 +47,11 @@ const (
 	ActionUserQuota         = "user.quota"
 	ActionUserDelete        = "user.delete"
 	ActionUserResetPassword = "user.reset_password"
+	// ActionUserAdminGrant is its own action rather than part of user.update.
+	// Granting and revoking administration is the change an operator has to be
+	// able to find in the log after an incident, and it should not have to be
+	// told apart from somebody editing a display name.
+	ActionUserAdminGrant = "user.admin_grant"
 
 	ActionAliasCreate  = "alias.create"
 	ActionAliasEnable  = "alias.enable"

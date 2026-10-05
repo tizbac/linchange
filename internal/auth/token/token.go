@@ -124,6 +124,11 @@ type claims struct {
 	MustChangePassword bool `json:"pwd"`
 	// MailboxEnabled is false for a domain admin.
 	MailboxEnabled bool `json:"mbx"`
+	// IsDomainAdmin says the principal administers. It is carried for the same
+	// reason as the source: a policy decision on an administration route must
+	// not require a database read, and the web interface reads the same claim
+	// to decide whether to show the admin link at all.
+	IsDomainAdmin bool `json:"adm,omitempty"`
 	// Impersonating names the principal a domain admin is acting as, or is
 	// empty. It is in the token so that an audit record cannot be forgotten at
 	// the point of use.
@@ -179,6 +184,7 @@ func (m *Manager) issue(p policy.Principal, sessionID string, kind TokenType, tt
 		Type:               kind,
 		MustChangePassword: p.MustChangePassword,
 		MailboxEnabled:     p.MailboxEnabled,
+		IsDomainAdmin:      p.DomainAdmin(),
 		Impersonating:      impersonating,
 	}
 
@@ -254,6 +260,7 @@ func (m *Manager) Parse(raw string, want TokenType) (policy.Principal, string, e
 		Enabled:            true,
 		MailboxEnabled:     body.MailboxEnabled,
 		MustChangePassword: body.MustChangePassword,
+		IsDomainAdmin:      body.IsDomainAdmin,
 		Authenticated:      true,
 	}
 	return p, body.SessionID, nil

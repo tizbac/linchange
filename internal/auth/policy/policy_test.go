@@ -97,6 +97,58 @@ func TestOnlyADomainAdminMayAdminister(t *testing.T) {
 	}
 }
 
+// A mailbox holder who also administers is the ordinary administrator of a
+// small deployment, and the demo user. It has to be able to administer, and it
+// has to keep receiving its own mail: the grant says nothing about the mailbox.
+func TestAMailboxHolderMayBeGrantedAdministration(t *testing.T) {
+	p := person()
+	p.IsDomainAdmin = true
+
+	if err := p.Can(policy.ActionAdminister); err != nil {
+		t.Errorf("a granted mailbox holder was refused administration: %v", err)
+	}
+	for _, action := range []policy.Action{
+		policy.ActionIMAP, policy.ActionEWS, policy.ActionEAS,
+		policy.ActionReadMailbox, policy.ActionSendMail,
+	} {
+		if err := p.Can(action); err != nil {
+			t.Errorf("being an administrator cost %s the ability to %s: %v", p.Address, action, err)
+		}
+	}
+	if !p.DomainAdmin() {
+		t.Error("DomainAdmin() said no for a principal holding the grant")
+	}
+}
+
+// A shared mailbox is not a login identity, so a grant on one buys nothing and
+// the policy refuses it outright rather than leaving the caller to wonder which
+// of the two answers is right. The schema refuses to store the combination.
+func TestAGrantedSharedMailboxStillCannotAdminister(t *testing.T) {
+	s := shared()
+	s.IsDomainAdmin = true
+
+	if err := s.Can(policy.ActionAdminister); !policy.IsDenied(err, policy.CodeNotMember) {
+		t.Errorf("a granted shared mailbox was allowed to administer: %v", err)
+	}
+	if err := s.Can(policy.ActionIMAP); !policy.IsDenied(err, policy.CodeNotMember) {
+		t.Errorf("a granted shared mailbox was allowed to use IMAP: %v", err)
+	}
+}
+
+// The domain_admin source is an administration grant on its own, so a principal
+// rebuilt from a claim that predates the column is still an administrator.
+func TestTheDomainAdminSourceIsEnough(t *testing.T) {
+	a := admin()
+	a.IsDomainAdmin = false // a value read before the grant existed
+
+	if !a.DomainAdmin() {
+		t.Error("DomainAdmin() said no for a domain_admin principal with no grant set")
+	}
+	if err := a.Can(policy.ActionAdminister); err != nil {
+		t.Errorf("a domain_admin principal was refused administration: %v", err)
+	}
+}
+
 func TestDisabledPrincipalIsRefusedEverywhere(t *testing.T) {
 	p := person()
 	p.Enabled = false

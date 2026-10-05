@@ -59,6 +59,12 @@ type Principal struct {
 	// pairing for the domain_admin source; the field is carried so that
 	// decisions do not have to re-derive it.
 	MailboxEnabled bool
+	// IsDomainAdmin says this principal administers the domain. It is a grant
+	// and not a source, because administering mail and receiving mail are
+	// independent: the small deployment's administrator is usually a mailbox
+	// holder, and SourceDomainAdmin exists for the opposite shape, the
+	// principal who administers and never receives.
+	IsDomainAdmin bool
 	// MustChangePassword forces a password change before anything else. It
 	// does not block the web UI, which is where the change happens, but it
 	// does block every mail protocol.
@@ -176,6 +182,20 @@ var mailLogons = []Action{
 	ActionSendMail, ActionReadMailbox, ActionManageMailbox,
 }
 
+// DomainAdmin reports whether this principal administers the domain.
+//
+// The grant and the source are both honoured, and the union is deliberate
+// rather than redundant. A domain_admin row is an administrator by definition,
+// and reading that off the source means a principal reconstructed from a claim
+// or a session row that has not been re-read against the users table still
+// answers correctly. The grant is what lets an administrator who also receives
+// mail be one; the database enforces that the two can never disagree in the
+// direction that matters, since a domain_admin row cannot have the grant
+// cleared.
+func (p Principal) DomainAdmin() bool {
+	return p.IsDomainAdmin || p.Source == SourceDomainAdmin
+}
+
 // Can reports whether p may perform a.
 //
 // The order of the checks is deliberate. Authenticated and Enabled come first
@@ -233,7 +253,7 @@ func (p Principal) Can(a Action) error {
 	}
 
 	// Only a domain admin may administer.
-	if a == ActionAdminister && p.Source != SourceDomainAdmin {
+	if a == ActionAdminister && !p.DomainAdmin() {
 		return &Denied{
 			Code:   CodeNotDomainAdmin,
 			Detail: fmt.Sprintf("%s is not a domain admin", p.Address),

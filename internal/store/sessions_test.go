@@ -43,10 +43,13 @@ func seedSessionFixtures(t *testing.T, db *sqlx.DB) {
 		{"admin@example.com", "admin", "domain_admin"},
 	} {
 		mailbox := u.source != "domain_admin"
+		// The domain_admin source carries the administration grant with it, so
+		// the row says so; the schema rejects a domain admin that is not one.
+		admin := u.source == "domain_admin"
 		if _, err := db.ExecContext(ctx,
-			`INSERT INTO users (address, address_local, source, mailbox_enabled)
-			 VALUES ($1,$2,$3,$4)`,
-			u.address, u.local, u.source, mailbox); err != nil {
+			`INSERT INTO users (address, address_local, source, mailbox_enabled, is_domain_admin)
+			 VALUES ($1,$2,$3,$4,$5)`,
+			u.address, u.local, u.source, mailbox, admin); err != nil {
 			t.Fatalf("seeding user %s: %v", u.address, err)
 		}
 	}

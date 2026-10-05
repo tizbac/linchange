@@ -35,6 +35,10 @@ type CreateUserRequest struct {
 	DailySendLimit     *int
 	Timezone           string
 	Language           string
+	// IsDomainAdmin grants administration at creation. It is implied by the
+	// domain_admin source and has to be asked for otherwise, since the usual
+	// administrator of a small deployment holds mail and is created as local.
+	IsDomainAdmin bool
 }
 
 // CreateUser provisions a principal. The user row, the password and the audit
@@ -80,6 +84,7 @@ func (s *Service) CreateUser(ctx context.Context, actor policy.Principal, req Cr
 			Address:            req.Address,
 			Source:             req.Source,
 			DisplayName:        req.DisplayName,
+			IsDomainAdmin:      req.IsDomainAdmin,
 			QuotaBytes:         req.QuotaBytes,
 			DailySendLimit:     req.DailySendLimit,
 			Timezone:           req.Timezone,
@@ -106,7 +111,11 @@ func (s *Service) CreateUser(ctx context.Context, actor policy.Principal, req Cr
 			targetType: "user",
 			targetID:   user.Address,
 			target:     user.Address,
-			detail:     map[string]any{"source": user.Source, "display_name": user.DisplayName},
+			detail: map[string]any{
+				"source":          user.Source,
+				"display_name":    user.DisplayName,
+				"is_domain_admin": user.IsDomainAdmin,
+			},
 		}); err != nil {
 			return err
 		}
@@ -127,12 +136,17 @@ func (s *Service) CreateUser(ctx context.Context, actor policy.Principal, req Cr
 // service preserves them here instead, which makes an off-path caller that
 // forgets them harmless rather than destructive, and leaves SetUserEnabled as
 // the one way to switch an account off.
+//
+// IsDomainAdmin is a pointer for the same reason, and with a sharper edge:
+// administration is a grant, and an update that left it out would quietly
+// revoke it.
 type UpdateUserRequest struct {
 	DisplayName    string
 	QuotaBytes     *int64
 	DailySendLimit *int
 	Timezone       string
 	Language       string
+	IsDomainAdmin  *bool
 }
 
 // UpdateUser changes a user in place.
@@ -140,17 +154,29 @@ func (s *Service) UpdateUser(ctx context.Context, actor policy.Principal, addres
 	if err := requireAdmin(actor); err != nil {
 		return store.User{}, err
 	}
+	// An administrator who takes their own grant away cannot undo it: the next
+	// request is refused for not being a domain admin, including this update's
+	// own retry. Somebody else has to restore it.
+	if req.IsDomainAdmin != nil && !*req.IsDomainAdmin && actor.DomainAdmin() &&
+		strings.EqualFold(actor.Address, address) {
+		return store.User{}, fmt.Errorf("%w: an administrator cannot remove their own administration grant", ErrInvalid)
+	}
 	var updated store.User
 	err := store.InTx(ctx, s.db, func(q *sqlx.Tx) error {
 		before, err := s.users.Get(ctx, q, address)
 		if err != nil {
 			return mapStore(err)
 		}
+		grant := before.IsDomainAdmin
+		if req.IsDomainAdmin != nil {
+			grant = *req.IsDomainAdmin
+		}
 		if err := s.users.Update(ctx, q, address, store.UpdateUserRequest{
 			DisplayName: req.DisplayName,
 			// Carried over from the row just read: see UpdateUserRequest.
 			Enabled:        before.Enabled,
 			MailboxEnabled: before.MailboxEnabled,
+			IsDomainAdmin:  grant,
 			QuotaBytes:     req.QuotaBytes,
 			DailySendLimit: req.DailySendLimit,
 			Timezone:       req.Timezone,
@@ -173,6 +199,24 @@ func (s *Service) UpdateUser(ctx context.Context, actor policy.Principal, addres
 			},
 		}); err != nil {
 			return err
+		}
+		// Changing who may administer is a separate fact from changing a
+		// display name, so it is audited as its own entry. Folding it into the
+		// update above would mean a grant change could not be found in the log
+		// without also reading every unrelated profile edit.
+		if grant != before.IsDomainAdmin {
+			if err := s.record(ctx, q, actor, change{
+				action:     ActionUserAdminGrant,
+				targetType: "user",
+				targetID:   address,
+				target:     address,
+				detail: map[string]any{
+					"before": before.IsDomainAdmin,
+					"after":  grant,
+				},
+			}); err != nil {
+				return err
+			}
 		}
 		updated = after
 		return nil

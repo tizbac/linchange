@@ -409,9 +409,14 @@ func (s *Syncer) applyEntryTx(
 			return outcomeAdded, nil
 		}
 		err := s.users.Update(ctx, tx, address, store.UpdateUserRequest{
-			DisplayName:        pickDisplay(display, existing.DisplayName),
-			Enabled:            true,
-			MailboxEnabled:     true,
+			DisplayName:    pickDisplay(display, existing.DisplayName),
+			Enabled:        true,
+			MailboxEnabled: true,
+			// The update replaces the whole row, so anything this path does not
+			// pass is cleared. Administration is not a directory fact: it is
+			// granted here, and a sync that dropped it would silently demote an
+			// administrator every time the directory ran.
+			IsDomainAdmin:      existing.IsDomainAdmin,
 			QuotaBytes:         quotaPtr(p.MailboxQuotaBytes),
 			DailySendLimit:     existing.DailySendLimit,
 			Timezone:           existing.Timezone,

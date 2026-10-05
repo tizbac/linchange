@@ -241,8 +241,8 @@ func TestADomainAdminCannotBecomeASharedMailboxMember(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO users (address, address_local, source, mailbox_enabled)
-		VALUES ('admin@example.com','admin','domain_admin',false)`); err != nil {
+		INSERT INTO users (address, address_local, source, mailbox_enabled, is_domain_admin)
+		VALUES ('admin@example.com','admin','domain_admin',false,true)`); err != nil {
 		t.Fatalf("seeding admin: %v", err)
 	}
 	if _, err := db.ExecContext(ctx,

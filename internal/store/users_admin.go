@@ -20,6 +20,10 @@ type User struct {
 	// MailboxEnabled is false for a domain admin; the database enforces that
 	// pairing, this field carries it.
 	MailboxEnabled bool `db:"mailbox_enabled"`
+	// IsDomainAdmin is the administration grant. It is independent of source,
+	// so it can be true for a local or LDAP user who also receives mail; a
+	// domain_admin row always has it.
+	IsDomainAdmin bool `db:"is_domain_admin"`
 	// QuotaBytes is nil when the user inherits the domain (and then global)
 	// default. Zero, when explicit, means unlimited.
 	QuotaBytes         *int64 `db:"quota_bytes"`
@@ -41,11 +45,17 @@ type User struct {
 // a domain admin always comes out with MailboxEnabled false, whether asked or
 // not, because that pairing is a rule and not a preference.
 type CreateUserRequest struct {
-	Address            string
-	Source             policy.Source
-	DisplayName        string
-	Enabled            *bool
-	MailboxEnabled     *bool
+	Address     string
+	Source      policy.Source
+	DisplayName string
+	Enabled     *bool
+	// MailboxEnabled is forced false for the domain_admin source, whatever the
+	// caller asked for.
+	MailboxEnabled *bool
+	// IsDomainAdmin grants administration. It is forced true for the
+	// domain_admin source, so that source and grant cannot be created in
+	// opposition to each other.
+	IsDomainAdmin      bool
 	QuotaBytes         *int64
 	DailySendLimit     *int
 	Timezone           string
@@ -56,9 +66,12 @@ type CreateUserRequest struct {
 // UpdateUserRequest replaces the mutable fields of a user. The caller supplies
 // the whole row, as a settings page already has it.
 type UpdateUserRequest struct {
-	DisplayName        string
-	Enabled            bool
-	MailboxEnabled     bool
+	DisplayName    string
+	Enabled        bool
+	MailboxEnabled bool
+	// IsDomainAdmin is the administration grant, forced true for the
+	// domain_admin source on the same grounds as Create.
+	IsDomainAdmin      bool
 	QuotaBytes         *int64
 	DailySendLimit     *int
 	Timezone           string
@@ -101,11 +114,22 @@ func (u *Users) Create(ctx context.Context, q Querier, req CreateUserRequest) er
 	if req.MailboxEnabled != nil {
 		mailbox = *req.MailboxEnabled
 	}
+	isDomainAdmin := req.IsDomainAdmin
 	if source == policy.SourceDomainAdmin {
 		// A domain admin administers mail and never receives it. This is
 		// enforced by a CHECK constraint too, but refusing it here means the
 		// caller gets a clean answer instead of a check violation.
 		mailbox = false
+		// The source carries the administration grant with it: a domain_admin
+		// row that was not an administrator is the one state that cannot exist,
+		// so it is not left to the caller to ask for.
+		isDomainAdmin = true
+	}
+	if source == policy.SourceShared {
+		// A shared mailbox is reached through grants and never authenticates,
+		// so there is nothing for an administration grant to be spent on. The
+		// schema refuses the pairing; this is the clean answer to it.
+		isDomainAdmin = false
 	}
 	tz := req.Timezone
 	if tz == "" {
@@ -118,11 +142,11 @@ func (u *Users) Create(ctx context.Context, q Querier, req CreateUserRequest) er
 
 	const query = `
 		INSERT INTO users (address, source, display_name, enabled, mailbox_enabled,
-		                   quota_bytes, daily_send_limit, timezone, language,
-		                   must_change_password, address_local)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+		                   is_domain_admin, quota_bytes, daily_send_limit,
+		                   timezone, language, must_change_password, address_local)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
 	if _, err := q.ExecContext(ctx, query,
-		req.Address, source, req.DisplayName, enabled, mailbox,
+		req.Address, source, req.DisplayName, enabled, mailbox, isDomainAdmin,
 		req.QuotaBytes, req.DailySendLimit, tz, lang,
 		req.MustChangePassword, addressLocal(req.Address)); err != nil {
 		if IsConflict(err) {
@@ -135,7 +159,7 @@ func (u *Users) Create(ctx context.Context, q Querier, req CreateUserRequest) er
 
 const userSelect = `
 	SELECT address, source, display_name, enabled, mailbox_enabled,
-	       quota_bytes, daily_send_limit, timezone, language,
+	       is_domain_admin, quota_bytes, daily_send_limit, timezone, language,
 	       must_change_password, address_local, last_login_at,
 	       created_at, updated_at
 	FROM users`
@@ -180,8 +204,15 @@ func (u *Users) List(ctx context.Context, q Querier) ([]User, error) {
 // Update replaces the mutable fields of a user.
 func (u *Users) Update(ctx context.Context, q Querier, address string, req UpdateUserRequest) error {
 	mailbox := req.MailboxEnabled
-	if source, err := sourceOf(ctx, q, address); err == nil && source == policy.SourceDomainAdmin {
-		mailbox = false
+	isDomainAdmin := req.IsDomainAdmin
+	if source, err := sourceOf(ctx, q, address); err == nil {
+		switch source {
+		case policy.SourceDomainAdmin:
+			mailbox = false
+			isDomainAdmin = true
+		case policy.SourceShared:
+			isDomainAdmin = false
+		}
 	}
 	tz := req.Timezone
 	if tz == "" {
@@ -195,11 +226,12 @@ func (u *Users) Update(ctx context.Context, q Querier, address string, req Updat
 	const query = `
 		UPDATE users SET
 			display_name = $2, enabled = $3, mailbox_enabled = $4,
-			quota_bytes = $5, daily_send_limit = $6, timezone = $7,
-			language = $8, must_change_password = $9, updated_at = now()
+			is_domain_admin = $5, quota_bytes = $6, daily_send_limit = $7,
+			timezone = $8, language = $9, must_change_password = $10,
+			updated_at = now()
 		WHERE address = $1 AND deleted_at IS NULL`
 	res, err := q.ExecContext(ctx, query,
-		address, req.DisplayName, req.Enabled, mailbox,
+		address, req.DisplayName, req.Enabled, mailbox, isDomainAdmin,
 		req.QuotaBytes, req.DailySendLimit, tz, lang, req.MustChangePassword)
 	if err != nil {
 		return fmt.Errorf("store: updating user: %w", err)

@@ -248,6 +248,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		DailySendLimit     *int          `json:"daily_send_limit"`
 		Timezone           string        `json:"timezone"`
 		Language           string        `json:"language"`
+		IsDomainAdmin      bool          `json:"is_domain_admin"`
 	}
 	if err := decodeAdmin(w, r, &in); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
@@ -263,6 +264,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		DailySendLimit:     in.DailySendLimit,
 		Timezone:           in.Timezone,
 		Language:           in.Language,
+		IsDomainAdmin:      in.IsDomainAdmin,
 	})
 	if err != nil {
 		adminErrors(w, s, err)
@@ -289,6 +291,10 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		DailySendLimit *int   `json:"daily_send_limit"`
 		Timezone       string `json:"timezone"`
 		Language       string `json:"language"`
+		// IsDomainAdmin is a pointer so that an update which does not mention it
+		// leaves the grant alone. A plain bool would read as "false" for a
+		// request that only meant to rename somebody.
+		IsDomainAdmin *bool `json:"is_domain_admin"`
 	}
 	if err := decodeAdmin(w, r, &in); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
@@ -301,6 +307,7 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 			DailySendLimit: in.DailySendLimit,
 			Timezone:       in.Timezone,
 			Language:       in.Language,
+			IsDomainAdmin:  in.IsDomainAdmin,
 		})
 	if err != nil {
 		adminErrors(w, s, err)
@@ -738,6 +745,7 @@ type userView struct {
 	DisplayName        string `json:"display_name"`
 	Enabled            bool   `json:"enabled"`
 	MailboxEnabled     bool   `json:"mailbox_enabled"`
+	IsDomainAdmin      bool   `json:"is_domain_admin"`
 	QuotaBytes         *int64 `json:"quota_bytes"`
 	DailySendLimit     *int   `json:"daily_send_limit"`
 	Timezone           string `json:"timezone"`
@@ -756,6 +764,7 @@ func viewUser(u admin.UserView) userView {
 		DisplayName:        u.DisplayName,
 		Enabled:            u.Enabled,
 		MailboxEnabled:     u.MailboxEnabled,
+		IsDomainAdmin:      u.IsDomainAdmin,
 		QuotaBytes:         u.QuotaBytes,
 		DailySendLimit:     u.DailySendLimit,
 		Timezone:           u.Timezone,
