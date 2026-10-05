@@ -33,6 +33,9 @@ type Builder struct {
 	replyTo []Address
 	headers map[string][]string
 
+	// draft relaxes the completeness checks in Bytes. See Draft.
+	draft bool
+
 	subject   string
 	date      time.Time
 	messageID string
@@ -152,6 +155,25 @@ func (b *Builder) InlineImage(filename, contentType, contentID string, data []by
 	return b
 }
 
+// Draft relaxes the two requirements Bytes places on a message that is going to
+// be sent: at least one recipient, and a body.
+//
+// A draft is a message that has not been written yet, and those are the two
+// things it is most often missing. A draft saved on the way out of a meeting has
+// a subject and no recipient; one saved on the way in has a recipient and no
+// body. Requiring either throws away the user's own work for not being finished
+// yet, which is the one thing a draft is allowed not to be.
+//
+// The result is still a well-formed message: the To header is simply absent and
+// the body part is empty, both of which are legal and both of which any client
+// opens without complaint. The From address is still required, because a draft
+// with no author is not anybody's message. Mail that is being sent goes through
+// the same builder without this, and keeps both checks.
+func (b *Builder) Draft() *Builder {
+	b.draft = true
+	return b
+}
+
 // HasAttachments reports whether anything will be attached, so a caller can
 // decide between the single-part and multipart layouts before writing.
 func (b *Builder) HasAttachments() bool {
@@ -159,15 +181,21 @@ func (b *Builder) HasAttachments() bool {
 }
 
 // Bytes renders the message.
+//
+// A message that is going to be sent needs a recipient and a body. A draft needs
+// neither, and Draft is how a caller says so; see it for why. The From address
+// is required either way.
 func (b *Builder) Bytes() ([]byte, error) {
 	if b.from == nil || b.from.Address == "" {
 		return nil, fmt.Errorf("mail: builder needs a From address")
 	}
-	if len(b.to) == 0 && len(b.cc) == 0 && len(b.bcc) == 0 {
-		return nil, fmt.Errorf("mail: builder needs at least one recipient")
-	}
-	if b.text == "" && b.html == "" {
-		return nil, fmt.Errorf("mail: builder needs a body")
+	if !b.draft {
+		if len(b.to) == 0 && len(b.cc) == 0 && len(b.bcc) == 0 {
+			return nil, fmt.Errorf("mail: builder needs at least one recipient")
+		}
+		if b.text == "" && b.html == "" {
+			return nil, fmt.Errorf("mail: builder needs a body")
+		}
 	}
 
 	msgID := b.messageID

@@ -227,6 +227,9 @@ type ComposeRequest struct {
 // It is separate from Send because the composer wants to say what is wrong while
 // the user is still typing, and because the rules engine applies the same checks
 // to a message that did not come from a form.
+//
+// This is the check for a message that is going to be sent, so it demands a
+// recipient and a body. A draft is held to validateDraft instead.
 func (r ComposeRequest) Validate() error {
 	if len(r.To) == 0 {
 		return fmt.Errorf("%w: a message needs at least one recipient", ErrInvalid)
@@ -234,6 +237,33 @@ func (r ComposeRequest) Validate() error {
 	if r.Text == "" && r.HTML == "" && len(r.Attachment) == 0 {
 		return fmt.Errorf("%w: the message has no body", ErrInvalid)
 	}
+	return r.validateHeaders()
+}
+
+// validateDraft checks a request that is only being stored.
+//
+// A draft is a partly written message, and the two things a sent message must
+// have are exactly the two things a draft is most often missing: a draft saved
+// on the way out of a long meeting has a subject and no recipient, and one
+// saved on the way into a long meeting has a recipient and no body. Refusing
+// either of those means the user's own work is thrown away for not being a
+// message yet, which is the one thing a draft is allowed not to be.
+//
+// What is still checked is everything that is present. A malformed address or an
+// over-long subject is not "not finished yet", it is wrong, and the user wants
+// to hear about it while the draft is still open rather than when they send it.
+func (r ComposeRequest) validateDraft() error {
+	if r.Text == "" && r.HTML == "" && r.Subject == "" && len(r.Attachment) == 0 &&
+		len(r.To) == 0 && len(r.Cc) == 0 && len(r.Bcc) == 0 {
+		return fmt.Errorf("%w: an empty draft has nothing to save", ErrInvalid)
+	}
+	return r.validateHeaders()
+}
+
+// validateHeaders holds the rules that apply whether the message is being sent
+// or only stored. They are about the fields being well-formed rather than
+// complete, which is exactly why both callers want them.
+func (r ComposeRequest) validateHeaders() error {
 	// RFC 5322 caps a header line at 998 octets, and folding does not help a
 	// subject that is one word 1200 characters long.
 	if len(r.Subject) > 998 {
@@ -316,7 +346,16 @@ func (s *Service) Send(ctx context.Context, owner string, req ComposeRequest) (S
 		return SendResult{}, fmt.Errorf("%w: you cannot send as %s", ErrDenied, from)
 	}
 
-	raw, err := s.build(&req, from, mail.NewMessageID(s.hostname))
+	// The signature goes on after validation and before the message is built,
+	// because it is part of what is sent rather than part of what the user
+	// wrote: it belongs in the bytes that are built, and it must not be able to
+	// make an otherwise invalid message valid.
+	images, err := s.applySignature(ctx, owner, &req)
+	if err != nil {
+		return SendResult{}, err
+	}
+
+	raw, err := s.buildWithImages(&req, from, mail.NewMessageID(s.hostname), images)
 	if err != nil {
 		return SendResult{}, err
 	}
@@ -365,13 +404,8 @@ func (s *Service) Send(ctx context.Context, owner string, req ComposeRequest) (S
 // deletable there too, which is the only way a user can be sure their drafts are
 // gone.
 func (s *Service) SaveDraft(ctx context.Context, owner string, req ComposeRequest) (int64, error) {
-	if len(req.To) == 0 && req.Subject == "" && req.Text == "" && req.HTML == "" && len(req.Attachment) == 0 {
-		return 0, fmt.Errorf("%w: an empty draft has nothing to save", ErrInvalid)
-	}
-	if len(req.To) > 0 {
-		if err := req.Validate(); err != nil {
-			return 0, err
-		}
+	if err := req.validateDraft(); err != nil {
+		return 0, err
 	}
 
 	// A draft that replies is threaded like any other reply, so that opening it
@@ -381,7 +415,7 @@ func (s *Service) SaveDraft(ctx context.Context, owner string, req ComposeReques
 	}
 
 	messageID := mail.NewMessageID(s.hostname)
-	raw, err := s.build(&req, owner, messageID)
+	raw, err := s.buildDraft(&req, owner, messageID)
 	if err != nil {
 		return 0, err
 	}
@@ -421,6 +455,33 @@ func (s *Service) discardDraft(ctx context.Context, owner string, id int64) erro
 
 // build turns a compose request into RFC 5322 bytes.
 func (s *Service) build(req *ComposeRequest, from, messageID string) ([]byte, error) {
+	return s.buildAs(req, from, messageID, nil, false)
+}
+
+// buildWithImages is build for a message that carries images the signature
+// lifted out of its own HTML. They are passed rather than looked up here because
+// the signature is read once, by the caller that already knows what the user
+// sent, and reading it again for the build would be a second chance to disagree
+// with the copy that was appended to the body.
+func (s *Service) buildWithImages(req *ComposeRequest, from, messageID string, images []mail.InlineImage) ([]byte, error) {
+	return s.buildAs(req, from, messageID, images, false)
+}
+
+// buildDraft renders a request that is only being stored.
+//
+// It differs from build in exactly one way: the message is allowed to be
+// incomplete. A draft goes to the same folder and carries the same flag as any
+// other message, so it is built by the same code, but it must not be held to
+// the rules that make a message sendable.
+//
+// It never carries the signature either, for the same reason it is not required
+// to be complete: the signature is added when the message goes out, so a draft
+// saved ten times has one signature when it is sent rather than ten in the folder.
+func (s *Service) buildDraft(req *ComposeRequest, from, messageID string) ([]byte, error) {
+	return s.buildAs(req, from, messageID, nil, true)
+}
+
+func (s *Service) buildAs(req *ComposeRequest, from, messageID string, signatureImages []mail.InlineImage, asDraft bool) ([]byte, error) {
 	attachments, err := s.decodeAttachments(req.Attachment)
 	if err != nil {
 		return nil, err
@@ -430,6 +491,9 @@ func (s *Service) build(req *ComposeRequest, from, messageID string) ([]byte, er
 	builder.From(mail.Address{Address: from})
 	if n := senderName(req.From); n != "" {
 		builder.From(mail.Address{Address: from, Name: n})
+	}
+	if asDraft {
+		builder.Draft()
 	}
 	builder.To(toMailAddresses(req.To)...)
 	builder.Cc(toMailAddresses(req.Cc)...)
@@ -456,6 +520,12 @@ func (s *Service) build(req *ComposeRequest, from, messageID string) ([]byte, er
 			continue
 		}
 		builder.Attach(a.Filename, a.MIMEType, a.Data)
+	}
+	// After the user's own attachments, so that a signature image referenced
+	// from the body resolves against the first part that claims its id rather
+	// than against whatever happens to be declared first.
+	for _, img := range signatureImages {
+		builder.InlineImage(img.Filename, img.ContentType, img.ContentID, img.Data)
 	}
 
 	raw, err := builder.Bytes()

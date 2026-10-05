@@ -72,6 +72,12 @@ func (r *MailboxRepo) FolderStats(ctx context.Context, db *sqlx.DB, owner string
 }
 
 // ListWithCounts returns an owner's folders with their counts attached.
+//
+// The two slices are index-aligned: counts[i] belongs to mailboxes[i], in the
+// order ListForUser returned them. They are not sorted together, so a caller
+// that sorts the folders alone breaks the pairing. Callers that need a display
+// order should look counts up by mailbox ID with FolderStats, which cannot be
+// mismatched that way; that is what webmail.Folders does.
 func (r *MailboxRepo) ListWithCounts(ctx context.Context, db *sqlx.DB, owner string) ([]Mailbox, []FolderCounts, error) {
 	mailboxes, err := r.ListForUser(ctx, db, owner)
 	if err != nil {

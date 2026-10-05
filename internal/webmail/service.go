@@ -67,14 +67,15 @@ type Service struct {
 	maxAttachmentBytes int64
 	maxMessageBytes    int64
 
-	mailboxes *imapd.MailboxRepo
-	messages  *imapd.MessageRepo
-	aliases   *store.Aliases
-	shared    *store.SharedMailboxes
-	grants    *store.SharedMailboxGrants
-	outbox    *delivery.OutboxRepository
-	rules     *store.MailRules
-	audit     *store.AuditLog
+	mailboxes  *imapd.MailboxRepo
+	messages   *imapd.MessageRepo
+	aliases    *store.Aliases
+	shared     *store.SharedMailboxes
+	grants     *store.SharedMailboxGrants
+	outbox     *delivery.OutboxRepository
+	rules      *store.MailRules
+	signatures *store.Signatures
+	audit      *store.AuditLog
 }
 
 // defaults keep a caller from having to think about limits.
@@ -119,6 +120,7 @@ func New(opts Options) (*Service, error) {
 		grants:             store.NewSharedMailboxGrants(),
 		outbox:             delivery.NewOutboxRepository(opts.DB),
 		rules:              store.NewMailRules(),
+		signatures:         store.NewSignatures(),
 		audit:              store.NewAuditLog(),
 	}, nil
 }
@@ -147,7 +149,16 @@ var standardFolders = map[string]bool{
 
 // Folders returns an owner's folders with their counts, in display order.
 func (s *Service) Folders(ctx context.Context, owner string) ([]Folder, error) {
-	folders, counts, err := s.mailboxes.ListWithCounts(ctx, s.db, owner)
+	folders, err := s.mailboxes.ListForUser(ctx, s.db, owner)
+	if err != nil {
+		return nil, err
+	}
+	// The counts are read by mailbox ID rather than by position. They used to be
+	// taken from an index-aligned slice, which broke the moment the folders were
+	// sorted for display: ListForUser orders by name and the display order puts
+	// INBOX first, so every folder after INBOX showed its neighbour's unread
+	// count. Keying on the ID means a sort cannot detach the two.
+	stats, err := s.mailboxes.FolderStats(ctx, s.db, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -155,15 +166,16 @@ func (s *Service) Folders(ctx context.Context, owner string) ([]Folder, error) {
 
 	out := make([]Folder, len(folders))
 	for i, mb := range folders {
+		counts := stats[mb.ID]
 		out[i] = Folder{
 			ID:         mb.ID,
 			Name:       mb.Name,
 			ParentID:   mb.ParentID,
 			SpecialUse: mb.SpecialUse,
 			Subscribed: mb.Subscribed,
-			Total:      counts[i].Total,
-			Unread:     counts[i].Unread,
-			Flagged:    counts[i].Flagged,
+			Total:      counts.Total,
+			Unread:     counts.Unread,
+			Flagged:    counts.Flagged,
 			Deletable:  !standardFolders[mb.Name],
 		}
 	}

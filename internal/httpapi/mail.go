@@ -68,7 +68,64 @@ func (s *Server) mountMail(r chi.Router) {
 
 		r.Get("/aliases", s.handleOwnAliases)
 		r.Get("/shared", s.handleAccessibleShared)
+
+		r.Get("/signature", s.handleGetSignature)
+		r.Put("/signature", s.handleSaveSignature)
+		r.Delete("/signature", s.handleClearSignature)
 	})
+}
+
+// handleGetSignature returns the caller's stored signature.
+//
+// A user who has never set one gets an empty signature rather than a 404, so
+// that a client can load the editor and show an empty box without treating the
+// ordinary case as an error.
+func (s *Server) handleGetSignature(w http.ResponseWriter, r *http.Request) {
+	sig, err := s.mail.Signature(r.Context(), mailOwner(r))
+	if err != nil {
+		s.writeMailError(w, r, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"html":  sig.HTML,
+		"owner": sig.Owner,
+	})
+}
+
+// signatureRequest is the body of a signature write.
+type signatureRequest struct {
+	// HTML is the signature as the user wrote it. An empty value is a valid
+	// request that clears the signature, so that a client has one call for both
+	// "set" and "remove" rather than having to know which it is doing.
+	HTML string `json:"html"`
+}
+
+// handleSaveSignature stores the caller's signature.
+func (s *Server) handleSaveSignature(w http.ResponseWriter, r *http.Request) {
+	var req signatureRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+
+	sig, err := s.mail.SaveSignature(r.Context(), mailOwner(r), req.HTML)
+	if err != nil {
+		s.writeMailError(w, r, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"html":  sig.HTML,
+		"owner": sig.Owner,
+	})
+}
+
+// handleClearSignature removes the caller's signature.
+func (s *Server) handleClearSignature(w http.ResponseWriter, r *http.Request) {
+	if err := s.mail.ClearSignature(r.Context(), mailOwner(r)); err != nil {
+		s.writeMailError(w, r, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"html": "", "owner": mailOwner(r)})
 }
 
 // mailOwner is the mailbox a request acts on.
