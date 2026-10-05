@@ -23,6 +23,12 @@ export interface User {
   display_name: string;
   enabled: boolean;
   mailbox_enabled: boolean;
+  // Whether this user may use the administration pages. It is a grant and not a
+  // kind of account: a local or LDAP user who receives mail can also be an
+  // administrator, which is the ordinary shape in a small deployment. Every
+  // domain_admin row has it and no shared mailbox ever can, both enforced by
+  // constraints on the server.
+  is_domain_admin: boolean;
   quota_bytes: number | null;
   daily_send_limit: number | null;
   timezone: string;

@@ -60,6 +60,9 @@ export class AdminApi {
     timezone?: string;
     language?: string;
     must_change_password?: boolean;
+    // Whether the new user may administer the domain. A domain_admin source
+    // always is, and the server refuses it for a shared mailbox.
+    is_domain_admin?: boolean;
   }): Promise<User> {
     return this.post('/users', body);
   }

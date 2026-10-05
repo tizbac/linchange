@@ -102,6 +102,22 @@ import {
                 placeholder="unlimited"
               />
             </admin-field>
+            <label class="sm:col-span-2 flex items-start gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                name="isDomainAdmin"
+                class="mt-0.5 h-4 w-4 rounded border-slate-300"
+                [(ngModel)]="draft.isDomainAdmin"
+              />
+              <span>
+                May administer this domain
+                <span class="block text-xs text-slate-500">
+                  Gives access to these administration pages. It is a permission rather than a kind
+                  of account, so a user can hold a mailbox and administer at the same time. A
+                  domain_admin source always has it and needs nothing set here.
+                </span>
+              </span>
+            </label>
             <div class="sm:col-span-2 flex items-center gap-3">
               <admin-button variant="primary" type="submit" [disabled]="busy()">
                 Create the mailbox
@@ -138,7 +154,12 @@ import {
                       <span class="block text-xs text-slate-500">{{ u.display_name }}</span>
                     }
                   </td>
-                  <td class="{{ cell }}">{{ u.source }}</td>
+                  <td class="{{ cell }}">
+                    {{ u.source }}
+                    @if (u.is_domain_admin) {
+                      <span class="mt-1 block text-xs font-medium text-brand-700">administrator</span>
+                    }
+                  </td>
                   <td class="{{ cell }}">
                     <span
                       class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1"
@@ -165,6 +186,15 @@ import {
                     <div class="flex items-center justify-end gap-2">
                       <admin-button (pressed)="openPassword(u)">Password</admin-button>
                       <admin-button (pressed)="openQuota(u)">Quota</admin-button>
+                      @if (canGrantAdmin(u)) {
+                        <admin-button
+                          [variant]="u.is_domain_admin ? 'secondary' : 'primary'"
+                          [disabled]="busy()"
+                          (pressed)="toggleAdmin(u)"
+                        >
+                          {{ u.is_domain_admin ? 'Remove admin' : 'Make admin' }}
+                        </admin-button>
+                      }
                       <admin-button
                         [variant]="u.enabled ? 'secondary' : 'primary'"
                         [disabled]="busy()"
@@ -259,13 +289,22 @@ export class AdminUsersComponent implements OnInit {
   protected quotaMiB: number | null = null;
   protected sendLimit: number | null = null;
 
-  protected draft: { address: string; displayName: string; source: string; password: string; quotaMiB: number | null; sendLimit: number | null } = {
+  protected draft: {
+    address: string;
+    displayName: string;
+    source: string;
+    password: string;
+    quotaMiB: number | null;
+    sendLimit: number | null;
+    isDomainAdmin: boolean;
+  } = {
     address: '',
     displayName: '',
     source: 'local',
     password: '',
     quotaMiB: null,
     sendLimit: null,
+    isDomainAdmin: false,
   };
 
   // filtered is computed rather than a search over the DOM: the list is the
@@ -320,6 +359,10 @@ export class AdminUsersComponent implements OnInit {
           ? {}
           : { quota_bytes: Math.round(quota * 1024 * 1024) }),
         ...(limit === null || limit === undefined ? {} : { daily_send_limit: limit }),
+        // Only sent when it is wanted. A false would be a request to take the
+        // grant away from a domain_admin, which the server refuses, and the
+        // checkbox being unticked means "not asked for" rather than "removed".
+        ...(this.draft.isDomainAdmin ? { is_domain_admin: true } : {}),
       });
       this.ok.set(`${this.draft.address.trim()} was created.`);
       this.draft = {
@@ -329,6 +372,7 @@ export class AdminUsersComponent implements OnInit {
         password: '',
         quotaMiB: null,
         sendLimit: null,
+        isDomainAdmin: false,
       };
       this.creating.set(false);
       await this.reload();
@@ -345,6 +389,37 @@ export class AdminUsersComponent implements OnInit {
     try {
       await this.api.setUserEnabled(u.address, !u.enabled);
       this.ok.set(`${u.address} is now ${u.enabled ? 'disabled' : 'enabled'}.`);
+      await this.reload();
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  // canGrantAdmin reports whether the grant is worth offering for this user.
+  //
+  // A domain_admin always holds it, so a button to remove it would only ever
+  // produce the server's refusal, and a shared mailbox can never hold it, so a
+  // button to grant it would only ever produce that. The page offers the action
+  // where it can succeed rather than showing a control whose failure teaches
+  // nothing.
+  protected canGrantAdmin(u: User): boolean {
+    return u.source !== 'shared' && u.source !== 'domain_admin';
+  }
+
+  // toggleAdmin grants or takes back the right to administer the domain.
+  protected async toggleAdmin(u: User): Promise<void> {
+    this.busy.set(true);
+    this.error.set('');
+    const granting = !u.is_domain_admin;
+    try {
+      await this.api.updateUser(u.address, { is_domain_admin: granting });
+      this.ok.set(
+        granting
+          ? `${u.address} may now administer this domain.`
+          : `${u.address} may no longer administer this domain.`,
+      );
       await this.reload();
     } catch (err) {
       this.error.set(errorMessage(err));
