@@ -8,9 +8,20 @@
             <a
               routerLink="/mail"
               routerLinkActive="text-brand-700"
+              [routerLinkActiveOptions]="{ exact: true }"
               class="text-sm font-medium text-slate-600 transition hover:text-brand-700"
             >
               Mail
+            </a>
+            <!-- The signature is a property of the account rather than of a
+                 message, so it is reached from the account's own navigation
+                 rather than only from the composer. -->
+            <a
+              routerLink="/mail/signature"
+              routerLinkActive="text-brand-700"
+              class="text-sm font-medium text-slate-600 transition hover:text-brand-700"
+            >
+              Signature
             </a>
             @if (auth.isDomainAdmin()) {
               <a

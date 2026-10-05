@@ -7,6 +7,27 @@ import { ComposeTarget } from '../core/mail/compose-target';
 import { Address, ComposeRequest } from '../core/mail/mail.models';
 import { errorMessage } from '../core/http-error';
 import { MailIcon, addressLabel, formatBytes, parseAddresses } from '../core/mail/ui';
+import {
+  RichTextEditorComponent,
+  htmlHasContent,
+  htmlToText,
+} from '../core/mail/rich-text';
+
+// escapeHtml turns the characters that are markup into text, for wrapping a
+// plain-text body as HTML.
+//
+// The rich text editor interprets whatever it is given, so a body typed in the
+// plain-text tab and then moved across has to arrive as text rather than as
+// markup. Without this, a message containing "<b>" would come back with the tags
+// interpreted and a line that was indented by spaces would come back indented by
+// a tab.
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 
 // One file the composer will attach, read as a data URL the server accepts.
 interface AttachmentItem {
@@ -23,7 +44,7 @@ interface AttachmentItem {
 @Component({
   selector: 'app-mail-compose',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, MailIcon],
+  imports: [FormsModule, MailIcon, RichTextEditorComponent],
   template: `
     <main class="mx-auto max-w-4xl px-6 py-8">
       <div class="flex items-center justify-between gap-3">
@@ -116,13 +137,69 @@ interface AttachmentItem {
             />
           </div>
 
-          <textarea
-            name="body"
-            rows="12"
-            class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
-            placeholder="Write your message"
-            [(ngModel)]="body"
-          ></textarea>
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <span class="text-sm font-medium text-slate-600">Message</span>
+            <div class="flex items-center gap-3">
+              @if (format() === 'html') {
+                <button
+                  type="button"
+                  class="text-xs text-slate-500 hover:text-slate-800"
+                  (click)="showPlainText.set(!showPlainText())"
+                >
+                  {{ showPlainText() ? 'Hide the plain text version' : 'Preview the plain text version' }}
+                </button>
+              }
+              <div class="flex rounded-lg border border-slate-300 p-0.5 text-xs font-medium" role="group" aria-label="Message format">
+                <button
+                  type="button"
+                  class="rounded-md px-2.5 py-1 transition"
+                  [class.bg-slate-100]="format() === 'html'"
+                  [class.text-slate-900]="format() === 'html'"
+                  [class.text-slate-500]="format() !== 'html'"
+                  [attr.aria-pressed]="format() === 'html'"
+                  (click)="setFormat('html')"
+                >
+                  Rich text
+                </button>
+                <button
+                  type="button"
+                  class="rounded-md px-2.5 py-1 transition"
+                  [class.bg-slate-100]="format() === 'text'"
+                  [class.text-slate-900]="format() === 'text'"
+                  [class.text-slate-500]="format() !== 'text'"
+                  [attr.aria-pressed]="format() === 'text'"
+                  (click)="setFormat('text')"
+                >
+                  Plain text
+                </button>
+              </div>
+            </div>
+          </div>
+
+          @if (format() === 'html') {
+            <app-rich-text-editor
+              [html]="bodyHtml()"
+              [placeholder]="'Write your message'"
+              (htmlChange)="bodyHtml.set($event)"
+            />
+            @if (showPlainText()) {
+              <!-- What a recipient who cannot render HTML will read. Shown
+                   because the two parts are sent together and the user cannot
+                   otherwise tell what the second one says. -->
+              <div class="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2">
+                <p class="mb-1 text-xs font-medium text-slate-500">Plain text version, as they will see it</p>
+                <pre class="whitespace-pre-wrap text-xs text-slate-700">{{ plainTextAlternative() }}</pre>
+              </div>
+            }
+          } @else {
+            <textarea
+              name="body"
+              rows="12"
+              class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
+              placeholder="Write your message"
+              [(ngModel)]="body"
+            ></textarea>
+          }
 
           <div>
             <label class="cursor-pointer text-sm font-medium text-blue-600 hover:underline">
@@ -175,6 +252,14 @@ interface AttachmentItem {
             <button type="button" (click)="cancel()" class="px-2 py-2 text-sm font-medium text-slate-500 hover:text-slate-700">
               Discard
             </button>
+            <button
+              type="button"
+              (click)="editSignature()"
+              class="ml-auto px-2 py-2 text-sm font-medium text-slate-500 hover:text-slate-700"
+              title="Edit the text and images appended to everything you send"
+            >
+              Edit signature
+            </button>
           </div>
         </div>
       </form>
@@ -192,7 +277,16 @@ export class MailComposeComponent implements OnInit {
   ccRaw = '';
   bccRaw = '';
   subject = '';
+  // body is the plain-text body, and bodyHtml the rich-text one. Which of them
+  // the message is composed in is format(), which starts as HTML: a user writing
+  // a message is nearly always writing prose, and prose is what the rich-text
+  // editor is for. The other one is kept in step so that switching format mid
+  // message does not throw away what was written.
   body = '';
+  bodyHtml = signal('');
+
+  readonly format = signal<'html' | 'text'>('html');
+  readonly showPlainText = signal(false);
 
   readonly aliases = signal<string[]>([]);
   readonly attachments = signal<AttachmentItem[]>([]);
@@ -231,6 +325,41 @@ export class MailComposeComponent implements OnInit {
 
   protected identities(): string[] {
     return this.aliases();
+  }
+
+  // --- format -------------------------------------------------------------------
+
+  // setFormat switches between the rich-text editor and a plain textarea.
+  //
+  // The body is carried across rather than discarded, because a user who starts
+  // in one and moves to the other halfway through a message has not said they
+  // wanted to start again. Going to plain text seeds the textarea with the text
+  // the rich-text body reads as, so what was written is still there to edit.
+  protected setFormat(format: 'html' | 'text'): void {
+    if (format === this.format()) return;
+    if (format === 'text') {
+      this.body = this.body || this.plainTextAlternative();
+    } else {
+      this.bodyHtml.set(this.bodyHtml() || this.htmlFromPlainText());
+    }
+    this.format.set(format);
+  }
+
+  // plainTextAlternative is the text version of the rich-text body, which is what
+  // the message is sent with alongside the HTML.
+  protected plainTextAlternative(): string {
+    return htmlToText(this.bodyHtml());
+  }
+
+  // htmlFromPlainText wraps a plain-text body so that switching into the editor
+  // shows the same message rather than an empty one.
+  private htmlFromPlainText(): string {
+    if (!this.body) return '';
+    const paragraphs = this.body
+      .split(/\n{2,}/)
+      .map((p) => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
+      .join('');
+    return paragraphs;
   }
 
   private async loadAliases(): Promise<void> {
@@ -315,7 +444,14 @@ export class MailComposeComponent implements OnInit {
       mime_type: a.mime,
       content: a.content,
     }));
-    if (requireRecipient && !this.body.trim() && !attachments.length) {
+
+    // A message composed as rich text is sent as both parts, because a recipient
+    // who cannot render HTML still has to be able to read it. The text is
+    // derived rather than typed, so it is whatever the HTML says.
+    const html = this.format() === 'html' ? this.bodyHtml() : '';
+    const text = this.format() === 'text' ? this.body : this.plainTextAlternative();
+
+    if (requireRecipient && !htmlHasContent(html) && !text.trim() && !attachments.length) {
       this.error.set('The message has no body.');
       return null;
     }
@@ -325,7 +461,8 @@ export class MailComposeComponent implements OnInit {
       cc,
       bcc,
       subject: this.subject,
-      text_body: this.body || undefined,
+      text_body: text || undefined,
+      html_body: html || undefined,
       in_reply_to: this.inReplyTo || undefined,
       references: this.references.length ? this.references : undefined,
       attachments: attachments.length ? attachments : undefined,
@@ -354,6 +491,7 @@ export class MailComposeComponent implements OnInit {
       !this.bccRaw &&
       !this.subject.trim() &&
       !this.body.trim() &&
+      !htmlHasContent(this.bodyHtml()) &&
       !this.attachments().length
     ) {
       this.error.set('There is nothing to save yet.');
@@ -375,5 +513,15 @@ export class MailComposeComponent implements OnInit {
 
   protected cancel(): void {
     void this.router.navigate(['/mail']);
+  }
+
+  // editSignature leaves the composer for the signature editor.
+  //
+  // The composer is not carried over, because a signature is not part of this
+  // message: coming back means starting the message again, and the draft the user
+  // was working on is still in Drafts. Saving the signature is on that page
+  // rather than here, so that navigating here cannot change it by accident.
+  protected editSignature(): void {
+    void this.router.navigate(['/mail/signature']);
   }
 }

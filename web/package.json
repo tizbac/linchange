@@ -26,6 +26,9 @@
     "@fullcalendar/list": "^6.1.21",
     "@fullcalendar/rrule": "^6.1.21",
     "@fullcalendar/timegrid": "^6.1.21",
+    "@tiptap/core": "^3.31.4",
+    "@tiptap/extension-link": "^3.31.4",
+    "@tiptap/starter-kit": "^3.31.4",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0"
   },

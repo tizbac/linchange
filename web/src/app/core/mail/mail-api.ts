@@ -129,6 +129,26 @@ export class MailApi {
     return this.post('/compose/draft', req);
   }
 
+  // --- signature ---
+
+  // signature returns the stored signature. A user who has never set one gets an
+  // empty html rather than an error, so the editor can open on a blank box
+  // without treating the ordinary case as a failure to load.
+  signature(): Promise<{ owner: string; html: string }> {
+    return this.fetch('/signature');
+  }
+
+  // saveSignature stores the signature, replacing whatever was there. An empty
+  // html clears it, so one call covers both rather than the client having to
+  // know which it is doing.
+  saveSignature(html: string): Promise<{ owner: string; html: string }> {
+    return this.put('/signature', { html });
+  }
+
+  clearSignature(): Promise<{ owner: string; html: string }> {
+    return this.del('/signature');
+  }
+
   // --- rules ---
 
   listRules(): Promise<{ rules: Rule[] }> {

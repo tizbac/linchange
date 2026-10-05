@@ -5,33 +5,49 @@ import { ForgotPasswordComponent } from './forgot-password/forgot-password.compo
 import { LoginComponent } from './login/login.component';
 import { ResetPasswordComponent } from './reset-password/reset-password.component';
 import { SecondFactorComponent } from './second-factor/second-factor.component';
-import { MailComponent } from './mail/mail.component';
-import { MailComposeComponent } from './mail/mail.compose.component';
-import { MailRulesComponent } from './mail/mail.rules.component';
-import { CalendarComponent } from './calendar/calendar.component';
-import { AdminAliasesComponent } from './admin/admin-aliases.component';
-import { AdminAuditComponent } from './admin/admin-audit.component';
-import { AdminDomainsComponent } from './admin/admin-domains.component';
-import { AdminImpersonationComponent } from './admin/admin-impersonation.component';
-import { AdminSharedMailboxesComponent } from './admin/admin-shared-mailboxes.component';
-import { AdminUsersComponent } from './admin/admin-users.component';
 
+// The pages a signed-out visitor can reach are imported eagerly, because they are
+// the first thing anybody loads and they are small.
+//
+// Everything else is behind loadComponent, so each page arrives when it is
+// navigated to. That is not only about the pages that are rarely visited: the
+// composer and the signature editor both carry a rich-text engine, which is the
+// largest dependency in the application, and a user who never writes a message
+// should not pay for it in the first page they open.
 export const routes: Routes = [
-  { path: '', pathMatch: 'full', component: DashboardComponent, canActivate: [requireAuth] },
-  { path: 'dashboard', component: DashboardComponent, canActivate: [requireAuth] },
+  {
+    path: '',
+    pathMatch: 'full',
+    component: DashboardComponent,
+    canActivate: [requireAuth],
+  },
   {
     path: 'mail',
     canActivate: [requireAuth],
     children: [
-      { path: '', pathMatch: 'full', component: MailComponent },
-      { path: 'compose', component: MailComposeComponent },
-      { path: 'rules', component: MailRulesComponent },
+      {
+        path: '',
+        pathMatch: 'full',
+        loadComponent: () => import('./mail/mail.component').then((m) => m.MailComponent),
+      },
+      {
+        path: 'compose',
+        loadComponent: () => import('./mail/mail.compose.component').then((m) => m.MailComposeComponent),
+      },
+      {
+        path: 'rules',
+        loadComponent: () => import('./mail/mail.rules.component').then((m) => m.MailRulesComponent),
+      },
+      {
+        path: 'signature',
+        loadComponent: () => import('./settings/signature.component').then((m) => m.SignatureComponent),
+      },
     ],
   },
   {
     path: 'calendar',
-    component: CalendarComponent,
     canActivate: [requireAuth],
+    loadComponent: () => import('./calendar/calendar.component').then((m) => m.CalendarComponent),
   },
   { path: 'login', component: LoginComponent, canActivate: [onlyGuests] },
   { path: 'second-factor', component: SecondFactorComponent, canActivate: [onlyGuests] },
@@ -42,12 +58,32 @@ export const routes: Routes = [
     canActivate: [requireDomainAdmin],
     children: [
       { path: '', pathMatch: 'full', redirectTo: 'domains' },
-      { path: 'domains', component: AdminDomainsComponent },
-      { path: 'users', component: AdminUsersComponent },
-      { path: 'aliases', component: AdminAliasesComponent },
-      { path: 'shared-mailboxes', component: AdminSharedMailboxesComponent },
-      { path: 'impersonation', component: AdminImpersonationComponent },
-      { path: 'audit', component: AdminAuditComponent },
+      {
+        path: 'domains',
+        loadComponent: () => import('./admin/admin-domains.component').then((m) => m.AdminDomainsComponent),
+      },
+      {
+        path: 'users',
+        loadComponent: () => import('./admin/admin-users.component').then((m) => m.AdminUsersComponent),
+      },
+      {
+        path: 'aliases',
+        loadComponent: () => import('./admin/admin-aliases.component').then((m) => m.AdminAliasesComponent),
+      },
+      {
+        path: 'shared-mailboxes',
+        loadComponent: () =>
+          import('./admin/admin-shared-mailboxes.component').then((m) => m.AdminSharedMailboxesComponent),
+      },
+      {
+        path: 'impersonation',
+        loadComponent: () =>
+          import('./admin/admin-impersonation.component').then((m) => m.AdminImpersonationComponent),
+      },
+      {
+        path: 'audit',
+        loadComponent: () => import('./admin/admin-audit.component').then((m) => m.AdminAuditComponent),
+      },
       { path: '**', redirectTo: 'domains' },
     ],
   },
