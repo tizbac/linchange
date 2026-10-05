@@ -276,6 +276,9 @@ func New(ctx context.Context, opts Options) (*App, error) {
 			// The same directory instance the mail listeners use, so one
 			// provider is dialed and one DN cache is kept for the process.
 			Directory: directory,
+			// The same verifier, so a CalDAV client and a mail client cannot
+			// come to disagree about who an account is or what its password is.
+			MailAuth: mailVerifier,
 		})
 		if err != nil {
 			a.Close(context.Background())

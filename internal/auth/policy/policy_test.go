@@ -45,7 +45,7 @@ func TestDomainAdminMayNotReceiveMail(t *testing.T) {
 
 	for _, action := range []policy.Action{
 		policy.ActionIMAP, policy.ActionPOP3, policy.ActionSMTP,
-		policy.ActionEWS, policy.ActionEAS,
+		policy.ActionEWS, policy.ActionEAS, policy.ActionCalDAV,
 		policy.ActionSendMail, policy.ActionReadMailbox, policy.ActionManageMailbox,
 	} {
 		if err := a.Can(action); err == nil {
@@ -79,7 +79,7 @@ func TestOrdinaryUserCanUseEveryMailSurface(t *testing.T) {
 	p := person()
 	for _, action := range []policy.Action{
 		policy.ActionIMAP, policy.ActionPOP3, policy.ActionSMTP,
-		policy.ActionEWS, policy.ActionEAS, policy.ActionSendMail,
+		policy.ActionEWS, policy.ActionEAS, policy.ActionCalDAV, policy.ActionSendMail,
 		policy.ActionReadMailbox, policy.ActionManageMailbox, policy.ActionWebLogin,
 	} {
 		if err := p.Can(action); err != nil {
@@ -108,7 +108,7 @@ func TestAMailboxHolderMayBeGrantedAdministration(t *testing.T) {
 		t.Errorf("a granted mailbox holder was refused administration: %v", err)
 	}
 	for _, action := range []policy.Action{
-		policy.ActionIMAP, policy.ActionEWS, policy.ActionEAS,
+		policy.ActionIMAP, policy.ActionEWS, policy.ActionEAS, policy.ActionCalDAV,
 		policy.ActionReadMailbox, policy.ActionSendMail,
 	} {
 		if err := p.Can(action); err != nil {
@@ -203,7 +203,8 @@ func TestForcedPasswordChangeBlocksMailButNotTheWebUI(t *testing.T) {
 		t.Errorf("a user who must change their password could not reach the web UI: %v", err)
 	}
 	for _, action := range []policy.Action{
-		policy.ActionIMAP, policy.ActionPOP3, policy.ActionSMTP, policy.ActionEWS, policy.ActionEAS,
+		policy.ActionIMAP, policy.ActionPOP3, policy.ActionSMTP,
+		policy.ActionEWS, policy.ActionEAS, policy.ActionCalDAV,
 	} {
 		if err := p.Can(action); !policy.IsDenied(err, policy.CodeMustChangePass) {
 			t.Errorf("a user who must change their password was allowed to %s: %v", action, err)

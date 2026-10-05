@@ -19,30 +19,52 @@ import (
 // two are different in what they mean rather than in how they are stored: a
 // personal calendar is fully controlled by its owner, while a workgroup
 // calendar can be booked into by anyone and administered only by its members.
+// Calendar is serialised straight to JSON by the REST API, so the json tags are
+// part of its contract rather than decoration: the web interface reads
+// owner_user_id, show_free_busy and is_default, and without them it renders an
+// empty page instead of failing -- a field that is simply absent is a field
+// nothing complains about.
 type Calendar struct {
-	ID          int64   `db:"id"`
-	Owner       *string `db:"owner"`
-	WorkgroupID *int64  `db:"workgroup_id"`
-	Name        string  `db:"name"`
-	Color       string  `db:"color"`
+	ID          int64   `db:"id" json:"id"`
+	Owner       *string `db:"owner" json:"owner,omitempty"`
+	WorkgroupID *int64  `db:"workgroup_id" json:"workgroup_id,omitempty"`
+	Name        string  `db:"name" json:"name"`
+	// DisplayName is the label a client shows, which is not the name: the name is
+	// a URL segment and the label is editable. Empty means the name is the label,
+	// which is what every calendar that has not been renamed by a client looks
+	// like.
+	DisplayName string `db:"display_name" json:"display_name,omitempty"`
+	Color       string `db:"color" json:"color"`
 	// Timezone is the calendar's default zone, applied to events created
 	// through this server. It is a default rather than a constraint: an event
 	// carries its own TZID, because a meeting in Lisbon belongs in a London
 	// user's calendar and must not be reinterpreted as nine in the morning.
-	Timezone    string `db:"timezone"`
-	Description string `db:"description"`
+	Timezone    string `db:"timezone" json:"timezone"`
+	Description string `db:"description" json:"description"`
 	// ShowFreeBusy is whether other users may see when this calendar is busy.
 	// It mirrors Exchange's setting and is separate from whether the calendar
 	// may be read: a colleague may be told "Alice is busy" without being able
 	// to read what Alice is busy with.
-	ShowFreeBusy bool      `db:"show_free_busy"`
-	IsDefault    bool      `db:"is_default"`
-	CreatedAt    time.Time `db:"created_at"`
-	UpdatedAt    time.Time `db:"updated_at"`
+	ShowFreeBusy bool      `db:"show_free_busy" json:"show_free_busy"`
+	IsDefault    bool      `db:"is_default" json:"is_default"`
+	CreatedAt    time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt    time.Time `db:"updated_at" json:"updated_at"`
 }
 
 // IsWorkgroup reports whether this is a shared team calendar.
 func (c Calendar) IsWorkgroup() bool { return c.WorkgroupID != nil }
+
+// Label is what a calendar is called where a calendar is listed.
+//
+// The display name when there is one, the name otherwise. Everything that shows a
+// calendar reads this rather than the field, so a calendar renamed from a CalDAV
+// client and one renamed from the web interface are shown the same way.
+func (c Calendar) Label() string {
+	if c.DisplayName != "" {
+		return c.DisplayName
+	}
+	return c.Name
+}
 
 // CreateCalendarRequest declares a new calendar. Exactly one of Owner and
 // WorkgroupID must be set; the rest have defaults so a caller creating a plain
@@ -65,7 +87,7 @@ type Calendars struct{}
 func NewCalendars() *Calendars { return &Calendars{} }
 
 const calendarColumns = `
-	id, owner, workgroup_id, name, color, timezone, description,
+	id, owner, workgroup_id, name, display_name, color, timezone, description,
 	show_free_busy, is_default, created_at, updated_at`
 
 // Create adds a calendar.
@@ -247,6 +269,7 @@ func (c *Calendars) EnsureDefault(ctx context.Context, q Querier, owner, timezon
 // something a settings form should be able to do by accident.
 type UpdateCalendarRequest struct {
 	Name         *string
+	DisplayName  *string
 	Color        *string
 	Timezone     *string
 	Description  *string
@@ -272,13 +295,14 @@ func (c *Calendars) Update(ctx context.Context, q Querier, id int64, req UpdateC
 	res, err := q.ExecContext(ctx, `
 		UPDATE calendars SET
 			name         = COALESCE($2, name),
-			color        = COALESCE($3, color),
-			timezone     = COALESCE($4, timezone),
-			description  = COALESCE($5, description),
-			show_free_busy = COALESCE($6, show_free_busy),
-			is_default   = COALESCE($7, is_default),
+			display_name = COALESCE($3, display_name),
+			color        = COALESCE($4, color),
+			timezone     = COALESCE($5, timezone),
+			description  = COALESCE($6, description),
+			show_free_busy = COALESCE($7, show_free_busy),
+			is_default   = COALESCE($8, is_default),
 			updated_at   = now()
-		WHERE id = $1`, id, req.Name, req.Color, req.Timezone,
+		WHERE id = $1`, id, req.Name, req.DisplayName, req.Color, req.Timezone,
 		req.Description, req.ShowFreeBusy, req.IsDefault)
 	if err != nil {
 		if IsConflict(err) {
@@ -407,15 +431,15 @@ func (e Event) RecurrenceText() string {
 
 // Attendee is one invited participant.
 type Attendee struct {
-	EventID     int64  `db:"event_id"`
-	Address     string `db:"address"`
-	DisplayName string `db:"display_name"`
+	EventID     int64  `db:"event_id" json:"eventId"`
+	Address     string `db:"address" json:"address"`
+	DisplayName string `db:"display_name" json:"displayName,omitempty"`
 	// Role and PartStat mirror the iCalendar ROLE and PARTSTAT parameters.
-	Role     string `db:"role"`
-	PartStat string `db:"partstat"`
+	Role     string `db:"role" json:"role"`
+	PartStat string `db:"partstat" json:"partStat"`
 	// RSVP is whether an answer was asked for. An event with no RSVP attendee
 	// gets no reply, which is the difference between a meeting and a notice.
-	RSVP bool `db:"rsvp"`
+	RSVP bool `db:"rsvp" json:"rsvp"`
 }
 
 // Accepts reports whether the attendee has agreed to come, which is what
@@ -423,10 +447,27 @@ type Attendee struct {
 func (a Attendee) Accepts() bool { return a.PartStat == ical.PartStatAccepted }
 
 // Events reads and writes the events and attendees tables.
-type Events struct{}
+//
+// Every write also appends to the calendar's change log, so that a CalDAV client
+// subscribed to the collection is told about changes made anywhere in the system
+// rather than only the ones made over CalDAV. The alternative -- recording the
+// change in the CalDAV handler -- means an event moved in the web interface, or
+// cancelled by the reply to an invitation, silently never reaches the phones.
+type Events struct {
+	changes *CalendarChanges
+}
 
-// NewEvents returns the repository. It is stateless, so this is free.
-func NewEvents() *Events { return &Events{} }
+// NewEvents returns the repository.
+func NewEvents() *Events {
+	return &Events{changes: NewCalendarChanges()}
+}
+
+// recordChange notes that an event was written, so a subscribed client hears
+// about it.
+func (e *Events) recordChange(ctx context.Context, q Querier, ev Event, removed bool) error {
+	_, err := e.changes.Record(ctx, q, ev.CalendarID, ev.UID, ev.RecurrenceID, removed)
+	return err
+}
 
 const eventColumns = `
 	id, calendar_id, uid, recurrence_id, ical_blob, dtstart, dtend, timezone,
@@ -522,6 +563,8 @@ const insertEvent = `
 	RETURNING ` + eventColumns
 
 func (e *Events) insert(ctx context.Context, q Querier, req WriteEventRequest) (Event, error) {
+	req = withEventDefaults(req)
+
 	var out Event
 	err := q.GetContext(ctx, &out, insertEvent,
 		req.CalendarID, req.UID, req.RecurrenceID, req.ICalBlob,
@@ -534,11 +577,39 @@ func (e *Events) insert(ctx context.Context, q Querier, req WriteEventRequest) (
 		}
 		return Event{}, fmt.Errorf("store: inserting event: %w", err)
 	}
+	if err := e.recordChange(ctx, q, out, false); err != nil {
+		return Event{}, err
+	}
 	if err := e.replaceAttendees(ctx, q, out.ID, req.Attendees); err != nil {
 		return Event{}, err
 	}
 	out.Attendees = req.Attendees
 	return out, nil
+}
+
+// withEventDefaults fills in the values a caller may leave out.
+//
+// The columns have defaults, but a statement that names the column passes the
+// caller's empty string rather than the default, and an empty show_as is not one
+// of the four values the check constraint allows. The result of that was a
+// constraint violation reported as ErrConflict -- "store: already exists" -- for
+// an event that did not exist, which is a message that sends a caller looking
+// for a duplicate that is not there. An iCalendar document is allowed to carry
+// no STATUS and no SHOW-AS at all, so this is the ordinary case, not a rare one.
+func withEventDefaults(req WriteEventRequest) WriteEventRequest {
+	if req.Status == "" {
+		req.Status = ical.StatusConfirmed
+	}
+	if req.ShowAs == "" {
+		req.ShowAs = ical.ShowAsBusy
+	}
+	if req.Timezone == "" {
+		req.Timezone = "UTC"
+	}
+	if req.DTStamp.IsZero() {
+		req.DTStamp = time.Now()
+	}
+	return req
 }
 
 // updateEvent replaces an event's contents while keeping its identity.
@@ -557,6 +628,8 @@ const updateEvent = `
 	RETURNING ` + eventColumns
 
 func (e *Events) update(ctx context.Context, q Querier, id int64, req WriteEventRequest) (Event, error) {
+	req = withEventDefaults(req)
+
 	var out Event
 	err := q.GetContext(ctx, &out, updateEvent, id,
 		req.ICalBlob, req.DTStart, req.DTEnd, req.Timezone, req.AllDay, req.RRULE,
@@ -567,6 +640,9 @@ func (e *Events) update(ctx context.Context, q Querier, id int64, req WriteEvent
 			return Event{}, ErrNotFound
 		}
 		return Event{}, fmt.Errorf("store: updating event: %w", err)
+	}
+	if err := e.recordChange(ctx, q, out, false); err != nil {
+		return Event{}, err
 	}
 	if err := e.replaceAttendees(ctx, q, out.ID, req.Attendees); err != nil {
 		return Event{}, err
@@ -818,22 +894,39 @@ func (e *Events) Cancel(ctx context.Context, q Querier, id int64) (Event, error)
 	if n, _ := res.RowsAffected(); n == 0 {
 		return Event{}, ErrNotFound
 	}
-	return e.Get(ctx, q, id)
+	ev, err := e.Get(ctx, q, id)
+	if err != nil {
+		return Event{}, err
+	}
+	if err := e.recordChange(ctx, q, ev, false); err != nil {
+		return Event{}, err
+	}
+	return ev, nil
 }
 
 // Delete removes an event for good. It is for a user discarding their own event,
 // not for a cancellation; use Cancel for anything another party has to be told
 // about.
 func (e *Events) Delete(ctx context.Context, q Querier, id int64) error {
-	res, err := q.ExecContext(ctx, `DELETE FROM events WHERE id = $1`, id)
+	// The change log needs to name what went away, so the row is read back out
+	// of the delete rather than the id being remembered from the caller: the
+	// caller knows which row it asked for, not what was in it.
+	var removed CalendarChange
+	err := q.GetContext(ctx, &removed, `
+		DELETE FROM events WHERE id = $1
+		RETURNING calendar_id, uid, recurrence_id`,
+		id)
+	if IsNotFound(err) {
+		return ErrNotFound
+	}
 	if err != nil {
 		if IsConflict(err) {
 			return ErrConflict
 		}
 		return fmt.Errorf("store: deleting event: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
+	if _, err := e.changes.Record(ctx, q, removed.CalendarID, removed.UID, removed.RecurrenceID, true); err != nil {
+		return err
 	}
 	return nil
 }
@@ -916,6 +1009,18 @@ func (e *Events) SetPartStat(ctx context.Context, q Querier, uid string, address
 		UPDATE attendees SET partstat = $3 WHERE event_id = $1 AND address = $2`,
 		id, address, partstat); err != nil {
 		return 0, fmt.Errorf("store: updating an attendee: %w", err)
+	}
+	// The stored document changed, so a CalDAV client subscribed to that
+	// calendar has to be told. Which calendar it is cannot be guessed from the
+	// arguments: SetPartStat finds the event by UID across every calendar,
+	// because an attendee does not know or care which calendar the organiser
+	// keeps it in.
+	ev, err := e.Get(ctx, q, id)
+	if err != nil {
+		return 0, err
+	}
+	if err := e.recordChange(ctx, q, ev, false); err != nil {
+		return 0, err
 	}
 	return id, nil
 }

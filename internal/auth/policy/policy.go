@@ -162,6 +162,11 @@ const (
 	ActionSMTP Action = "smtp_submit"
 	ActionEWS  Action = "ews"
 	ActionEAS  Action = "eas"
+	// ActionCalDAV is a calendar client rather than a mail one, but it is a
+	// logon in the same sense and for the same reason: a calendar belongs to a
+	// mailbox, so an account that cannot hold mail has no calendar to sync and
+	// has no business being told it has one.
+	ActionCalDAV Action = "caldav"
 
 	// ActionSendMail may only ever be taken by a principal holding mail.
 	ActionSendMail Action = "send_mail"
@@ -178,7 +183,7 @@ const (
 // mailLogons are the protocols that exist to move mail to or from this
 // principal, so all of them share one "may hold mail" rule.
 var mailLogons = []Action{
-	ActionIMAP, ActionPOP3, ActionSMTP, ActionEWS, ActionEAS,
+	ActionIMAP, ActionPOP3, ActionSMTP, ActionEWS, ActionEAS, ActionCalDAV,
 	ActionSendMail, ActionReadMailbox, ActionManageMailbox,
 }
 

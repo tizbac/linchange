@@ -162,6 +162,12 @@ type updateCalendarRequest struct {
 	IsDefault    *bool   `json:"isDefault,omitempty"`
 }
 
+// handleUpdateCalendar changes a calendar's settings.
+//
+// Renaming sets the display name as well as the name. A calendar renamed from here
+// should look the same in a CalDAV client as it does in the web interface, and the
+// name is the only thing this interface offers to rename it by -- so the label
+// follows rather than being left showing the old name for ever.
 func (s *Server) handleUpdateCalendar(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -178,6 +184,7 @@ func (s *Server) handleUpdateCalendar(w http.ResponseWriter, r *http.Request) {
 
 	err = store.NewCalendars().Update(ctx, s.db, id, store.UpdateCalendarRequest{
 		Name:         req.Name,
+		DisplayName:  req.Name,
 		Color:        req.Color,
 		Timezone:     req.Timezone,
 		Description:  req.Description,

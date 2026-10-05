@@ -3,9 +3,13 @@
 
 export interface Calendar {
   id: number;
-  owner_user_id?: string;
+  owner?: string;
   workgroup_id?: number;
+  // name is the calendar's path segment in CalDAV and is what a rename changes.
   name: string;
+  // display_name is the label a client may set independently of the name; when
+  // it is empty the name is the label. See Label() on the server.
+  display_name?: string;
   color?: string;
   timezone: string;
   description?: string;

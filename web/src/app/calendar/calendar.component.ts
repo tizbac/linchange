@@ -234,7 +234,7 @@ import { CalIcon } from '../core/calendar/ui';
                   class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500"
                 >
                   @for (cal of calendars(); track cal.id) {
-                    <option [value]="cal.id">{{ cal.name }}</option>
+                    <option [value]="cal.id">{{ cal.display_name || cal.name }}</option>
                   }
                 </select>
               </div>

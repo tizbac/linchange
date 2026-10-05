@@ -28,6 +28,7 @@ import (
 	ldapauth "github.com/linchange/linchange/internal/auth/ldap"
 	"github.com/linchange/linchange/internal/auth/lockout"
 	"github.com/linchange/linchange/internal/auth/login"
+	"github.com/linchange/linchange/internal/auth/mailauth"
 	"github.com/linchange/linchange/internal/auth/policy"
 	"github.com/linchange/linchange/internal/auth/reset"
 	"github.com/linchange/linchange/internal/auth/token"
@@ -115,6 +116,15 @@ type Options struct {
 	// built from the configuration, which is what a caller that has no other
 	// surface to share with wants.
 	Directory login.Directory
+	// MailAuth authenticates the non-browser protocol clients on this server:
+	// CalDAV today, and whatever else arrives over HTTP with a password rather
+	// than a bearer token. The application passes the same verifier the IMAP,
+	// POP3 and SMTP listeners use. Sharing it is the point: one rule decides who
+	// may log in and how the password is checked, so a calendar client and a mail
+	// client cannot come to disagree about the same account. Left nil, one is
+	// built here from DB and Directory, which refuses directory accounts the
+	// caller did not supply a directory for.
+	MailAuth *mailauth.Verifier
 }
 
 // New builds a Server from an open database and a loaded config.
@@ -144,6 +154,15 @@ func New(opts Options) (*Server, error) {
 	directory := opts.Directory
 	if directory == nil {
 		directory = ldapauth.New(cfg.LDAP, store.NewLDAPLinks(), opts.DB, nil)
+	}
+
+	// The mail verifier is the same object the IMAP, POP3 and SMTP listeners
+	// hold, when the caller supplied it. Built here otherwise, from the directory
+	// just resolved, so a CalDAV login goes through the same password check as a
+	// mail login rather than through a second one that could disagree with it.
+	mailVerifier := opts.MailAuth
+	if mailVerifier == nil {
+		mailVerifier = mailauth.New(opts.DB, log, directory)
 	}
 
 	tokens, err := token.NewManager(cfg.Auth.JWT)
@@ -287,7 +306,7 @@ func New(opts Options) (*Server, error) {
 
 	// The CalDAV server is built here for standard calendar clients (Thunderbird,
 	// iOS/macOS Calendar, Evolution, etc.). It uses the same calendar service.
-	caldavServer := caldav.NewServer("/caldav", calService, opts.DB)
+	caldavServer := caldav.NewServer("/caldav", calService, opts.DB, mailVerifier)
 
 	// The Autodiscover service for Outlook automatic configuration.
 	autodiscoverService := autodiscover.New(cfg, opts.DB)
