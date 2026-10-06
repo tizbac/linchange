@@ -379,6 +379,15 @@ type Message struct {
 	Flags       []string  `json:"flags"`
 	Attachments bool      `json:"has_attachments"`
 	ThreadKey   string    `json:"thread_key"`
+	// ItemClass is the MS-OXPROPS class the message arrived with. It is
+	// derived from the message when it is filed and is what an Exchange client
+	// filters a folder by. See mail.ItemClass.
+	ItemClass string `json:"item_class,omitempty"`
+	// MessageID is the RFC 5322 Message-ID header, denormalised from the
+	// message itself. It is what a client shows as the Internet Message-ID and
+	// what S/MIME and threading paths use to refer to the message without
+	// owning an identifier of this server's.
+	MessageID string `json:"message_id,omitempty"`
 }
 
 // Page is one page of a folder listing.
@@ -443,8 +452,19 @@ func toMessage(m imapd.Message) Message {
 		Flags:       flags,
 		Attachments: m.HasAttachments,
 		ThreadKey:   m.ThreadKey,
+		ItemClass:   m.ItemClass,
+		MessageID:   m.MessageID,
 	}
 }
+
+// MessageFromRow turns a store row into the summary a protocol draws.
+//
+// It exists because two protocols -- this one and EWS -- list messages from the
+// structured query rather than through a page of this service, and each would
+// otherwise spell the row-to-summary mapping itself. Two spellings of the same
+// mapping are two places for one of them to forget a column, and the column it
+// forgot would be one that appears in one protocol's listings and not the other's.
+func MessageFromRow(m imapd.Message) Message { return toMessage(m) }
 
 // recordAudit writes an audit row and logs a warning if it cannot.
 //

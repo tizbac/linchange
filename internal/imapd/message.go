@@ -31,6 +31,20 @@ type Message struct {
 	ThreadSubject  string    `db:"thread_subject"`
 	MessageID      string    `db:"message_id"`
 	HasAttachments bool      `db:"has_attachments"`
+	// ItemClass is the MS-OXPROPS class. See mail.ItemClass.
+	ItemClass string `db:"item_class"`
+}
+
+// itemClassOf returns a class that is never empty.
+//
+// The column has a default but a row can still be written without one, and a
+// client filtering on an empty class matches nothing -- which is how a folder
+// full of mail ends up showing an empty search result.
+func itemClassOf(meta mail.Metadata) string {
+	if meta.ItemClass == "" {
+		return mail.ItemClassNote
+	}
+	return meta.ItemClass
 }
 
 // metadata rebuilds the storeable summary from a stored row, for the paths
@@ -47,6 +61,7 @@ func (m Message) metadata() mail.Metadata {
 		HasAttachments: m.HasAttachments,
 		Size:           m.Size,
 		Date:           m.InternalDate,
+		ItemClass:      m.ItemClass,
 	}
 }
 
@@ -104,15 +119,17 @@ func (r *MessageRepo) Insert(ctx context.Context, db *sqlx.DB, mailboxID int64,
 		const insertMessage = `
 			INSERT INTO messages (mailbox_id, uid, blob_sha256, size, internal_date,
 			                      flags, subject, from_address, from_name, snippet,
-			                      message_id, thread_key, thread_subject, has_attachments)
+			                      message_id, thread_key, thread_subject, has_attachments,
+			                      item_class)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, ''),
-			        $12, $13, $14)
+			        $12, $13, $14, $15)
 			RETURNING id`
 		var id int64
 		err = tx.GetContext(ctx, &id, insertMessage,
 			mailboxID, result.UID, blobSHA256, size, internalDate, flags,
 			meta.Subject, meta.FromAddress, meta.FromName, meta.Snippet,
-			meta.MessageID, threadKey, meta.ThreadSubject, meta.HasAttachments)
+			meta.MessageID, threadKey, meta.ThreadSubject, meta.HasAttachments,
+			itemClassOf(meta))
 		if err != nil {
 			return fmt.Errorf("store: insert message: %w", err)
 		}
@@ -222,7 +239,7 @@ func (r *MessageRepo) GetByUIDSet(ctx context.Context, db *sqlx.DB,
 	query := fmt.Sprintf(`
 		SELECT id, mailbox_id, uid, blob_sha256, size, internal_date,
 		       flags, subject, from_address, from_name, snippet, thread_key,
-		       COALESCE(message_id, '') AS message_id, has_attachments
+		       COALESCE(message_id, '') AS message_id, has_attachments, item_class
 		FROM messages
 		WHERE mailbox_id = $1 AND uid IN (%s)
 		ORDER BY uid`, strings.Join(inPlaceholders, ", "))
@@ -250,7 +267,7 @@ func (r *MessageRepo) GetDeletedMessages(ctx context.Context, db *sqlx.DB, mailb
 	const query = `
 		SELECT id, mailbox_id, uid, blob_sha256, size, internal_date,
 		       flags, subject, from_address, from_name, snippet, thread_key,
-		       COALESCE(message_id, '') AS message_id, has_attachments
+		       COALESCE(message_id, '') AS message_id, has_attachments, item_class
 		FROM messages
 		WHERE mailbox_id = $1 AND flags::text LIKE '%Deleted%'
 		ORDER BY uid`
@@ -268,7 +285,7 @@ func (r *MessageRepo) GetAllMessages(ctx context.Context, db *sqlx.DB, mailboxID
 	const query = `
 		SELECT id, mailbox_id, uid, blob_sha256, size, internal_date,
 		       flags, subject, from_address, from_name, snippet, thread_key,
-		       COALESCE(message_id, '') AS message_id, has_attachments
+		       COALESCE(message_id, '') AS message_id, has_attachments, item_class
 		FROM messages
 		WHERE mailbox_id = $1
 		ORDER BY uid`

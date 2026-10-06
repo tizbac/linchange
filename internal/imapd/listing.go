@@ -94,7 +94,7 @@ func (r *MessageRepo) List(ctx context.Context, db *sqlx.DB, opts ListOptions) (
 	query := `
 		SELECT id, mailbox_id, uid, blob_sha256, size, internal_date, flags,
 		       subject, from_address, from_name, snippet, thread_key,
-		       COALESCE(message_id, '') AS message_id, has_attachments
+		       COALESCE(message_id, '') AS message_id, has_attachments, item_class
 		FROM messages
 		WHERE ` + condition + `
 		ORDER BY internal_date ` + order + `, id ` + order + `
@@ -170,14 +170,14 @@ func (r *MessageRepo) ListThreads(ctx context.Context, db *sqlx.DB, mailboxID in
 			SELECT DISTINCT ON (thread_key)
 			       thread_key, id, mailbox_id, uid, blob_sha256, size, internal_date,
 			       flags, subject, from_address, from_name, snippet,
-			       COALESCE(message_id, '') AS message_id, has_attachments
+			       COALESCE(message_id, '') AS message_id, has_attachments, item_class
 			FROM messages
 			WHERE mailbox_id = $1
 			ORDER BY thread_key, internal_date DESC, id DESC
 		)
 		SELECT n.thread_key, n.subject, n.id, n.mailbox_id, n.uid, n.blob_sha256,
 		       n.size, n.internal_date, n.flags, n.from_address, n.from_name,
-		       n.snippet, n.message_id, n.has_attachments,
+		       n.snippet, n.message_id, n.has_attachments, n.item_class,
 		       (SELECT count(*) FROM messages t WHERE t.thread_key = n.thread_key)::int AS message_count,
 		       (SELECT count(*) FROM messages t WHERE t.thread_key = n.thread_key
 		          AND NOT ('\Seen' = ANY (t.flags)))::int AS unread_count
@@ -198,7 +198,7 @@ func (r *MessageRepo) ListThreads(ctx context.Context, db *sqlx.DB, mailboxID in
 			&row.Latest.ID, &row.Latest.MailboxID, &row.Latest.UID, &row.Latest.BlobSHA256,
 			&row.Latest.Size, &row.Latest.InternalDate, &row.Latest.Flags,
 			&row.Latest.FromAddress, &row.Latest.FromName, &row.Latest.Snippet,
-			&row.Latest.MessageID, &row.Latest.HasAttachments,
+			&row.Latest.MessageID, &row.Latest.HasAttachments, &row.Latest.ItemClass,
 			&row.MessageCount, &row.UnreadCount); err != nil {
 			return nil, fmt.Errorf("store: scan thread: %w", err)
 		}
@@ -218,7 +218,7 @@ func (r *MessageRepo) ThreadMessages(ctx context.Context, db *sqlx.DB, owner, th
 	const query = `
 		SELECT m.id, m.mailbox_id, m.uid, m.blob_sha256, m.size, m.internal_date,
 		       m.flags, m.subject, m.from_address, m.from_name, m.snippet,
-		       m.thread_key, COALESCE(m.message_id, '') AS message_id, m.has_attachments
+		       m.thread_key, COALESCE(m.message_id, '') AS message_id, m.has_attachments, m.item_class
 		FROM messages m
 		JOIN mailboxes b ON b.id = m.mailbox_id
 		WHERE b.owner = $1 AND m.thread_key = $2
@@ -274,7 +274,7 @@ func (r *MessageRepo) SearchMessages(ctx context.Context, db *sqlx.DB, opts Sear
 	selectStmt := `
 		SELECT m.id, m.mailbox_id, m.uid, m.blob_sha256, m.size, m.internal_date,
 		       m.flags, m.subject, m.from_address, m.from_name, m.snippet,
-		       m.thread_key, COALESCE(m.message_id, '') AS message_id, m.has_attachments
+		       m.thread_key, COALESCE(m.message_id, '') AS message_id, m.has_attachments, m.item_class
 		FROM messages m
 		JOIN mailboxes b ON b.id = m.mailbox_id
 		WHERE ` + strings.Join(where, " AND ") + `
@@ -359,7 +359,7 @@ func (r *MessageRepo) GetByID(ctx context.Context, db *sqlx.DB, owner string, me
 	const query = `
 		SELECT m.id, m.mailbox_id, m.uid, m.blob_sha256, m.size, m.internal_date,
 		       m.flags, m.subject, m.from_address, m.from_name, m.snippet,
-		       m.thread_key, COALESCE(m.message_id, '') AS message_id, m.has_attachments
+		       m.thread_key, COALESCE(m.message_id, '') AS message_id, m.has_attachments, m.item_class
 		FROM messages m
 		JOIN mailboxes b ON b.id = m.mailbox_id
 		WHERE m.id = $1 AND b.owner = $2`

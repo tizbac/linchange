@@ -154,7 +154,7 @@ func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Proto
 			Server:      hostname,
 			Port:        adv.Or(adv.IMAPS, 993),
 			SSL:         "On",
-			AuthPackage: "NTLM",
+			AuthPackage: "Basic",
 			LoginName:   "{{EmailAddress}}",
 		},
 		{
@@ -162,7 +162,7 @@ func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Proto
 			Server:      internalHostname,
 			Port:        adv.Or(adv.IMAP, 143),
 			SSL:         "Off",
-			AuthPackage: "NTLM",
+			AuthPackage: "Basic",
 			LoginName:   "{{EmailAddress}}",
 		},
 		// SMTP
@@ -171,7 +171,7 @@ func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Proto
 			Server:      hostname,
 			Port:        adv.Or(adv.Submit, 587),
 			SSL:         "On",
-			AuthPackage: "NTLM",
+			AuthPackage: "Basic",
 			LoginName:   "{{EmailAddress}}",
 		},
 		{
@@ -179,7 +179,7 @@ func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Proto
 			Server:      internalHostname,
 			Port:        adv.Or(adv.SMTP, 25),
 			SSL:         "Off",
-			AuthPackage: "NTLM",
+			AuthPackage: "Basic",
 			LoginName:   "{{EmailAddress}}",
 		},
 		// POP3
@@ -188,7 +188,7 @@ func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Proto
 			Server:      hostname,
 			Port:        adv.Or(adv.POP3S, 995),
 			SSL:         "On",
-			AuthPackage: "NTLM",
+			AuthPackage: "Basic",
 			LoginName:   "{{EmailAddress}}",
 		},
 		{
@@ -196,7 +196,7 @@ func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Proto
 			Server:      internalHostname,
 			Port:        adv.Or(adv.POP3, 110),
 			SSL:         "Off",
-			AuthPackage: "NTLM",
+			AuthPackage: "Basic",
 			LoginName:   "{{EmailAddress}}",
 		},
 	}
@@ -209,7 +209,7 @@ func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Proto
 			ASUrl:       a.exchangeURL(hostname, "/ews/exchange.asmx"),
 			OABUrl:      a.exchangeURL(hostname, "/oab"),
 			SSL:         "On",
-			AuthPackage: "NTLM",
+			AuthPackage: "Basic",
 			LoginName:   "{{EmailAddress}}",
 		})
 
@@ -219,7 +219,7 @@ func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Proto
 			Server:      hostname,
 			ASUrl:       a.exchangeURL(hostname, "/eas"),
 			SSL:         "On",
-			AuthPackage: "NTLM",
+			AuthPackage: "Basic",
 			LoginName:   "{{EmailAddress}}",
 		})
 	}

@@ -40,6 +40,7 @@ import (
 	"github.com/linchange/linchange/internal/delivery"
 	"github.com/linchange/linchange/internal/eas"
 	"github.com/linchange/linchange/internal/ews"
+	"github.com/linchange/linchange/internal/imapd"
 	"github.com/linchange/linchange/internal/mapihttp"
 	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/webmail"
@@ -312,7 +313,17 @@ func New(opts Options) (*Server, error) {
 	autodiscoverService := autodiscover.New(cfg, opts.DB)
 
 	// The EWS (Exchange Web Services) endpoint.
-	ewsService := ews.New(cfg, pol)
+	ewsService := ews.New(ews.Options{
+		Config:   cfg,
+		DB:       opts.DB,
+		Mail:     mailService,
+		Calendar: calService,
+		Blobs:    opts.Blobs,
+		Messages: imapd.NewMessageRepo(),
+		Auth:     mailVerifier,
+		Policy:   pol,
+		Logger:   log,
+	})
 
 	// The EAS (Exchange ActiveSync) endpoint.
 	easService := eas.New(cfg, pol)

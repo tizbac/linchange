@@ -39,6 +39,9 @@ type Metadata struct {
 	Snippet        string
 	HasAttachments bool
 	Size           int64
+	// ItemClass is the MS-OXPROPS class an Exchange client filters and draws
+	// this message by. See ItemClass.
+	ItemClass string
 }
 
 // Describe reads raw and returns the metadata worth storing.
@@ -88,8 +91,96 @@ func (p *Parsed) Metadata() Metadata {
 	meta.ThreadKey = ThreadKey(meta.MessageID, meta.References, meta.Subject)
 	meta.Snippet = p.Snippet(SnippetLength)
 	meta.HasAttachments = len(p.Attachments) > 0
+	meta.ItemClass = ItemClass(p)
 
 	return meta
+}
+
+// Item class names (MS-OXPROPS §2.10.1). A message's class is what an Exchange
+// client filters by and what it draws a message as: a meeting request gets a
+// Respond button, a plain note does not.
+const (
+	ItemClassNote      = "IPM.Note"
+	ItemClassMeeting   = "IPM.Schedule.Meeting.Request"
+	ItemClassMeetingRe = "IPM.Schedule.Meeting.Response"
+	ItemClassCancel    = "IPM.Schedule.Meeting.Cancellation"
+	ItemClassContact   = "IPM.Contact"
+	ItemClassSticky    = "IPM.Note.StickyNote"
+	ItemClassDistList  = "IPM.DistList"
+)
+
+// ItemClass derives the MS-OXPROPS item class of a parsed message.
+//
+// The class cannot be derived from the headers alone, because the thing that
+// distinguishes a meeting request from a note is the body: the same Subject and
+// From with an iCalendar part inside is a meeting request. So it is read from the
+// Content-Type of the part that carries the scheduling data, which is where iTIP
+// puts it, and the Message-ID convention is used as the fallback for the messages
+// a sender stripped it from.
+func ItemClass(p *Parsed) string {
+	switch strings.ToLower(strings.TrimSpace(p.Header.Get("Content-Type"))) {
+	case `application/ics`, `text/calendar`:
+		return ItemClassNote
+	}
+	// A multipart message carries the calendar part as one of its parts, which
+	// is how a meeting request travels with a body alongside it.
+	for _, part := range p.Parts {
+		if method := calendarMethod(part.ContentType, string(part.Content)); method != "" {
+			return itemClassForMethod(method)
+		}
+	}
+	// The iTIP convention that predates the MIME registration: a meeting request
+	// has "-REQUEST" appended to the Message-ID. A sender that filed the message
+	// with a conforming client leaves a part behind; one that did not may leave
+	// only this.
+	if id := strings.ToUpper(p.Header.Get("Message-ID")); strings.HasSuffix(id, "-REQUEST") {
+		return ItemClassMeeting
+	}
+	if strings.HasSuffix(strings.ToUpper(p.Header.Get("Message-ID")), "-REPLY") {
+		return ItemClassMeetingRe
+	}
+	if strings.HasSuffix(strings.ToUpper(p.Header.Get("Message-ID")), "-CANCEL") {
+		return ItemClassCancel
+	}
+	return ItemClassNote
+}
+
+// itemClassForMethod maps an iTIP METHOD onto its item class.
+func itemClassForMethod(method string) string {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case "REQUEST":
+		return ItemClassMeeting
+	case "REPLY":
+		return ItemClassMeetingRe
+	case "CANCEL":
+		return ItemClassCancel
+	case "ADD", "REFRESH", "COUNTER", "DECLINECOUNTER", "PUBLISH":
+		return ItemClassMeeting
+	}
+	return ItemClassNote
+}
+
+// calendarMethod reads the iTIP method out of a calendar part.
+//
+// The method is a property of the part's content, not a header, so it is read
+// from the text: a part that declares itself text/calendar but carries no method
+// is a forwardee's pasted appointment rather than a request, and treating it as a
+// request would put a Respond button on mail that has nobody to respond to.
+func calendarMethod(contentType, body string) string {
+	if !strings.Contains(strings.ToLower(contentType), "calendar") {
+		return ""
+	}
+	const marker = "METHOD:"
+	upper := strings.ToUpper(body)
+	idx := strings.Index(upper, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := body[idx+len(marker):]
+	if nl := strings.IndexAny(rest, "\r\n"); nl >= 0 {
+		rest = rest[:nl]
+	}
+	return strings.TrimSpace(rest)
 }
 
 // primarySender returns the From address and display name.

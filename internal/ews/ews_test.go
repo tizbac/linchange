@@ -1,25 +1,74 @@
 package ews
 
 import (
+	"context"
 	"encoding/xml"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/linchange/linchange/config"
 	"github.com/linchange/linchange/internal/auth/policy"
+	"github.com/linchange/linchange/internal/calendar"
+	"github.com/linchange/linchange/internal/store"
 )
+
+// An EWS service without a verifier refuses every request: credentials are the
+// only thing that says whose mail an operation may touch, and a server that
+// serves without them is a server that serves one person's mail to another.
+// The tests below use a fixed authenticator that accepts one principal, which is
+// enough for the transport questions they are asking -- decoding, dispatch,
+// escaping -- and the authentication contract itself is tested against an
+// authenticator that refuses.
+
+// fixedAuthenticator accepts any credentials and answers with one principal.
+type fixedAuthenticator struct{ who policy.Principal }
+
+func (f fixedAuthenticator) Authenticate(ctx context.Context, login, pw string, action policy.Action) (policy.Principal, error) {
+	if f.who.Address == "" {
+		return policy.Principal{}, errors.New("no such account")
+	}
+	return f.who, nil
+}
+
+// refusingAuthenticator rejects every login, as a verifier would for a wrong
+// password.
+type refusingAuthenticator struct{}
+
+func (refusingAuthenticator) Authenticate(ctx context.Context, login, pw string, action policy.Action) (policy.Principal, error) {
+	return policy.Principal{}, errors.New("rejected")
+}
+
+func newTestServer() *EWS {
+	return New(Options{
+		Config: config.New(),
+		Policy: policy.Policy{},
+		Auth: fixedAuthenticator{who: policy.Principal{
+			Address: "alice@example.test", MailboxEnabled: true,
+		}},
+	})
+}
+
+// soapPost builds a POST carrying one operation, with credentials the fixed
+// authenticator accepts.
+func soapPost(operation string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/exchange.asmx",
+		strings.NewReader(soapRequest(operation)))
+	req.Header.Set("Content-Type", "text/xml; charset=utf-8")
+	req.SetBasicAuth("alice@example.test", "correct-horse")
+	return req
+}
 
 // The fault body quotes back the operation name, which the caller supplies in
 // the SOAPAction header. Reflecting that verbatim puts the caller's markup
 // inside the response, so the escaping has to be real.
 func TestUnsupportedOperationIsEscapedInTheFault(t *testing.T) {
-	e := New(config.New(), policy.Policy{})
+	e := newTestServer()
 
-	req := httptest.NewRequest(http.MethodPost, "/exchange.asmx",
-		strings.NewReader(soapRequest("FindItem")))
-	req.Header.Set("Content-Type", "text/xml; charset=utf-8")
+	req := soapPost("FindItem")
 	// The operation is the last segment of the SOAPAction URI, so this names an
 	// operation called `Op<injected>1`.
 	req.Header.Set("SOAPAction", `http://schemas.microsoft.com/exchange/services/2006/messages/Op<injected>1`)
@@ -49,12 +98,10 @@ func TestUnsupportedOperationIsEscapedInTheFault(t *testing.T) {
 // every envelope because the struct tag named a namespace that does not exist,
 // and defaulted to FindItem when the SOAPAction header was absent.
 func TestOperationIsTakenFromTheBodyWhenSOAPActionIsAbsent(t *testing.T) {
-	e := New(config.New(), policy.Policy{})
+	e := newTestServer()
 
 	for _, operation := range []string{"FindItem", "GetItem", "CreateItem", "ResolveNames"} {
-		req := httptest.NewRequest(http.MethodPost, "/exchange.asmx",
-			strings.NewReader(soapRequest(operation)))
-		req.Header.Set("Content-Type", "text/xml; charset=utf-8")
+		req := soapPost(operation)
 		rr := httptest.NewRecorder()
 
 		e.Handler().ServeHTTP(rr, req)
@@ -72,11 +119,9 @@ func TestOperationIsTakenFromTheBodyWhenSOAPActionIsAbsent(t *testing.T) {
 // The response has to be a parseable envelope in the SOAP namespace, not a
 // document a client rejects on sight.
 func TestResponseIsASOAPEnvelope(t *testing.T) {
-	e := New(config.New(), policy.Policy{})
+	e := newTestServer()
 
-	req := httptest.NewRequest(http.MethodPost, "/exchange.asmx",
-		strings.NewReader(soapRequest("FindItem")))
-	req.Header.Set("Content-Type", "text/xml; charset=utf-8")
+	req := soapPost("FindItem")
 	rr := httptest.NewRecorder()
 
 	e.Handler().ServeHTTP(rr, req)
@@ -96,10 +141,9 @@ func TestResponseIsASOAPEnvelope(t *testing.T) {
 // The middleware only lets a SOAP content type through, and it answers anything
 // else before the operation layer sees it.
 func TestNonSOAPContentTypeIsRejected(t *testing.T) {
-	e := New(config.New(), policy.Policy{})
+	e := newTestServer()
 
-	req := httptest.NewRequest(http.MethodPost, "/ews/exchange.asmx",
-		strings.NewReader(soapRequest("FindItem")))
+	req := soapPost("FindItem")
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 
@@ -113,10 +157,9 @@ func TestNonSOAPContentTypeIsRejected(t *testing.T) {
 // The endpoint answers at the path its mount point implies. The server mounts
 // this handler at /ews, so the route here must not repeat the prefix.
 func TestHandlerAnswersAtTheMountRelativePath(t *testing.T) {
-	e := New(config.New(), policy.Policy{})
+	e := newTestServer()
 
-	req := httptest.NewRequest(http.MethodPost, "/exchange.asmx", strings.NewReader(soapRequest("FindItem")))
-	req.Header.Set("Content-Type", "text/xml; charset=utf-8")
+	req := soapPost("FindItem")
 	rr := httptest.NewRecorder()
 
 	e.Handler().ServeHTTP(rr, req)
@@ -130,16 +173,77 @@ func TestHandlerAnswersAtTheMountRelativePath(t *testing.T) {
 // answers at /ews/ews/exchange.asmx instead, which is not the path MS-OXECWS
 // specifies and not the path Autodiscover reports, so it has to stay unrouted.
 func TestHandlerDoesNotAnswerAtTheDoubledPath(t *testing.T) {
-	e := New(config.New(), policy.Policy{})
+	e := newTestServer()
 
-	req := httptest.NewRequest(http.MethodPost, "/ews/exchange.asmx", strings.NewReader(soapRequest("FindItem")))
-	req.Header.Set("Content-Type", "text/xml; charset=utf-8")
+	req := soapPost("FindItem")
+	req.URL.Path = "/ews/exchange.asmx"
 	rr := httptest.NewRecorder()
 
 	e.Handler().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("POST /ews/exchange.asmx = %d, want 404; the mount point supplies the prefix", rr.Code)
+	}
+}
+
+// The authentication contract: credentials are required, and a login the
+// verifier refuses is a 401 with a Basic challenge, never a response that might
+// have come from somebody else's mailbox.
+func TestAuthIsAlwaysRequired(t *testing.T) {
+	// No verifier at all: serving anyway would serve one person's mail to
+	// whoever asked.
+	eNoAuth := New(Options{Config: config.New(), Policy: policy.Policy{}})
+	// A verifier that rejects every login, standing in for a wrong password.
+	eRefusing := New(Options{Config: config.New(), Policy: policy.Policy{}, Auth: refusingAuthenticator{}})
+
+	for _, tc := range []struct {
+		name string
+		svc  *EWS
+		auth bool
+	}{
+		{"nil verifier", eNoAuth, false},
+		{"no credentials sent", eRefusing, false},
+		{"verifier refuses", eRefusing, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := soapPost("FindItem")
+			if !tc.auth {
+				req.Header.Del("Authorization")
+			}
+			rr := httptest.NewRecorder()
+
+			tc.svc.Handler().ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401: %s", rr.Code, rr.Body.String())
+			}
+			if got := rr.Header().Get("WWW-Authenticate"); !strings.HasPrefix(got, "Basic ") {
+				t.Errorf("WWW-Authenticate = %q, want a Basic challenge", got)
+			}
+		})
+	}
+}
+
+// Every operation the dispatch table promises has an entry spelled the way the
+// SOAPAction maps it: the same operation named in the header and in the body
+// must reach the same handler.
+func TestDispatchCoversTheSupportedOperations(t *testing.T) {
+	e := newTestServer()
+
+	for operation := range operations {
+		req := soapPost(operation)
+		req.Header.Set("SOAPAction",
+			"http://schemas.microsoft.com/exchange/services/2006/messages/"+operation)
+		rr := httptest.NewRecorder()
+
+		e.Handler().ServeHTTP(rr, req)
+
+		// The transport answered at all -- a header-named operation that misses
+		// the table would be a 501. Whether the request itself is valid is the
+		// operation's own business; the point is the dispatch.
+		if rr.Code == http.StatusNotImplemented {
+			t.Errorf("%s: the dispatched operation is not recognized", operation)
+		}
 	}
 }
 
@@ -150,4 +254,88 @@ func soapRequest(operation string) string {
     <m:` + operation + ` xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"/>
   </s:Body>
 </s:Envelope>`
+}
+
+// The identity of a calendar item must name a calendar, not a mail folder. The
+// kinds share the first byte of the identifier, and a renderer that lost the
+// kind would answer a SyncFolderItems on the calendar with an ItemId whose kind
+// says mailbox -- an id no GetItem on a calendar folder would ever resolve.
+func TestCalendarItemIdentityCarriesTheCalendarKind(t *testing.T) {
+	ev := store.Event{ID: 7, CalendarID: 4, UID: "meet", Summary: "Planning", Status: "CONFIRMED"}
+	v := &itemView{
+		kind:      "CalendarItem",
+		container: 4,
+		id:        ev.ID,
+		event:     &ev,
+		class:     itemClassAppointment,
+		occurrence: &calendar.View{
+			EventID:    ev.ID,
+			CalendarID: ev.CalendarID,
+			UID:        ev.UID,
+			Summary:    ev.Summary,
+			Status:     ev.Status,
+			Start:      time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC),
+			End:        time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC),
+		},
+	}
+
+	var b strings.Builder
+	renderCalendarItem(&b, v, parseShape(&shapeRequest{Base: "IdOnly"}))
+
+	// Pull the ItemId out of the rendered element and decode it: the first byte
+	// is the kind, and a calendar item's must be kindCalendar.
+	const prefix = `<t:ItemId Id="`
+	open := strings.Index(b.String(), prefix)
+	if open < 0 {
+		t.Fatalf("no ItemId in the render: %s", b.String())
+	}
+	rest := b.String()[open+len(prefix):]
+	close := strings.Index(rest, `"`)
+	if close < 0 {
+		t.Fatalf("unterminated ItemId: %s", b.String())
+	}
+	kind, container, item, err := decodeItemID(rest[:close])
+	if err != nil {
+		t.Fatalf("decoding the rendered identifier: %v", err)
+	}
+	if kind != kindCalendar || container != 4 || item != 7 {
+		t.Errorf("identifier = kind %d container %d item %d, want %d %d %d",
+			kind, container, item, kindCalendar, 4, 7)
+	}
+}
+
+// A field update arrives wrapped: the schema puts the new value in the item
+// element it belongs to, <t:Message><t:IsRead>true</t:IsRead></t:Message>, and
+// the reader that looks for the value has to look through the wrapper rather
+// than at the siblings of the wrapper.
+func TestInnerBoolReadsThroughTheWrapperElement(t *testing.T) {
+	const fragment = `<t:FieldURI FieldURI="message:IsRead"/><t:Message><t:IsRead>true</t:IsRead></t:Message>`
+	v, ok := innerBool(fragment, "IsRead")
+	if !ok || !v {
+		t.Fatalf("innerBool(%q, %q) = %v %v, want true true", fragment, "IsRead", v, ok)
+	}
+
+	// A wrapper element without the target inside does not stop a later,
+	// deeper match from being found.
+	const guarded = `<t:Message><t:IsFlagged>false</t:IsFlagged></t:Message><t:Message><t:IsRead>true</t:IsRead></t:Message>`
+	v, ok = innerBool(guarded, "IsRead")
+	if !ok || !v {
+		t.Fatalf("innerBool(%q, %q) = %v %v, want true true", guarded, "IsRead", v, ok)
+	}
+}
+
+// The explicit false is distinct from an absent element: a client that clears
+// the read flag sends IsRead false, and an update that reads "false, but there"
+// as "false, not there" would clear nothing while insisting it had.
+func TestInnerBoolDistinguishesExplicitFalseFromAbsent(t *testing.T) {
+	const setFalse = `<t:Message><t:IsRead>false</t:IsRead></t:Message>`
+	v, ok := innerBool(setFalse, "IsRead")
+	if !ok || v {
+		t.Fatalf("innerBool(%q, %q) = %v %v, want false true", setFalse, "IsRead", v, ok)
+	}
+
+	const absent = `<t:Message><t:IsFlagged>true</t:IsFlagged></t:Message>`
+	if _, ok := innerBool(absent, "IsRead"); ok {
+		t.Fatalf("innerBool(%q, %q) reported an IsRead that is not there", absent, "IsRead")
+	}
 }
