@@ -325,8 +325,19 @@ func New(opts Options) (*Server, error) {
 		Logger:   log,
 	})
 
-	// The EAS (Exchange ActiveSync) endpoint.
-	easService := eas.New(cfg, pol)
+	// The EAS (Exchange ActiveSync) endpoint, for phones and the mobile Outlook
+	// app. It reads and writes through the same mail service and message store
+	// the web client and EWS use, so a message sent on a phone and one sent in
+	// the browser are rows in the same table.
+	easService := eas.New(eas.Options{
+		Config:   cfg,
+		DB:       opts.DB,
+		Mail:     mailService,
+		Messages: imapd.NewMessageRepo(),
+		Auth:     mailVerifier,
+		Policy:   pol,
+		Logger:   log,
+	})
 
 	// The MAPI/HTTP endpoint (Outlook native protocol).
 	mapihttpService := mapihttp.New(&mapihttp.Config{
