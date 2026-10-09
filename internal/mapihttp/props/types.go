@@ -176,11 +176,11 @@ const (
 const (
 	PR_DISPLAY_NAME_W  PropertyTag = 0x3001001F // PT_UNICODE
 	PR_CONTAINER_CLASS PropertyTag = 0x3613001E // PT_STRING8
-	PR_FOLDER_TYPE     PropertyTag = 0x36140003 // PT_I4
+	PR_FOLDER_TYPE     PropertyTag = 0x36010003 // PT_I4
 	PR_CONTENT_COUNT   PropertyTag = 0x36020003 // PT_I4
-	PR_CONTENT_UNREAD  PropertyTag = 0x36040003 // PT_I4
-	PR_FOLDER_ID       PropertyTag = 0x67480102 // PT_BINARY
-	PR_PARENT_ENTRYID  PropertyTag = 0x0FFF0102 // PT_BINARY
+	PR_CONTENT_UNREAD  PropertyTag = 0x36030003 // PT_I4
+	PR_FOLDER_ID       PropertyTag = 0x67480014 // PT_I8
+	PR_PARENT_ENTRYID  PropertyTag = 0x0E090102 // PT_BINARY
 )
 
 // Store properties

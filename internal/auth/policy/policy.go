@@ -162,6 +162,10 @@ const (
 	ActionSMTP Action = "smtp_submit"
 	ActionEWS  Action = "ews"
 	ActionEAS  Action = "eas"
+	// ActionMAPIHTTP is Outlook's native protocol. Like EWS and EAS it is a
+	// full mailbox client, and like them it shares one "may hold mail" rule
+	// with the other logon protocols.
+	ActionMAPIHTTP Action = "mapihttp"
 	// ActionCalDAV is a calendar client rather than a mail one, but it is a
 	// logon in the same sense and for the same reason: a calendar belongs to a
 	// mailbox, so an account that cannot hold mail has no calendar to sync and
@@ -183,7 +187,8 @@ const (
 // mailLogons are the protocols that exist to move mail to or from this
 // principal, so all of them share one "may hold mail" rule.
 var mailLogons = []Action{
-	ActionIMAP, ActionPOP3, ActionSMTP, ActionEWS, ActionEAS, ActionCalDAV,
+	ActionIMAP, ActionPOP3, ActionSMTP, ActionEWS, ActionEAS, ActionMAPIHTTP,
+	ActionCalDAV,
 	ActionSendMail, ActionReadMailbox, ActionManageMailbox,
 }
 

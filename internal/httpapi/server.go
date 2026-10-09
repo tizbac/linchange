@@ -339,13 +339,22 @@ func New(opts Options) (*Server, error) {
 		Logger:   log,
 	})
 
-	// The MAPI/HTTP endpoint (Outlook native protocol).
-	mapihttpService := mapihttp.New(&mapihttp.Config{
-		VersionMajor:   1,
-		VersionMinor:   0,
-		MaxPayloadSize: 10 * 1024 * 1024,
-		SessionTimeout: 30 * 60,
-	}, pol)
+	// The MAPI/HTTP endpoint, for Outlook's native protocol. It reads and
+	// writes through the same mail service, message store and user
+	// directory EWS, EAS and the web client use, so a message sent from
+	// Outlook and one sent from the browser are rows in the same table and
+	// the address book Outlook browses is the same directory every other
+	// logon path reads.
+	mapihttpService := mapihttp.New(mapihttp.Options{
+		DB:        opts.DB,
+		Mail:      mailService,
+		Messages:  imapd.NewMessageRepo(),
+		Mailboxes: imapd.NewMailboxRepo(),
+		Users:     store.NewUsers(),
+		Hostname:  cfg.Server.Hostname,
+		Auth:      mailVerifier,
+		Logger:    log,
+	})
 
 	return &Server{
 		db:           opts.DB,
@@ -427,7 +436,10 @@ func (s *Server) Handler() http.Handler {
 	// EAS (Exchange ActiveSync)
 	r.Mount("/eas", s.eas.Handler())
 
-	// MAPI/HTTP (Outlook native)
+	// MAPI/HTTP (Outlook native). The mount is the prefix both endpoints
+	// share: /mapi/emsmdb carries the ROPs a mailbox client sends and
+	// /mapi/nspi the address book it browses, each holding its own Session
+	// Context.
 	r.Mount("/mapi", s.mapihttp.Handler())
 
 	// With a web build present, the same server hosts the SPA: asset files are

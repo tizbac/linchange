@@ -1,100 +1,87 @@
+// Package mapihttp serves Outlook's native protocol (MS-OXCMAPIHTTP): the
+// HTTP framing both MAPI/HTTP endpoints share, the ROP operations a mailbox
+// client sends on /mapi/emsmdb (MS-OXCROPS), and the address book operations
+// it browses on /mapi/nspi (MS-OXNSPI).
+//
+// The split is the protocol's own. One framing carries two endpoints, each
+// with its own operations and its own Session Context: a client holds a
+// context with each and drops them independently, which is why the two are
+// separate routes, separate session tables and separate requests rather than
+// one service with two verbs.
+//
+// Everything below the framing lives in the rop and nspi packages; the
+// framing itself lives in the transport package. This file is the entry point
+// those are mounted through, and it exists so that building a MAPI/HTTP
+// server is one struct of options rather than a wiring job at every call site.
 package mapihttp
 
 import (
+	"log/slog"
 	"net/http"
-	"time"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/jmoiron/sqlx"
 
-	"github.com/linchange/linchange/internal/auth/policy"
+	"github.com/linchange/linchange/internal/imapd"
 	"github.com/linchange/linchange/internal/mapihttp/transport"
+	"github.com/linchange/linchange/internal/store"
+	"github.com/linchange/linchange/internal/webmail"
 )
 
-// Server is the MAPI/HTTP server (MS-OXCMAPIHTTP).
-// This is the native protocol used by Outlook for Windows.
+// Options are the inputs to New.
 //
-// MAPI/HTTP is a binary RPC-over-HTTP protocol that carries MAPI
-// (Messaging Application Programming Interface) calls over HTTP.
-// It consists of two main parts:
-// 1. MAPI/HTTP transport - HTTP framing with specific headers (transport package)
-// 2. MAPI RPC layer - MAPI method calls with ROP processing (rop package)
-// 3. Property marshaling per MS-OXPROPS (props package)
-//
-// Key references:
-// - [MS-OXCMAPIHTTP] - MAPI/HTTP Protocol
-// - [MS-OXCRPC] - MAPI RPC Extensions
-// - [MS-OXCROPS] - MAPI Remote Operations (ROPs)
-// - [MS-OXPROPS] - MAPI Properties
-// - gromox reference implementation
+// Mail, Messages, Mailboxes and Users feed the ROP layer, so an Outlook
+// client reads and writes the same rows EWS, EAS, IMAP and the web client
+// do; Users and Hostname additionally feed the address book, which is a
+// projection of the same user directory. Auth is the shared verifier every
+// other mail protocol holds, called with ActionMAPIHTTP so that "may this
+// account speak MAPI/HTTP" is answered by one rule alongside the others.
+type Options struct {
+	DB        *sqlx.DB
+	Mail      *webmail.Service
+	Messages  *imapd.MessageRepo
+	Mailboxes *imapd.MailboxRepo
+	Users     *store.Users
+	Hostname  string
+	Auth      transport.Authenticator
+	Logger    *slog.Logger
+	// ServerVersion, when set, is what the X-ServerApplication header
+	// reports. Left empty it is the reference's default.
+	ServerVersion string
+	// MaxBodyBytes, when positive, bounds a request body. Left unset it
+	// is ten megabytes.
+	MaxBodyBytes int64
+}
+
+// Server is the MAPI/HTTP server: two endpoints behind one framing.
 type Server struct {
 	transport *transport.Transport
-	cfg       *Config
-	policy    policy.Policy
 }
 
-// Config holds MAPI/HTTP server configuration
-type Config struct {
-	VersionMajor   int
-	VersionMinor   int
-	MaxPayloadSize int64
-	SessionTimeout int // seconds
-}
-
-// New creates a new MAPI/HTTP server
-func New(cfg *Config, pol policy.Policy) *Server {
-	if cfg == nil {
-		cfg = &Config{
-			VersionMajor:   1,
-			VersionMinor:   0,
-			MaxPayloadSize: 10 * 1024 * 1024, // 10MB
-			SessionTimeout: 30 * 60,          // 30 minutes
-		}
-	}
-
-	transportCfg := &transport.Config{
-		VersionMajor:   cfg.VersionMajor,
-		VersionMinor:   cfg.VersionMinor,
-		MaxPayloadSize: cfg.MaxPayloadSize,
-		SessionTimeout: time.Duration(cfg.SessionTimeout) * time.Second,
-	}
-
-	// Note: store parameter is nil for now - will be wired up when store interface is defined
-	t := transport.NewTransport(transportCfg, nil, pol)
-
+// New builds the server from its options.
+func New(opts Options) *Server {
 	return &Server{
-		transport: t,
-		cfg:       cfg,
-		policy:    pol,
+		transport: transport.New(transport.Options{
+			DB:            opts.DB,
+			Mail:          opts.Mail,
+			Messages:      opts.Messages,
+			Mailboxes:     opts.Mailboxes,
+			Users:         opts.Users,
+			Hostname:      opts.Hostname,
+			Auth:          opts.Auth,
+			Logger:        opts.Logger,
+			ServerVersion: opts.ServerVersion,
+			MaxBodyBytes:  opts.MaxBodyBytes,
+		}),
 	}
 }
 
-// Handler returns the HTTP handler for MAPI/HTTP endpoints
+// Handler returns the HTTP handler for both MAPI/HTTP endpoints.
+//
+// The routes are relative to the mount point: the server mounts this handler
+// at /mapi, so "/emsmdb" here answers at "/mapi/emsmdb" and "/nspi" at
+// /mapi/nspi. Each is registered with and without a trailing slash because
+// that is how the two are written — a client that drops the trailing slash
+// has not sent a different request, only written it differently.
 func (s *Server) Handler() http.Handler {
-	r := chi.NewRouter()
-
-	// Main MAPI/HTTP endpoints
-	r.Post("/emsmdb", s.handleRequest)
-	r.Post("/emsmdbd", s.handleRequest)
-	r.Post("/nspi", s.handleRequest)
-	r.Post("/ab", s.handleRequest)
-
-	// Health check
-	r.Get("/health", s.handleHealth)
-
-	return r
-}
-
-func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	s.transport.HandleRequest(ctx, w, r)
-}
-
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"ok","service":"mapihttp"}`))
-}
-
-// For testing and debugging
-func (s *Server) Transport() *transport.Transport {
-	return s.transport
+	return s.transport.Handler()
 }
