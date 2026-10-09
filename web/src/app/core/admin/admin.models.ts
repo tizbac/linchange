@@ -41,11 +41,16 @@ export interface User {
 
 export type AliasTargetKind = 'user' | 'shared' | 'workgroup';
 
-export interface Alias {
-  address: string;
+export interface AliasTarget {
   target_kind: AliasTargetKind;
   target_address: string | null;
   workgroup_id: number | null;
+  position: number;
+}
+
+export interface Alias {
+  address: string;
+  targets: AliasTarget[];
   display_name: string;
   description: string;
   enabled: boolean;

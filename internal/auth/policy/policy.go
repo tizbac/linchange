@@ -182,6 +182,9 @@ const (
 
 	// ActionAdminister is the domain administration surface.
 	ActionAdminister Action = "administer"
+
+	// ActionAliasUpdate manages alias targets.
+	ActionAliasUpdate Action = "alias_update"
 )
 
 // mailLogons are the protocols that exist to move mail to or from this

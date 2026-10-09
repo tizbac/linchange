@@ -40,11 +40,12 @@ func TestAliasCreateAndGet(t *testing.T) {
 	ctx := context.Background()
 
 	if err := aliases.Create(ctx, db, store.CreateAliasRequest{
-		Address:       "a.alice@example.com",
-		TargetKind:    store.AliasTargetUser,
-		TargetAddress: &person,
-		DisplayName:   "Alice on her second address",
-		Description:   "used by an old signup",
+		Address: "a.alice@example.com",
+		Targets: []store.AliasTargetRequest{
+			{TargetKind: store.AliasTargetUser, TargetAddress: &person, Position: 0},
+		},
+		DisplayName: "Alice on her second address",
+		Description: "used by an old signup",
 	}); err != nil {
 		t.Fatalf("creating alias: %v", err)
 	}
@@ -53,15 +54,17 @@ func TestAliasCreateAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getting alias: %v", err)
 	}
-	if got.TargetKind != store.AliasTargetUser {
-		t.Errorf("target_kind = %q, want user", got.TargetKind)
+	if len(got.Targets) != 1 {
+		t.Fatalf("expected 1 target, got %d", len(got.Targets))
 	}
-	if got.TargetAddress == nil || *got.TargetAddress != person {
-		t.Errorf("target_address = %v, want %q", got.TargetAddress, person)
+	if got.Targets[0].TargetKind != store.AliasTargetUser {
+		t.Errorf("target_kind = %q, want user", got.Targets[0].TargetKind)
 	}
-	// A user alias carries no workgroup, and the check constraint agrees.
-	if got.WorkgroupID != nil {
-		t.Errorf("workgroup_id = %v, want nil for a user alias", got.WorkgroupID)
+	if got.Targets[0].TargetAddress == nil || *got.Targets[0].TargetAddress != person {
+		t.Errorf("target_address = %v, want %q", got.Targets[0].TargetAddress, person)
+	}
+	if got.Targets[0].WorkgroupID != nil {
+		t.Errorf("workgroup_id = %v, want nil for a user alias", got.Targets[0].WorkgroupID)
 	}
 	if !got.Enabled {
 		t.Error("enabled = false, want aliases to start enabled")
@@ -80,12 +83,14 @@ func TestAliasAddressesAreCaseInsensitive(t *testing.T) {
 	ctx := context.Background()
 
 	if err := aliases.Create(ctx, db, store.CreateAliasRequest{
-		Address: "a.alice@example.com", TargetKind: store.AliasTargetUser, TargetAddress: &person,
+		Address: "a.alice@example.com",
+		Targets: []store.AliasTargetRequest{{TargetKind: store.AliasTargetUser, TargetAddress: &person, Position: 0}},
 	}); err != nil {
 		t.Fatalf("creating alias: %v", err)
 	}
 	err := aliases.Create(ctx, db, store.CreateAliasRequest{
-		Address: "A.Alice@Example.com", TargetKind: store.AliasTargetUser, TargetAddress: &person,
+		Address: "A.Alice@Example.com",
+		Targets: []store.AliasTargetRequest{{TargetKind: store.AliasTargetUser, TargetAddress: &person, Position: 0}},
 	})
 	if err != store.ErrConflict {
 		t.Fatalf("re-creating at another case = %v, want ErrConflict", err)
@@ -102,7 +107,8 @@ func TestAliasRejectsUnknownTarget(t *testing.T) {
 
 	ghost := "nobody@example.com"
 	err := aliases.Create(ctx, db, store.CreateAliasRequest{
-		Address: "a.nobody@example.com", TargetKind: store.AliasTargetUser, TargetAddress: &ghost,
+		Address: "a.nobody@example.com",
+		Targets: []store.AliasTargetRequest{{TargetKind: store.AliasTargetUser, TargetAddress: &ghost, Position: 0}},
 	})
 	if err != store.ErrConflict {
 		t.Fatalf("aliasing an unknown user = %v, want ErrConflict", err)
@@ -120,10 +126,10 @@ func TestAliasIgnoresTheTargetFieldThatDoesNotMatchTheKind(t *testing.T) {
 
 	stray := int64(9999)
 	if err := aliases.Create(ctx, db, store.CreateAliasRequest{
-		Address:       "a.alice@example.com",
-		TargetKind:    store.AliasTargetUser,
-		TargetAddress: &person,
-		WorkgroupID:   &stray, // nonsense for a user alias
+		Address: "a.alice@example.com",
+		Targets: []store.AliasTargetRequest{
+			{TargetKind: store.AliasTargetUser, TargetAddress: &person, Position: 0, WorkgroupID: &stray},
+		},
 	}); err != nil {
 		t.Fatalf("creating alias with a stray workgroup id: %v", err)
 	}
@@ -132,11 +138,14 @@ func TestAliasIgnoresTheTargetFieldThatDoesNotMatchTheKind(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getting alias: %v", err)
 	}
-	if got.WorkgroupID != nil {
-		t.Errorf("workgroup_id = %v, want it dropped for a user alias", got.WorkgroupID)
+	if len(got.Targets) != 1 {
+		t.Fatalf("expected 1 target, got %d", len(got.Targets))
 	}
-	if got.TargetAddress == nil || *got.TargetAddress != person {
-		t.Errorf("target_address = %v, want %q", got.TargetAddress, person)
+	if got.Targets[0].WorkgroupID != nil {
+		t.Errorf("workgroup_id = %v, want it dropped for a user alias", got.Targets[0].WorkgroupID)
+	}
+	if got.Targets[0].TargetAddress == nil || *got.Targets[0].TargetAddress != person {
+		t.Errorf("target_address = %v, want %q", got.Targets[0].TargetAddress, person)
 	}
 }
 
@@ -147,7 +156,8 @@ func TestAliasCreateRejectsUnknownKind(t *testing.T) {
 	ctx := context.Background()
 
 	err := aliases.Create(ctx, db, store.CreateAliasRequest{
-		Address: "a.alice@example.com", TargetKind: store.AliasTargetKind("mailbox"),
+		Address: "a.alice@example.com",
+		Targets: []store.AliasTargetRequest{{TargetKind: store.AliasTargetKind("mailbox"), Position: 0}},
 	})
 	if err == nil {
 		t.Fatal("creating an alias with an unknown target kind = nil, want an error")
@@ -165,8 +175,7 @@ func TestAliasCreateRejectsEmptyAddress(t *testing.T) {
 	}
 }
 
-// A disabled alias is kept, not deleted: it still has to be recognisable to
-// whoever owns it, it simply delivers nowhere.
+// A disabled alias is kept, not deleted: it simply delivers nowhere.
 func TestAliasSetEnabledKeepsTheRow(t *testing.T) {
 	db := testMigratedDB(t)
 	person, _ := seedAliasRepoFixtures(t, db)
@@ -174,7 +183,8 @@ func TestAliasSetEnabledKeepsTheRow(t *testing.T) {
 	ctx := context.Background()
 
 	if err := aliases.Create(ctx, db, store.CreateAliasRequest{
-		Address: "a.alice@example.com", TargetKind: store.AliasTargetUser, TargetAddress: &person,
+		Address: "a.alice@example.com",
+		Targets: []store.AliasTargetRequest{{TargetKind: store.AliasTargetUser, TargetAddress: &person, Position: 0}},
 	}); err != nil {
 		t.Fatalf("creating alias: %v", err)
 	}
@@ -205,7 +215,8 @@ func TestAliasListForTarget(t *testing.T) {
 
 	for _, address := range []string{"a.alice@example.com", "b.alice@example.com"} {
 		if err := aliases.Create(ctx, db, store.CreateAliasRequest{
-			Address: address, TargetKind: store.AliasTargetUser, TargetAddress: &person,
+			Address: address,
+			Targets: []store.AliasTargetRequest{{TargetKind: store.AliasTargetUser, TargetAddress: &person, Position: 0}},
 		}); err != nil {
 			t.Fatalf("creating alias %s: %v", address, err)
 		}
@@ -217,7 +228,8 @@ func TestAliasListForTarget(t *testing.T) {
 	}
 	other := "carol@example.com"
 	if err := aliases.Create(ctx, db, store.CreateAliasRequest{
-		Address: "a.carol@example.com", TargetKind: store.AliasTargetUser, TargetAddress: &other,
+		Address: "a.carol@example.com",
+		Targets: []store.AliasTargetRequest{{TargetKind: store.AliasTargetUser, TargetAddress: &other, Position: 0}},
 	}); err != nil {
 		t.Fatalf("creating unrelated alias: %v", err)
 	}
@@ -241,12 +253,14 @@ func TestAliasListAndDelete(t *testing.T) {
 	ctx := context.Background()
 
 	if err := aliases.Create(ctx, db, store.CreateAliasRequest{
-		Address: "a.alice@example.com", TargetKind: store.AliasTargetUser, TargetAddress: &person,
+		Address: "a.alice@example.com",
+		Targets: []store.AliasTargetRequest{{TargetKind: store.AliasTargetUser, TargetAddress: &person, Position: 0}},
 	}); err != nil {
 		t.Fatalf("creating user alias: %v", err)
 	}
 	if err := aliases.Create(ctx, db, store.CreateAliasRequest{
-		Address: "help@example.com", TargetKind: store.AliasTargetShared, TargetAddress: &shared,
+		Address: "help@example.com",
+		Targets: []store.AliasTargetRequest{{TargetKind: store.AliasTargetShared, TargetAddress: &shared, Position: 0}},
 	}); err != nil {
 		t.Fatalf("creating shared alias: %v", err)
 	}

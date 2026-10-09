@@ -69,16 +69,26 @@ func setupInbound(t *testing.T, tune func(*config.Config)) *inboundFixture {
 		t.Fatalf("declaring shared mailbox: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO aliases (address, target_kind, target_address, enabled)
-		VALUES ('team@example.com', 'user', 'alice@example.com', true)`); err != nil {
+		INSERT INTO aliases (address, display_name, description, enabled, updated_by)
+		VALUES ('team@example.com', 'Team alias', 'Delivers to Alice', true, 'system')`); err != nil {
 		t.Fatalf("creating alias: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO alias_targets (alias_address, target_kind, target_address, workgroup_id, position)
+		VALUES ('team@example.com', 'user', 'alice@example.com', NULL, 0)`); err != nil {
+		t.Fatalf("creating alias target: %v", err)
 	}
 	// An alias onto a principal that may not hold mail, to prove the alias does
 	// not launder it.
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO aliases (address, target_kind, target_address, enabled)
-		VALUES ('togroup@example.com', 'user', 'nomailbox@example.com', true)`); err != nil {
+		INSERT INTO aliases (address, display_name, description, enabled, updated_by)
+		VALUES ('togroup@example.com', 'To group', 'Delivers to nomailbox', true, 'system')`); err != nil {
 		t.Fatalf("creating alias: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO alias_targets (alias_address, target_kind, target_address, workgroup_id, position)
+		VALUES ('togroup@example.com', 'user', 'nomailbox@example.com', NULL, 0)`); err != nil {
+		t.Fatalf("creating alias target: %v", err)
 	}
 	var workgroupID int64
 	if err := db.GetContext(ctx, &workgroupID,
@@ -86,9 +96,14 @@ func setupInbound(t *testing.T, tune func(*config.Config)) *inboundFixture {
 		t.Fatalf("seeding workgroup: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO aliases (address, target_kind, workgroup_id, enabled)
-		VALUES ('crew@example.com', 'workgroup', $1, true)`, workgroupID); err != nil {
-		t.Fatalf("creating workgroup alias: %v", err)
+		INSERT INTO aliases (address, display_name, description, enabled, updated_by)
+		VALUES ('crew@example.com', 'Crew alias', 'Workgroup alias', true, 'system')`); err != nil {
+		t.Fatalf("creating alias: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO alias_targets (alias_address, target_kind, workgroup_id, position)
+		VALUES ('crew@example.com', 'workgroup', $1, 0)`, workgroupID); err != nil {
+		t.Fatalf("creating workgroup alias target: %v", err)
 	}
 
 	blobs, err := blobstore.Open(blobstore.Options{Root: t.TempDir()})

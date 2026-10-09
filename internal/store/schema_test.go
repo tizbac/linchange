@@ -115,24 +115,24 @@ func TestAliasKindMustMatchItsTarget(t *testing.T) {
 	}{
 		{
 			"person alias carrying a workgroup id",
-			`INSERT INTO aliases (address,target_kind,target_address,workgroup_id)
+			`INSERT INTO alias_targets (alias_address, target_kind, target_address, workgroup_id, position)
 			 VALUES ('bad1@example.com','user',$1,$2)`,
 			[]any{f.person, f.workgroup},
 		},
 		{
 			"workgroup alias carrying an address",
-			`INSERT INTO aliases (address,target_kind,target_address,workgroup_id)
+			`INSERT INTO alias_targets (alias_address, target_kind, target_address, workgroup_id, position)
 			 VALUES ('bad2@example.com','workgroup',$1,$2)`,
 			[]any{f.person, f.workgroup},
 		},
 		{
 			"workgroup alias with no target at all",
-			`INSERT INTO aliases (address,target_kind) VALUES ('bad3@example.com','workgroup')`,
+			`INSERT INTO alias_targets (alias_address, target_kind, position) VALUES ('bad3@example.com','workgroup',0)`,
 			nil,
 		},
 		{
 			"person alias with no target at all",
-			`INSERT INTO aliases (address,target_kind) VALUES ('bad4@example.com','user')`,
+			`INSERT INTO alias_targets (alias_address, target_kind, position) VALUES ('bad4@example.com','user',0)`,
 			nil,
 		},
 	}

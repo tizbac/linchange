@@ -562,18 +562,25 @@ func (b *Backend) resolveRecipient(ctx context.Context, to string) (string, erro
 		}
 		return "", err
 	}
-	if !alias.Enabled || alias.TargetAddress == nil {
-		// A workgroup alias, which has no delivery path of its own yet.
+	if !alias.Enabled {
 		return "", errUnknownRecipient
 	}
-	address, ok, err := b.mailbox(ctx, strings.ToLower(*alias.TargetAddress))
-	if err != nil {
-		return "", err
+	// Try each target in order until one succeeds.
+	for _, t := range alias.Targets {
+		if t.TargetAddress == nil {
+			// Workgroup target - skip for now (would need workgroup member expansion)
+			continue
+		}
+		address, ok, err := b.mailbox(ctx, strings.ToLower(*t.TargetAddress))
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return address, nil
+		}
+		// Target doesn't have a mailbox, try next target
 	}
-	if !ok {
-		return "", errUnknownRecipient
-	}
-	return address, nil
+	return "", errUnknownRecipient
 }
 
 // mailbox reports the address of the mailbox at address, and whether it may

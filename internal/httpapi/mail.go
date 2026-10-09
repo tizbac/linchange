@@ -862,20 +862,21 @@ func (s *Server) handleOwnAliases(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type alias struct {
-		Address string `json:"address"`
-		Target  string `json:"target"`
-		Enabled bool   `json:"enabled"`
+		Address string   `json:"address"`
+		Targets []string `json:"targets"`
+		Enabled bool     `json:"enabled"`
 	}
 	out := make([]alias, 0, len(all))
 	for _, a := range all {
-		// An alias can point at a workgroup rather than at an address, and a
-		// client cannot do anything useful with a workgroup id here, so those
-		// are reported with no target rather than with a misleading one.
-		target := ""
-		if a.TargetAddress != nil {
-			target = *a.TargetAddress
+		targets := make([]string, 0, len(a.Targets))
+		for _, t := range a.Targets {
+			if t.TargetAddress != nil {
+				targets = append(targets, *t.TargetAddress)
+			} else if t.WorkgroupID != nil {
+				targets = append(targets, fmt.Sprintf("workgroup:%d", *t.WorkgroupID))
+			}
 		}
-		out = append(out, alias{Address: a.Address, Target: target, Enabled: a.Enabled})
+		out = append(out, alias{Address: a.Address, Targets: targets, Enabled: a.Enabled})
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"aliases": out})
 }

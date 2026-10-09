@@ -92,6 +92,7 @@ func mountAdminRoutes(r chi.Router, s *Server) {
 		r.Get("/", s.listAliases)
 		r.Post("/", s.createAlias)
 		r.Put("/{address}/enabled", s.setAliasEnabled)
+		r.Put("/{address}/targets", s.updateAliasTargets)
 		r.Delete("/{address}", s.deleteAlias)
 	})
 
@@ -389,30 +390,46 @@ func (s *Server) listAliases(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createAlias(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Address       string                `json:"address"`
-		TargetKind    store.AliasTargetKind `json:"target_kind"`
-		TargetAddress *string               `json:"target_address"`
-		WorkgroupID   *int64                `json:"workgroup_id"`
-		DisplayName   string                `json:"display_name"`
-		Description   string                `json:"description"`
+		Address     string                    `json:"address"`
+		Targets     []aliasTargetInput        `json:"targets"`
+		DisplayName string                    `json:"display_name"`
+		Description string                    `json:"description"`
 	}
 	if err := decodeAdmin(w, r, &in); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
 		return
 	}
-	if err := s.admin.CreateAlias(r.Context(), Principal(r.Context()), store.CreateAliasRequest{
-		Address:       in.Address,
-		TargetKind:    in.TargetKind,
-		TargetAddress: in.TargetAddress,
-		WorkgroupID:   in.WorkgroupID,
-		DisplayName:   in.DisplayName,
-		Description:   in.Description,
-		UpdatedBy:     addrOrNil(Principal(r.Context()).Address),
-	}); err != nil {
+	if len(in.Targets) == 0 {
+		s.writeError(w, http.StatusBadRequest, "at least one target is required")
+		return
+	}
+	req := store.CreateAliasRequest{
+		Address:     in.Address,
+		DisplayName: in.DisplayName,
+		Description: in.Description,
+		UpdatedBy:   addrOrNil(Principal(r.Context()).Address),
+		Targets:     make([]store.AliasTargetRequest, len(in.Targets)),
+	}
+	for i, t := range in.Targets {
+		req.Targets[i] = store.AliasTargetRequest{
+			TargetKind:    t.TargetKind,
+			TargetAddress: t.TargetAddress,
+			WorkgroupID:   t.WorkgroupID,
+			Position:      t.Position,
+		}
+	}
+	if err := s.admin.CreateAlias(r.Context(), Principal(r.Context()), req); err != nil {
 		adminErrors(w, s, err)
 		return
 	}
 	s.writeJSON(w, http.StatusCreated, map[string]string{"address": in.Address})
+}
+
+type aliasTargetInput struct {
+	TargetKind    store.AliasTargetKind `json:"target_kind"`
+	TargetAddress *string               `json:"target_address"`
+	WorkgroupID   *int64                `json:"workgroup_id"`
+	Position      int                   `json:"position"`
 }
 
 func (s *Server) setAliasEnabled(w http.ResponseWriter, r *http.Request) {
@@ -433,6 +450,35 @@ func (s *Server) setAliasEnabled(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteAlias(w http.ResponseWriter, r *http.Request) {
 	if err := s.admin.DeleteAlias(r.Context(), Principal(r.Context()), chi.URLParam(r, "address")); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) updateAliasTargets(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Targets []aliasTargetInput `json:"targets"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if len(in.Targets) == 0 {
+		s.writeError(w, http.StatusBadRequest, "at least one target is required")
+		return
+	}
+	req := make([]store.AliasTargetRequest, len(in.Targets))
+	for i, t := range in.Targets {
+		req[i] = store.AliasTargetRequest{
+			TargetKind:    t.TargetKind,
+			TargetAddress: t.TargetAddress,
+			WorkgroupID:   t.WorkgroupID,
+			Position:      t.Position,
+		}
+	}
+	if err := s.admin.UpdateAliasTargets(r.Context(), Principal(r.Context()),
+		chi.URLParam(r, "address"), req); err != nil {
 		adminErrors(w, s, err)
 		return
 	}
@@ -776,25 +822,37 @@ func viewUser(u admin.UserView) userView {
 	}
 }
 
-type aliasView struct {
-	Address       string  `json:"address"`
+type aliasTargetView struct {
 	TargetKind    string  `json:"target_kind"`
 	TargetAddress *string `json:"target_address"`
 	WorkgroupID   *int64  `json:"workgroup_id"`
-	DisplayName   string  `json:"display_name"`
-	Description   string  `json:"description"`
-	Enabled       bool    `json:"enabled"`
+	Position      int     `json:"position"`
+}
+
+type aliasView struct {
+	Address     string            `json:"address"`
+	Targets     []aliasTargetView `json:"targets"`
+	DisplayName string            `json:"display_name"`
+	Description string            `json:"description"`
+	Enabled     bool              `json:"enabled"`
 }
 
 func viewAlias(a store.Alias) aliasView {
+	targets := make([]aliasTargetView, len(a.Targets))
+	for i, t := range a.Targets {
+		targets[i] = aliasTargetView{
+			TargetKind:    string(t.TargetKind),
+			TargetAddress: t.TargetAddress,
+			WorkgroupID:   t.WorkgroupID,
+			Position:      t.Position,
+		}
+	}
 	return aliasView{
-		Address:       a.Address,
-		TargetKind:    string(a.TargetKind),
-		TargetAddress: a.TargetAddress,
-		WorkgroupID:   a.WorkgroupID,
-		DisplayName:   a.DisplayName,
-		Description:   a.Description,
-		Enabled:       a.Enabled,
+		Address:     a.Address,
+		Targets:     targets,
+		DisplayName: a.DisplayName,
+		Description: a.Description,
+		Enabled:     a.Enabled,
 	}
 }
 

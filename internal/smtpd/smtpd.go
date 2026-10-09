@@ -169,7 +169,15 @@ func (s *session) Mail(from string, opts *smtp.MailOptions) error {
 			if err != nil {
 				return smtp.ErrAuthFailed
 			}
-			if alias.TargetAddress != nil && *alias.TargetAddress != s.from {
+			// Check if the authenticated user is one of the alias targets.
+			authorized := false
+			for _, t := range alias.Targets {
+				if t.TargetAddress != nil && *t.TargetAddress == s.from {
+					authorized = true
+					break
+				}
+			}
+			if !authorized {
 				return smtp.ErrAuthFailed
 			}
 		}

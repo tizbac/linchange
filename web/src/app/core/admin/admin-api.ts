@@ -3,6 +3,7 @@ import { Injectable, inject } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import {
   Alias,
+  AliasTarget,
   AuditEntry,
   Domain,
   ImpersonationGrant,
@@ -102,12 +103,25 @@ export class AdminApi {
 
   createAlias(body: {
     address: string;
-    target_kind?: string;
-    target_address?: string;
+    targets: Array<{
+      target_kind: string;
+      target_address?: string;
+      workgroup_id?: number;
+      position: number;
+    }>;
     display_name?: string;
     description?: string;
   }): Promise<Alias> {
     return this.post('/aliases', body);
+  }
+
+  updateAliasTargets(address: string, targets: Array<{
+    target_kind: string;
+    target_address?: string;
+    workgroup_id?: number;
+    position: number;
+  }>): Promise<unknown> {
+    return this.request('put', `/aliases/${encodeURIComponent(address)}/targets`, { targets });
   }
 
   setAliasEnabled(address: string, enabled: boolean): Promise<unknown> {

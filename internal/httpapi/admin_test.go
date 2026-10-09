@@ -317,7 +317,10 @@ func TestAdminAliasLifecycle(t *testing.T) {
 	seedUser(t, db, "bob@example.com", "local", true, true)
 
 	code, body := do(t, srv, http.MethodPost, "/api/v1/admin/aliases", map[string]any{
-		"address": "b.bob@example.com", "target_kind": "user", "target_address": "bob@example.com",
+		"address": "b.bob@example.com",
+		"targets": []map[string]any{{"target_kind": "user", "target_address": "bob@example.com", "position": 0}},
+		"display_name": "Bob's alias",
+		"description": "Test alias",
 	}, headers)
 	if code != http.StatusCreated {
 		t.Fatalf("creating an alias = %d %v, want 201", code, body)
@@ -325,7 +328,10 @@ func TestAdminAliasLifecycle(t *testing.T) {
 
 	// An alias pointing at somebody who does not exist is a conflict.
 	code, body = do(t, srv, http.MethodPost, "/api/v1/admin/aliases", map[string]any{
-		"address": "b.nobody@example.com", "target_kind": "user", "target_address": "nobody@example.com",
+		"address": "b.nobody@example.com",
+		"targets": []map[string]any{{"target_kind": "user", "target_address": "nobody@example.com", "position": 0}},
+		"display_name": "Nobody's alias",
+		"description": "Test alias to unknown user",
 	}, headers)
 	if code != http.StatusConflict {
 		t.Fatalf("an alias to an unknown user = %d %v, want 409", code, body)

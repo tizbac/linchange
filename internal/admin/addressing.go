@@ -120,7 +120,7 @@ func (s *Service) GetDomain(ctx context.Context, actor policy.Principal, name st
 
 // --- aliases ---
 
-// CreateAlias adds an alias.
+// CreateAlias adds an alias with one or more targets.
 func (s *Service) CreateAlias(ctx context.Context, actor policy.Principal, req store.CreateAliasRequest) error {
 	if err := requireAdmin(actor); err != nil {
 		return err
@@ -128,19 +128,33 @@ func (s *Service) CreateAlias(ctx context.Context, actor policy.Principal, req s
 	if err := validAddress(req.Address); err != nil {
 		return err
 	}
-	if req.TargetAddress != nil {
-		if err := validAddress(*req.TargetAddress); err != nil {
-			return err
+	if len(req.Targets) == 0 {
+		return ErrInvalid
+	}
+	for _, t := range req.Targets {
+		if t.TargetAddress != nil {
+			if err := validAddress(*t.TargetAddress); err != nil {
+				return err
+			}
 		}
 	}
 	return store.InTx(ctx, s.db, func(q *sqlx.Tx) error {
 		if err := s.aliases.Create(ctx, q, req); err != nil {
 			return mapStore(err)
 		}
+		targetsDetail := make([]map[string]any, len(req.Targets))
+		for i, t := range req.Targets {
+			targetsDetail[i] = map[string]any{
+				"target_kind":    t.TargetKind,
+				"target_address": t.TargetAddress,
+				"workgroup_id":   t.WorkgroupID,
+				"position":       t.Position,
+			}
+		}
 		return s.record(ctx, q, actor, change{
 			action: ActionAliasCreate, targetType: "alias", targetID: req.Address,
 			target: req.Address,
-			detail: map[string]any{"target_kind": req.TargetKind, "target_address": req.TargetAddress},
+			detail: map[string]any{"targets": targetsDetail},
 		})
 	})
 }
@@ -183,6 +197,41 @@ func (s *Service) DeleteAlias(ctx context.Context, actor policy.Principal, addre
 		}
 		return s.record(ctx, q, actor, change{
 			action: ActionAliasDelete, targetType: "alias", targetID: address, target: address,
+		})
+	})
+}
+
+// UpdateAliasTargets replaces all targets for an alias.
+func (s *Service) UpdateAliasTargets(ctx context.Context, actor policy.Principal, address string, targets []store.AliasTargetRequest) error {
+	if err := requireAdmin(actor); err != nil {
+		return err
+	}
+	if len(targets) == 0 {
+		return ErrInvalid
+	}
+	for _, t := range targets {
+		if t.TargetAddress != nil {
+			if err := validAddress(*t.TargetAddress); err != nil {
+				return err
+			}
+		}
+	}
+	return store.InTx(ctx, s.db, func(q *sqlx.Tx) error {
+		if err := s.aliases.UpdateTargets(ctx, q, address, targets); err != nil {
+			return mapStore(err)
+		}
+		targetsDetail := make([]map[string]any, len(targets))
+		for i, t := range targets {
+			targetsDetail[i] = map[string]any{
+				"target_kind":    t.TargetKind,
+				"target_address": t.TargetAddress,
+				"workgroup_id":   t.WorkgroupID,
+				"position":       t.Position,
+			}
+		}
+		return s.record(ctx, q, actor, change{
+			action: string(policy.ActionAliasUpdate), targetType: "alias", targetID: address, target: address,
+			detail: map[string]any{"targets": targetsDetail},
 		})
 	})
 }
