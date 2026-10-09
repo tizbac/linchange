@@ -50,9 +50,9 @@ import { CalIcon } from '../core/calendar/ui';
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   template: `
-    <div class="h-full flex flex-col">
+    <div class="h-[calc(100vh-80px)] flex flex-col min-h-[500px]">
       <!-- Toolbar -->
-      <div class="flex items-center justify-between p-4 border-b bg-white dark:bg-gray-900">
+      <div class="flex items-center justify-between p-4 border-b bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100">
         <div class="flex items-center gap-4">
           <button
             type="button"
@@ -104,7 +104,7 @@ import { CalIcon } from '../core/calendar/ui';
       </div>
 
       <!-- Calendar -->
-      <div class="flex-1 overflow-hidden relative">
+      <div class="flex-1 overflow-hidden relative min-h-0">
         <full-calendar
           #fullCalendar
           [options]="calendarOptions"
@@ -116,11 +116,11 @@ import { CalIcon } from '../core/calendar/ui';
       @if (selectedEvent()) {
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" (click)="closeEventDetail()">
           <div
-            class="bg-white dark:bg-gray-900 rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto"
+            class="bg-white dark:bg-gray-900 rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto text-gray-900 dark:text-gray-100"
             (click)="$event.stopPropagation()"
           >
-            <div class="p-4 border-b flex items-start justify-between">
-              <h2 class="text-lg font-semibold">{{ selectedEvent()?.extendedProps?.['summary'] || 'Event' }}</h2>
+            <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-start justify-between">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">{{ selectedEvent()?.extendedProps?.['summary'] || 'Event' }}</h2>
               <button
                 type="button"
                 class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
@@ -133,11 +133,11 @@ import { CalIcon } from '../core/calendar/ui';
             <div class="p-4 space-y-3">
               <div>
                 <label class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Time</label>
-                <p class="text-sm">
+                <p class="text-sm text-gray-900 dark:text-gray-100">
                   @if (selectedEvent()?.allDay) {
                     All day
                     @if (selectedEvent()?.end) {
-                      <span class="text-gray-500"> · </span>
+                      <span class="text-gray-500 dark:text-gray-400"> · </span>
                       {{ fmtDate(selectedEvent()!.end) }}
                     }
                   } @else {
@@ -148,7 +148,7 @@ import { CalIcon } from '../core/calendar/ui';
               @if (selectedEvent()?.extendedProps?.['location']) {
                 <div>
                   <label class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Location</label>
-                  <p class="text-sm">{{ selectedEvent()!.extendedProps!['location'] }}</p>
+                  <p class="text-sm text-gray-900 dark:text-gray-100">{{ selectedEvent()!.extendedProps!['location'] }}</p>
                 </div>
               }
               @if (selectedEvent()?.extendedProps?.['attendees']?.length) {
@@ -156,7 +156,7 @@ import { CalIcon } from '../core/calendar/ui';
                   <label class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Attendees</label>
                   <ul class="text-sm space-y-1">
                     @for (a of selectedEvent()!.extendedProps!['attendees']; track a.address) {
-                      <li class="flex items-center gap-2">
+                      <li class="flex items-center gap-2 text-gray-900 dark:text-gray-100">
                         <span
                           class="w-2 h-2 rounded-full"
                           [ngClass]="{
@@ -168,14 +168,14 @@ import { CalIcon } from '../core/calendar/ui';
                         ></span>
                         {{ a.name || a.address }}
                         @if (a.partStat !== 'ACCEPTED') {
-                          <span class="text-xs text-gray-500 capitalize">{{ a.partStat?.toLowerCase().replace('-', ' ') }}</span>
+                          <span class="text-xs text-gray-500 dark:text-gray-400 capitalize">{{ a.partStat?.toLowerCase().replace('-', ' ') }}</span>
                         }
                       </li>
                     }
                   </ul>
                 </div>
               }
-              <div class="flex gap-2 pt-2 border-t">
+              <div class="flex gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">
                 <button
                   type="button"
                   class="flex-1 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
@@ -197,14 +197,14 @@ import { CalIcon } from '../core/calendar/ui';
       }
 
       <!-- Create/Edit Event Modal -->
-      @if (editingEvent()) {
+      @if (showEditModal()) {
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" (click)="closeEditModal()">
           <div
-            class="bg-white dark:bg-gray-900 rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto"
+            class="bg-white dark:bg-gray-900 rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto text-gray-900 dark:text-gray-100"
             (click)="$event.stopPropagation()"
           >
-            <div class="p-4 border-b flex items-center justify-between">
-              <h2 class="text-lg font-semibold">{{ editingEvent()?.eventId ? 'Edit Event' : 'New Event' }}</h2>
+            <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">{{ editingEvent()?.eventId ? 'Edit Event' : 'New Event' }}</h2>
               <button
                 type="button"
                 class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
@@ -216,22 +216,22 @@ import { CalIcon } from '../core/calendar/ui';
             </div>
             <form (ngSubmit)="saveEvent()" class="p-4 space-y-4">
               <div>
-                <label class="block text-sm font-medium mb-1">Title</label>
+                <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">Title</label>
                 <input
                   type="text"
                   [(ngModel)]="editForm.title"
                   name="title"
                   required
-                  class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500"
+                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 placeholder-gray-400 dark:placeholder-gray-500"
                   placeholder="Event title"
                 />
               </div>
               <div>
-                <label class="block text-sm font-medium mb-1">Calendar</label>
+                <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">Calendar</label>
                 <select
                   [(ngModel)]="editForm.calendarId"
                   name="calendarId"
-                  class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500"
+                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500"
                 >
                   @for (cal of calendars(); track cal.id) {
                     <option [value]="cal.id">{{ cal.display_name || cal.name }}</option>
@@ -240,23 +240,23 @@ import { CalIcon } from '../core/calendar/ui';
               </div>
               <div class="grid grid-cols-2 gap-3">
                 <div>
-                  <label class="block text-sm font-medium mb-1">Start</label>
+                  <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">Start</label>
                   <input
                     type="datetime-local"
                     [(ngModel)]="editForm.start"
                     name="start"
                     required
-                    class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500"
+                    class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
                 <div>
-                  <label class="block text-sm font-medium mb-1">End</label>
+                  <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">End</label>
                   <input
                     type="datetime-local"
                     [(ngModel)]="editForm.end"
                     name="end"
                     required
-                    class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500"
+                    class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
               </div>
@@ -266,31 +266,31 @@ import { CalIcon } from '../core/calendar/ui';
                   [(ngModel)]="editForm.allDay"
                   name="allDay"
                   id="allDay"
-                  class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  class="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
                 />
-                <label for="allDay" class="text-sm">All day</label>
+                <label for="allDay" class="text-sm text-gray-900 dark:text-gray-100">All day</label>
               </div>
               <div>
-                <label class="block text-sm font-medium mb-1">Location</label>
+                <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">Location</label>
                 <input
                   type="text"
                   [(ngModel)]="editForm.location"
                   name="location"
-                  class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500"
+                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 placeholder-gray-400 dark:placeholder-gray-500"
                   placeholder="Location (optional)"
                 />
               </div>
               <div>
-                <label class="block text-sm font-medium mb-1">Timezone</label>
+                <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">Timezone</label>
                 <input
                   type="text"
                   [(ngModel)]="editForm.timezone"
                   name="timezone"
-                  class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500"
+                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 placeholder-gray-400 dark:placeholder-gray-500"
                   placeholder="Europe/London"
                 />
               </div>
-              <div class="flex gap-2 pt-2 border-t">
+              <div class="flex gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">
                 <button
                   type="submit"
                   class="flex-1 px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
@@ -315,7 +315,8 @@ import { CalIcon } from '../core/calendar/ui';
   styles: [`
     :host {
       display: block;
-      height: 100%;
+      height: calc(100vh - 80px);
+      min-height: 500px;
     }
     .fc {
       --fc-border-color: #e5e7eb;
@@ -330,7 +331,12 @@ import { CalIcon } from '../core/calendar/ui';
       --fc-event-border-color: #2563eb;
       --fc-popover-bg: white;
       --fc-popover-border-color: #e5e7eb;
+      /* Light theme text colors */
+      --fc-page-bg-color: white;
+      --fc-neutral-text-color: #111827;
     }
+    .fc .fc-toolbar-title { color: #111827; }
+    .fc .fc-button { color: white; }
     .dark .fc {
       --fc-border-color: #374151;
       --fc-button-bg-color: #3b82f6;
@@ -344,7 +350,54 @@ import { CalIcon } from '../core/calendar/ui';
       --fc-event-border-color: #3b82f6;
       --fc-popover-bg: #1f2937;
       --fc-popover-border-color: #374151;
+      /* Dark theme text colors */
+      --fc-page-bg-color: #111827;
+      --fc-neutral-text-color: #f3f4f6;
     }
+    .dark .fc .fc-toolbar-title { color: #f3f4f6; }
+    .dark .fc .fc-button { color: white; }
+    .dark .fc .fc-col-header-cell { background-color: #1f2937; color: #f3f4f6; }
+    .dark .fc .fc-daygrid-day-number { color: #f3f4f6; }
+    .dark .fc .fc-timegrid-slot-label { color: #9ca3af; }
+    .dark .fc .fc-timegrid-axis { background-color: #1f2937; }
+    .dark .fc .fc-timegrid-divider { border-color: #374151; }
+    /* Dark theme for event detail modal and edit modal */
+    .dark .fixed.bg-white.dark\:bg-gray-900 { background-color: #1f2937; }
+    .dark .fixed .bg-white.dark\:bg-gray-900 { background-color: #1f2937; }
+    .dark .fixed .border-b { border-color: #374151; }
+    .dark .fixed .border-t { border-color: #374151; }
+    .dark .fixed label { color: #d1d5db; }
+    .dark .fixed .text-gray-500 { color: #9ca3af; }
+    .dark .fixed .text-gray-700 { color: #d1d5db; }
+    .dark .fixed .text-sm { color: #d1d5db; }
+    .dark .fixed input,
+    .dark .fixed select,
+    .dark .fixed textarea {
+      background-color: #374151;
+      border-color: #4b5563;
+      color: #f3f4f6;
+    }
+    .dark .fixed input:focus,
+    .dark .fixed select:focus {
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+    }
+    .dark .fixed input::placeholder { color: #9ca3af; }
+    .dark .fixed .bg-gray-100.dark\:bg-gray-800 { background-color: #374151; }
+    .dark .fixed .hover\:bg-gray-200.dark\:hover\:bg-gray-700:hover { background-color: #4b5563; }
+    .dark .fixed .hover\:bg-gray-800:hover { background-color: #374151; }
+    .dark .fixed .bg-gray-800 { background-color: #1f2937; }
+    .dark .fixed .bg-red-50 { background-color: rgba(127, 29, 29, 0.3); }
+    .dark .fixed .hover\:bg-red-100:hover { background-color: rgba(127, 29, 29, 0.5); }
+    .dark .fixed .text-gray-400 { color: #9ca3af; }
+    .dark .fixed .text-gray-300 { color: #d1d5db; }
+    .dark .fixed .text-gray-600 { color: #9ca3af; }
+    .dark .fixed .text-gray-900 { color: #f3f4f6; }
+    .dark .fixed .text-blue-600 { color: #60a5fa; }
+    .dark .fixed .focus\:ring-blue-500:focus { box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3); }
+    .dark .fixed .border-gray-300 { border-color: #4b5563; }
+    .dark .fixed .border-gray-200 { border-color: #374151; }
+    .dark .fixed .text-red-600 { color: #f87171; }
   `]
 })
 export class CalendarComponent implements AfterViewInit, OnDestroy {
@@ -360,6 +413,7 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
   readonly freeBusy = signal<Availability[]>([]);
   readonly selectedEvent = signal<EventApi | null>(null);
   readonly editingEvent = signal<EventModel | null>(null);
+  readonly showEditModal = signal(false);
   readonly view = signal<'dayGridMonth' | 'timeGridWeek' | 'timeGridDay' | 'listWeek'>('dayGridMonth');
   readonly title = signal('');
   readonly saving = signal(false);
@@ -396,7 +450,8 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
     plugins: [dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin, rrulePlugin],
     initialView: 'dayGridMonth',
     headerToolbar: false, // We use our own toolbar
-    height: '100%',
+    height: 'auto',
+    expandRows: true,
     events: [],
     eventTimeFormat: {
       hour: '2-digit',
@@ -628,6 +683,7 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
       sequence: 0,
     };
     this.editingEvent.set(null);
+    this.showEditModal.set(true);
   }
 
   editEvent(event: EventApi): void {
@@ -651,6 +707,7 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
     // extendedProps instead meant the modal read a record with no eventId and
     // titled an edit of an existing event "New Event".
     this.editingEvent.set(this.eventModelFor(event));
+    this.showEditModal.set(true);
   }
 
   // eventModelFor rebuilds the model an EventApi was made from. The mapping runs
@@ -682,6 +739,12 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
     const form = this.editForm;
     if (!form.title.trim()) return;
 
+    // Convert datetime-local strings to RFC3339 UTC
+    const toRFC = (s: string): string => {
+      const d = new Date(s);
+      return d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+    };
+
     this.saving.set(true);
     try {
       const eventData: ICalEvent = {
@@ -692,8 +755,8 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
         uid: form.id ? this.events().find((e) => e.eventId === form.id)?.uid : undefined,
         summary: form.title,
         location: form.location,
-        start: form.start,
-        end: form.end,
+        start: toRFC(form.start),
+        end: toRFC(form.end),
         allDay: form.allDay,
         timezone: form.timezone,
         status: 'CONFIRMED',
@@ -741,6 +804,7 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
   }
 
   closeEditModal(): void {
+    this.showEditModal.set(false);
     this.editingEvent.set(null);
     this.editForm = {
       id: 0,

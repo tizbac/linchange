@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/linchange/linchange/internal/auth/policy"
+	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/webmail"
 )
@@ -72,6 +74,11 @@ func (s *Server) mountMail(r chi.Router) {
 		r.Get("/signature", s.handleGetSignature)
 		r.Put("/signature", s.handleSaveSignature)
 		r.Delete("/signature", s.handleClearSignature)
+
+		// Image upload endpoints for TinyMCE
+		r.Post("/images/signature", s.handleUploadSignatureImage)
+		r.Post("/images/compose", s.handleUploadComposeImage)
+		r.Get("/images/inline/{cid}", s.handleInlineSignatureImage)
 	})
 }
 
@@ -126,6 +133,121 @@ func (s *Server) handleClearSignature(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"html": "", "owner": mailOwner(r)})
+}
+
+// handleUploadSignatureImage uploads an image for use in a signature.
+// The image is stored temporarily and a CID is returned for referencing it.
+func (s *Server) handleUploadSignatureImage(w http.ResponseWriter, r *http.Request) {
+	// Limit to 1 MB per image
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	defer r.Body.Close()
+
+	file, _, err := r.FormFile("image")
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "no image provided")
+		return
+	}
+	defer file.Close()
+
+	// Read and validate the image
+	imgData, err := io.ReadAll(file)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "could not read image")
+		return
+	}
+
+	// Detect MIME type from content
+	mimeType := http.DetectContentType(imgData)
+	allowed := map[string]bool{
+		"image/png":  true,
+		"image/jpeg": true,
+		"image/gif":  true,
+		"image/webp": true,
+	}
+	if !allowed[mimeType] {
+		s.writeError(w, http.StatusBadRequest, "unsupported image type: "+mimeType)
+		return
+	}
+
+	// Store the image in the signature image store and get a CID
+	cid, err := s.mail.StoreSignatureImage(r.Context(), mailOwner(r), imgData, mimeType)
+	if err != nil {
+		s.writeMailError(w, r, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]string{"cid": cid})
+}
+
+// handleInlineSignatureImage serves a signature/compose image by CID.
+// The CID has the format "sig-<sha256>" and the image is retrieved from the blobstore via the mail service.
+func (s *Server) handleInlineSignatureImage(w http.ResponseWriter, r *http.Request) {
+	cid := chi.URLParam(r, "cid")
+	if cid == "" || !strings.HasPrefix(cid, "sig-") {
+		s.writeError(w, http.StatusBadRequest, "invalid CID")
+		return
+	}
+	hashStr := strings.TrimPrefix(cid, "sig-")
+	digest, err := blobstore.ParseDigest(hashStr)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid CID format")
+		return
+	}
+	data, err := s.mail.GetBlob(r.Context(), digest)
+	if err != nil {
+		if errors.Is(err, blobstore.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, "image not found")
+			return
+		}
+		s.log.Error("failed to get signature image", "error", err, "cid", cid)
+		s.writeError(w, http.StatusInternalServerError, "could not read image")
+		return
+	}
+	// Detect MIME type from content
+	mimeType := http.DetectContentType(data)
+	serveDownload(w, mimeType, cid, data)
+}
+
+// handleUploadComposeImage uploads an image for use in a message body.
+// The image is stored and a CID is returned for referencing it inline.
+func (s *Server) handleUploadComposeImage(w http.ResponseWriter, r *http.Request) {
+	// Limit to 5 MB per image (larger than signature for message body images)
+	r.Body = http.MaxBytesReader(w, r.Body, 5<<20)
+	defer r.Body.Close()
+
+	file, _, err := r.FormFile("image")
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "no image provided")
+		return
+	}
+	defer file.Close()
+
+	imgData, err := io.ReadAll(file)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "could not read image")
+		return
+	}
+
+	mimeType := http.DetectContentType(imgData)
+	allowed := map[string]bool{
+		"image/png":  true,
+		"image/jpeg": true,
+		"image/gif":  true,
+		"image/webp": true,
+	}
+	if !allowed[mimeType] {
+		s.writeError(w, http.StatusBadRequest, "unsupported image type: "+mimeType)
+		return
+	}
+
+	// Use the same store for compose images
+	cid, err := s.mail.StoreSignatureImage(r.Context(), mailOwner(r), imgData, mimeType)
+	if err != nil {
+		s.writeMailError(w, r, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]string{"cid": cid})
 }
 
 // mailOwner is the mailbox a request acts on.

@@ -1,7 +1,6 @@
-import { AfterViewInit, ChangeDetectionStrategy, Component, ElementRef, OnDestroy, effect, input, output, viewChild } from '@angular/core';
-import { Editor } from '@tiptap/core';
-import StarterKit from '@tiptap/starter-kit';
-import Link from '@tiptap/extension-link';
+import { AfterViewInit, ChangeDetectionStrategy, Component, OnDestroy, ViewChild, ViewEncapsulation, effect, input, output, signal } from '@angular/core';
+import { EditorComponent, TINYMCE_SCRIPT_SRC } from '@tinymce/tinymce-angular';
+import type { Editor as TinyMCEEditor } from 'tinymce';
 
 // The HTML body editor.
 //
@@ -71,6 +70,17 @@ function domToText(node: Node): string {
       // An image has no plain-text equivalent, and an empty marker tells the
       // reader something was there.
       return el.getAttribute('alt') ? `[${el.getAttribute('alt')}]` : '';
+    // Inline formatting: strong/b, em/i, u, s, mark - just render their text content
+    case 'STRONG':
+    case 'B':
+    case 'EM':
+    case 'I':
+    case 'U':
+    case 'S':
+    case 'STRIKE':
+    case 'MARK':
+    case 'SPAN':
+      return domChildren(el);
     default:
       return domChildren(el);
   }
@@ -97,194 +107,37 @@ export function htmlHasContent(html: string): boolean {
   return (doc.body.textContent ?? '').trim() !== '';
 }
 
+// Provide TinyMCE script source for self-hosted deployment
+export const provideTinyMCE = () => ({
+  provide: TINYMCE_SCRIPT_SRC,
+  useValue: '/tinymce/tinymce.min.js',
+});
+
 // Component: rich-text-editor
 @Component({
   selector: 'app-rich-text-editor',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  encapsulation: ViewEncapsulation.None,
   template: `
-    <div class="overflow-hidden rounded-lg border border-slate-300 focus-within:border-brand-500">
-      @if (showToolbar()) {
-        <div
-          class="flex flex-wrap items-center gap-1 border-b border-slate-200 bg-slate-50 px-2 py-1.5"
-          role="toolbar"
-          aria-label="Formatting"
-        >
-          <button
-            type="button"
-            class="rounded px-2 py-1 text-xs font-semibold text-slate-700 transition hover:bg-slate-200"
-            [class.bg-slate-200]="isActive('bold')"
-            [attr.aria-pressed]="isActive('bold')"
-            title="Bold"
-            (click)="toggleBold()"
-          >
-            B
-          </button>
-          <button
-            type="button"
-            class="rounded px-2 py-1 text-xs italic text-slate-700 transition hover:bg-slate-200"
-            [class.bg-slate-200]="isActive('italic')"
-            [attr.aria-pressed]="isActive('italic')"
-            title="Italic"
-            (click)="toggleItalic()"
-          >
-            I
-          </button>
-          <button
-            type="button"
-            class="rounded px-2 py-1 text-xs underline text-slate-700 transition hover:bg-slate-200"
-            [class.bg-slate-200]="isActive('underline')"
-            [attr.aria-pressed]="isActive('underline')"
-            title="Underline"
-            (click)="toggleUnderline()"
-          >
-            U
-          </button>
-          <button
-            type="button"
-            class="rounded px-2 py-1 text-xs text-slate-700 transition hover:bg-slate-200"
-            [class.bg-slate-200]="isActive('strike')"
-            [attr.aria-pressed]="isActive('strike')"
-            title="Strikethrough"
-            (click)="toggleStrike()"
-          >
-            S
-          </button>
-
-          <span class="mx-1 h-4 w-px bg-slate-300"></span>
-
-          <button
-            type="button"
-            class="rounded px-2 py-1 text-xs text-slate-700 transition hover:bg-slate-200"
-            [class.bg-slate-200]="isActive('bulletList')"
-            [attr.aria-pressed]="isActive('bulletList')"
-            title="Bulleted list"
-            (click)="toggleBulletList()"
-          >
-            &bull; List
-          </button>
-          <button
-            type="button"
-            class="rounded px-2 py-1 text-xs text-slate-700 transition hover:bg-slate-200"
-            [class.bg-slate-200]="isActive('orderedList')"
-            [attr.aria-pressed]="isActive('orderedList')"
-            title="Numbered list"
-            (click)="toggleOrderedList()"
-          >
-            1. List
-          </button>
-          <button
-            type="button"
-            class="rounded px-2 py-1 text-xs text-slate-700 transition hover:bg-slate-200"
-            [class.bg-slate-200]="isActive('blockquote')"
-            [attr.aria-pressed]="isActive('blockquote')"
-            title="Quoted text"
-            (click)="toggleBlockquote()"
-          >
-            &ldquo;
-          </button>
-
-          <span class="mx-1 h-4 w-px bg-slate-300"></span>
-
-          <button
-            type="button"
-            class="rounded px-2 py-1 text-xs text-slate-700 transition hover:bg-slate-200"
-            [class.bg-slate-200]="isActive('link')"
-            [attr.aria-pressed]="isActive('link')"
-            title="Insert or edit a link"
-            (click)="setLink()"
-          >
-            Link
-          </button>
-          @if (isActive('link')) {
-            <button
-              type="button"
-              class="rounded px-2 py-1 text-xs text-rose-700 transition hover:bg-rose-50"
-              title="Remove the link"
-              (click)="unsetLink()"
-            >
-              Unlink
-            </button>
-          }
-        </div>
-      }
-      <div
-        #surface
-        class="prose-editor min-h-64 px-3 py-2 text-sm leading-relaxed text-slate-900 focus:outline-none"
-        data-placeholder="Write your message"
-      ></div>
-    </div>
+    <editor
+      #tiny
+      [init]="init()"
+      [initialValue]="html()"
+      [disabled]="!showToolbar()"
+      (onChange)="onChange($event)"
+      (onInit)="onInit($event)"
+    ></editor>
   `,
   styles: [
     `
-      /* The editable surface is styled here rather than through a utility class
-         because ProseMirror manages its own content, and the child elements it
-         creates are not visible to the template. */
-      .prose-editor:empty::before {
-        content: attr(data-placeholder);
-        color: #94a3b8;
-      }
-      .prose-editor p {
-        margin: 0 0 0.5rem;
-      }
-      .prose-editor p:last-child {
-        margin-bottom: 0;
-      }
-      .prose-editor ul,
-      .prose-editor ol {
-        margin: 0 0 0.5rem 1.25rem;
-      }
-      .prose-editor ul {
-        list-style: disc;
-      }
-      .prose-editor ol {
-        list-style: decimal;
-      }
-      .prose-editor blockquote {
-        margin: 0 0 0.5rem;
-        border-left: 3px solid #cbd5e1;
-        padding-left: 0.75rem;
-        color: #475569;
-      }
-      .prose-editor h1,
-      .prose-editor h2,
-      .prose-editor h3 {
-        margin: 0 0 0.5rem;
-        font-weight: 600;
-      }
-      .prose-editor h1 {
-        font-size: 1.25rem;
-      }
-      .prose-editor h2 {
-        font-size: 1.125rem;
-      }
-      .prose-editor h3 {
-        font-size: 1rem;
-      }
-      .prose-editor pre {
-        margin: 0 0 0.5rem;
-        border-radius: 0.375rem;
-        background: #f1f5f9;
-        padding: 0.5rem;
-        font-family: ui-monospace, monospace;
-        font-size: 0.8125rem;
-      }
-      .prose-editor code {
-        font-family: ui-monospace, monospace;
-        font-size: 0.875em;
-      }
-      .prose-editor a {
-        color: #2563eb;
-        text-decoration: underline;
-      }
-      .ProseMirror-focused {
-        outline: none;
-      }
-      .ProseMirror-selectednode {
-        outline: 2px solid #3b82f6;
+      /* Host element gets height so the editor fills it */
+      :host {
+        display: block;
+        min-height: 16rem;
       }
     `,
   ],
-  imports: [],
+  imports: [EditorComponent],
 })
 export class RichTextEditorComponent implements AfterViewInit, OnDestroy {
   // html is the body to show. It is an input rather than a model so the parent
@@ -297,102 +150,90 @@ export class RichTextEditorComponent implements AfterViewInit, OnDestroy {
   readonly showToolbar = input<boolean>(true);
   // placeholder is what an empty editor shows.
   readonly placeholder = input<string>('Write your message');
+  // uploadEndpoint is the API endpoint to upload pasted images to.
+  // 'signature' -> /api/v1/mail/images/signature
+  // 'compose'   -> /api/v1/mail/images/compose
+  readonly uploadEndpoint = input<'signature' | 'compose'>('compose');
 
-  private readonly surface = viewChild.required<ElementRef<HTMLElement>>('surface');
+  @ViewChild('tiny') tinyRef!: EditorComponent;
 
-  private editor: Editor | null = null;
-
-  // dirty records whether the body was changed by the user, so an incoming
-  // value is only written into the editor when it is not the value the editor
-  // itself produced. Without it, the parent's own echo of a keystroke would
-  // reset the cursor to the start of the document.
+  private editorInstance: TinyMCEEditor | null = null;
   private dirty = false;
+  private lastEmitted = '';
+  private initialized = false;
+
+  readonly init = signal({
+    height: 400,
+    menubar: false,
+    toolbar: 'undo redo | blocks | bold italic underline strikethrough forecolor backcolor | alignleft aligncenter alignright | bullist numlist outdent indent | blockquote | link | image',
+    plugins: 'link lists image',
+    content_style: `
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        font-size: 0.875rem;
+        line-height: 1.625;
+        color: #1e293b;
+        padding: 0.5rem 0.75rem;
+      }
+      p { margin: 0 0 0.5rem; }
+      p:last-child { margin-bottom: 0; }
+      ul, ol { margin: 0 0 0.5rem 1.25rem; }
+      ul { list-style: disc; }
+      ol { list-style: decimal; }
+      blockquote { margin: 0 0 0.5rem; border-left: 3px solid #cbd5e1; padding-left: 0.75rem; color: #475569; }
+      h1, h2, h3 { margin: 0 0 0.5rem; font-weight: 600; }
+      h1 { font-size: 1.25rem; }
+      h2 { font-size: 1.125rem; }
+      h3 { font-size: 1rem; }
+      pre { margin: 0 0 0.5rem; border-radius: 0.375rem; background: #f1f5f9; padding: 0.5rem; font-family: ui-monospace, monospace; font-size: 0.8125rem; }
+      code { font-family: ui-monospace, monospace; font-size: 0.875em; }
+      a { color: #2563eb; text-decoration: underline; }
+    `,
+    placeholder: 'Write your message',
+    link_assume_external_targets: 'https',
+    link_default_protocol: 'https',
+    // Use GPL license for self-hosted deployment
+    license_key: 'gpl',
+    // Block formats for the 'blocks' toolbar button
+    block_formats: 'Paragraph=p; Heading 1=h1; Heading 2=h2; Heading 3=h3; Blockquote=blockquote; Preformatted=pre',
+    // Allow images to be pasted directly (base64, converted by server on send)
+    paste_data_images: true,
+  });
 
   constructor() {
-    // The placeholder is an attribute rather than a ProseMirror plugin so that
-    // it needs no editor instance to exist: it is read by CSS when the editor
-    // is empty, which is a state the DOM already reports.
     effect(() => {
-      const el = this.surface().nativeElement;
-      el.setAttribute('data-placeholder', this.placeholder());
+      this.init.update((cfg) => ({ ...cfg, placeholder: this.placeholder() }));
     });
   }
 
   ngAfterViewInit(): void {
-    this.editor = new Editor({
-      element: this.surface().nativeElement,
-      extensions: [StarterKit, Link.configure({ openOnClick: false })],
-      content: this.html(),
-      // The editor's own state is the truth for the body, so a keystroke emits
-      // the HTML and nothing writes back into it.
-      onUpdate: () => {
-        this.dirty = true;
-        this.htmlChange.emit(this.editor?.getHTML() ?? '');
-      },
-    });
+    // Wait for onInit to get the editor instance
   }
 
   ngOnDestroy(): void {
-    this.editor?.destroy();
-    this.editor = null;
+    this.editorInstance?.destroy();
   }
 
-  // isActive reports whether a mark or node is applied at the caret, so a button
-  // can show itself as pressed. FullCalendar-style: the toolbar reflects the
-  // text the user is in, not the document as a whole.
-  protected isActive(name: string): boolean {
-    return this.editor?.isActive(name) ?? false;
-  }
-
-  protected toggleBold(): void {
-    this.editor?.chain().focus().toggleBold().run();
-  }
-
-  protected toggleItalic(): void {
-    this.editor?.chain().focus().toggleItalic().run();
-  }
-
-  protected toggleUnderline(): void {
-    this.editor?.chain().focus().toggleUnderline().run();
-  }
-
-  protected toggleStrike(): void {
-    this.editor?.chain().focus().toggleStrike().run();
-  }
-
-  protected toggleBulletList(): void {
-    this.editor?.chain().focus().toggleBulletList().run();
-  }
-
-  protected toggleOrderedList(): void {
-    this.editor?.chain().focus().toggleOrderedList().run();
-  }
-
-  protected toggleBlockquote(): void {
-    this.editor?.chain().focus().toggleBlockquote().run();
-  }
-
-  // setLink asks for the address and applies it. An empty answer removes the
-  // link, which is what a user pressing Cancel after selecting text expects.
-  protected setLink(): void {
-    const existing = this.editor?.getAttributes('link')['href'] as string | undefined;
-    const url = window.prompt('Link address', existing ?? 'https://');
-    if (url === null) return;
-    const trimmed = url.trim();
-    if (!trimmed) {
-      this.unsetLink();
-      return;
+  onInit(event: { editor: TinyMCEEditor }): void {
+    this.editorInstance = event.editor;
+    this.initialized = true;
+    // Set initial content if not already set
+    if (this.html() && this.editorInstance.getContent() !== this.html()) {
+      this.editorInstance.setContent(this.html());
     }
-    // A link the recipient cannot use is worse than no link: javascript: and
-    // data: URLs are executed by some clients and mean nothing in an email.
-    if (!/^https?:\/\//i.test(trimmed)) {
-      window.alert('A link has to start with http:// or https://');
-      return;
-    }
-    this.editor?.chain().focus().extendMarkRange('link').setLink({ href: trimmed }).run();
+    this.lastEmitted = this.editorInstance.getContent();
   }
 
-  protected unsetLink(): void {
-    this.editor?.chain().focus().extendMarkRange('link').unsetLink().run();
+  onChange(event: { editor: TinyMCEEditor }): void {
+    if (!this.initialized) return;
+
+    const editor = event.editor;
+    this.editorInstance = editor;
+
+    const content = editor.getContent();
+    if (content !== this.lastEmitted) {
+      this.lastEmitted = content;
+      this.htmlChange.emit(content);
+    }
   }
 }

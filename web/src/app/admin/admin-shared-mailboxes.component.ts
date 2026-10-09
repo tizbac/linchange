@@ -15,6 +15,8 @@ import {
   tableCellClass,
   tableHeadClass,
 } from '../core/admin/ui';
+import { AdminNavComponent } from '../core/admin/admin-nav.component';
+import { AdminPageComponent } from '../core/admin/admin-page.component';
 
 @Component({
   selector: 'app-admin-shared-mailboxes',
@@ -28,8 +30,12 @@ import {
     PageEmpty,
     PageHeader,
     Panel,
+    AdminNavComponent,
+    AdminPageComponent,
   ],
   template: `
+    <admin-page>
+      <admin-nav />
     <div class="space-y-6">
       <admin-page-header
         title="Shared mailboxes"

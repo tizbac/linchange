@@ -15,6 +15,8 @@ import {
   tableCellClass,
   tableHeadClass,
 } from '../core/admin/ui';
+import { AdminNavComponent } from '../core/admin/admin-nav.component';
+import { AdminPageComponent } from '../core/admin/admin-page.component';
 
 @Component({
   selector: 'app-admin-users',
@@ -28,9 +30,13 @@ import {
     PageEmpty,
     PageHeader,
     Panel,
+    AdminNavComponent,
+    AdminPageComponent,
   ],
   template: `
-    <div class="space-y-6">
+    <admin-page>
+      <admin-nav />
+      <div class="space-y-6">
       <admin-page-header
         title="Mailboxes"
         hint="Every account in the system. Disabling one signs it out everywhere and stops
@@ -265,6 +271,7 @@ import {
         </admin-panel>
       }
     </div>
+  </admin-page>
   `,
 })
 export class AdminUsersComponent implements OnInit {

@@ -182,6 +182,14 @@ interface AttachmentItem {
               [placeholder]="'Write your message'"
               (htmlChange)="bodyHtml.set($event)"
             />
+            @if (signatureLoading()) {
+              <p class="text-xs text-slate-500 mt-2">Loading signature…</p>
+            } @else if (signatureHtml()) {
+              <div class="mt-3 rounded-lg border border-slate-200 bg-slate-50">
+                <p class="px-3 py-2 text-xs font-medium text-slate-500 border-b border-slate-200">Your signature (appended on send)</p>
+                <div class="px-3 py-2 text-sm text-slate-700" [innerHTML]="signatureHtml()"></div>
+              </div>
+            }
             @if (showPlainText()) {
               <!-- What a recipient who cannot render HTML will read. Shown
                    because the two parts are sent together and the user cannot
@@ -295,6 +303,10 @@ export class MailComposeComponent implements OnInit {
   readonly error = signal('');
   readonly replyLabel = signal('');
 
+  // Signature loaded from the server and shown in the editor.
+  readonly signatureHtml = signal('');
+  readonly signatureLoading = signal(true);
+
   // Threading headers a reply carries; the server only needs them to group
   // the sent copy with its conversation, so they are never user-visible.
   private inReplyTo = '';
@@ -319,6 +331,18 @@ export class MailComposeComponent implements OnInit {
       this.composeTarget.set(null);
     }
     void this.loadAliases();
+    void this.loadSignature();
+  }
+
+  private async loadSignature(): Promise<void> {
+    try {
+      const res = await this.api.signature();
+      this.signatureHtml.set(res.html ?? '');
+    } catch {
+      // Signature is optional; proceed without it.
+    } finally {
+      this.signatureLoading.set(false);
+    }
   }
 
   // --- fields -----------------------------------------------------------------

@@ -23,6 +23,13 @@
             >
               Signature
             </a>
+            <a
+              routerLink="/calendar"
+              routerLinkActive="text-brand-700"
+              class="text-sm font-medium text-slate-600 transition hover:text-brand-700"
+            >
+              Calendar
+            </a>
             @if (auth.isDomainAdmin()) {
               <a
                 routerLink="/admin/domains"

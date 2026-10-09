@@ -84,6 +84,23 @@ const (
 	defaultMaxMessageBytes    = 50 << 20
 )
 
+// StoreSignatureImage stores a signature image and returns a CID for referencing it.
+func (s *Service) StoreSignatureImage(ctx context.Context, owner string, data []byte, mimeType string) (string, error) {
+	// Store in blobstore; the SHA256 becomes the CID
+	sum, _, err := s.blobs.Put(data)
+	if err != nil {
+		return "", fmt.Errorf("store signature image: %w", err)
+	}
+	// Use the blob hash as the CID
+	cid := fmt.Sprintf("sig-%x", sum)
+	return cid, nil
+}
+
+// GetBlob retrieves a blob by digest. Used for serving signature/compose images.
+func (s *Service) GetBlob(ctx context.Context, d blobstore.Digest) ([]byte, error) {
+	return s.blobs.Get(d)
+}
+
 // New builds a Service.
 func New(opts Options) (*Service, error) {
 	if opts.DB == nil {
