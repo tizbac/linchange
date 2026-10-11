@@ -1,0 +1,58 @@
+
+    <admin-page>
+      <admin-nav />
+    <div class="space-y-6">
+      <admin-page-header
+        title="Audit log"
+        hint="A record of every impersonation start (with the actor, target, and reason).
+          Impersonation is the only event currently recorded."
+      >
+        <admin-button (pressed)="reload()">Refresh</admin-button>
+      </admin-page-header>
+
+      <admin-notice [message]="error()" tone="error" />
+
+      <admin-panel [bodyClass]="'p-0'">
+        @if (loading()) {
+          <div class="px-5 py-6"><admin-busy [busy]="true" label="Loading audit entries…" /></div>
+        } @else if (entries().length === 0) {
+          <admin-empty text="No audit entries yet." />
+        } @else {
+          <table class="w-full">
+            <thead class="border-b border-slate-200 bg-slate-50">
+              <tr>
+                <th class="{{ head }}">Timestamp</th>
+                <th class="{{ head }}">Event</th>
+                <th class="{{ head }}">Actor</th>
+                <th class="{{ head }}">Target</th>
+                <th class="{{ head }}">Reason</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              @for (e of entries(); track e.id) {
+                <tr>
+                  <td class="{{ cell }}">{{ e.created_at }}</td>
+                  <td class="{{ cell }}">
+                    <span
+                      class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1"
+                      [class]="
+                        e.action === 'impersonation.start'
+                          ? 'bg-violet-50 text-violet-700 ring-violet-200'
+                          : 'bg-slate-100 text-slate-600 ring-slate-200'
+                      "
+                    >
+                      {{ e.action }}
+                    </span>
+                  </td>
+                  <td class="{{ cell }}">{{ e.actor_address || '—' }}</td>
+                  <td class="{{ cell }}">{{ e.target_address || '—' }}</td>
+                  <td class="{{ cell }}">{{ reason(e) }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        }
+      </admin-panel>
+    </div>
+  </admin-page>
+  

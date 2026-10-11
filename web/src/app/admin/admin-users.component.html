@@ -1,0 +1,240 @@
+
+    <admin-page>
+      <admin-nav />
+      <div class="space-y-6">
+      <admin-page-header
+        title="Mailboxes"
+        hint="Every account in the system. Disabling one signs it out everywhere and stops
+          it receiving mail, but keeps its mail, so it can be turned back on."
+      >
+        <admin-button variant="primary" (pressed)="creating.set(!creating())">
+          {{ creating() ? 'Cancel' : 'Add a mailbox' }}
+        </admin-button>
+        <admin-button (pressed)="reload()">Refresh</admin-button>
+      </admin-page-header>
+
+      <admin-notice [message]="error()" tone="error" />
+      <admin-notice [message]="ok()" tone="ok" />
+
+      @if (creating()) {
+        <admin-panel title="New mailbox">
+          <form class="grid gap-4 sm:grid-cols-2" (ngSubmit)="create()">
+            <admin-field
+              label="Address"
+              hint="A domain admin has no mailbox, so its address must use the local source."
+            >
+              <input
+                class="{{ inputClass }}"
+                name="address"
+                [(ngModel)]="draft.address"
+                required
+                placeholder="alice@example.com"
+              />
+            </admin-field>
+            <admin-field label="Display name">
+              <input class="{{ inputClass }}" name="displayName" [(ngModel)]="draft.displayName" />
+            </admin-field>
+            <admin-field label="Source">
+              <select class="{{ inputClass }}" name="source" [(ngModel)]="draft.source">
+                <option value="local">local — a password is stored here</option>
+                <option value="ldap">ldap — authenticated by a directory</option>
+                <option value="domain_admin">domain_admin — administers mail, holds none</option>
+              </select>
+            </admin-field>
+            <admin-field
+              label="Password"
+              hint="Left empty for a domain admin or an LDAP user, who has no stored password."
+            >
+              <input
+                class="{{ inputClass }}"
+                name="password"
+                type="password"
+                autocomplete="new-password"
+                [(ngModel)]="draft.password"
+              />
+            </admin-field>
+            <admin-field label="Quota (MiB)" hint="Leave empty for unlimited.">
+              <input
+                class="{{ inputClass }}"
+                name="quota"
+                type="number"
+                min="0"
+                [(ngModel)]="draft.quotaMiB"
+                placeholder="unlimited"
+              />
+            </admin-field>
+            <admin-field label="Send limit (per day)" hint="Leave empty for unlimited.">
+              <input
+                class="{{ inputClass }}"
+                name="sendLimit"
+                type="number"
+                min="0"
+                [(ngModel)]="draft.sendLimit"
+                placeholder="unlimited"
+              />
+            </admin-field>
+            <label class="sm:col-span-2 flex items-start gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                name="isDomainAdmin"
+                class="mt-0.5 h-4 w-4 rounded border-slate-300"
+                [(ngModel)]="draft.isDomainAdmin"
+              />
+              <span>
+                May administer this domain
+                <span class="block text-xs text-slate-500">
+                  Gives access to these administration pages. It is a permission rather than a kind
+                  of account, so a user can hold a mailbox and administer at the same time. A
+                  domain_admin source always has it and needs nothing set here.
+                </span>
+              </span>
+            </label>
+            <div class="sm:col-span-2 flex items-center gap-3">
+              <admin-button variant="primary" type="submit" [disabled]="busy()">
+                Create the mailbox
+              </admin-button>
+              <admin-busy [busy]="busy()" label="Creating…" />
+            </div>
+          </form>
+        </admin-panel>
+      }
+
+      <admin-panel [bodyClass]="'p-0'">
+        @if (loading()) {
+          <div class="px-5 py-6"><admin-busy [busy]="true" label="Loading mailboxes…" /></div>
+        } @else if (filtered().length === 0) {
+          <admin-empty [text]="query() ? 'No mailbox matches that search.' : 'No mailboxes yet.'" />
+        } @else {
+          <table class="w-full">
+            <thead class="border-b border-slate-200 bg-slate-50">
+              <tr>
+                <th class="{{ head }}">Address</th>
+                <th class="{{ head }}">Source</th>
+                <th class="{{ head }}">State</th>
+                <th class="{{ head }}">Quota</th>
+                <th class="{{ head }}">Used</th>
+                <th class="{{ head }} text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              @for (u of filtered(); track u.address) {
+                <tr>
+                  <td class="{{ cell }}">
+                    <span class="font-medium text-slate-900">{{ u.address }}</span>
+                    @if (u.display_name) {
+                      <span class="block text-xs text-slate-500">{{ u.display_name }}</span>
+                    }
+                  </td>
+                  <td class="{{ cell }}">
+                    {{ u.source }}
+                    @if (u.is_domain_admin) {
+                      <span class="mt-1 block text-xs font-medium text-brand-700">administrator</span>
+                    }
+                  </td>
+                  <td class="{{ cell }}">
+                    <span
+                      class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1"
+                      [class]="
+                        u.enabled
+                          ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+                          : 'bg-slate-100 text-slate-600 ring-slate-200'
+                      "
+                    >
+                      {{ u.enabled ? 'enabled' : 'disabled' }}
+                    </span>
+                    @if (u.must_change_password) {
+                      <span class="mt-1 block text-xs text-amber-700">must change password</span>
+                    }
+                  </td>
+                  <td class="{{ cell }}">{{ bytes(u.quota_bytes) }}</td>
+                  <td class="{{ cell }}">
+                    {{ bytes(u.quota_used_bytes) }}
+                    <span class="block text-xs text-slate-400">
+                      {{ u.quota_message_count }} messages
+                    </span>
+                  </td>
+                  <td class="{{ cell }}">
+                    <div class="flex items-center justify-end gap-2">
+                      <admin-button (pressed)="openPassword(u)">Password</admin-button>
+                      <admin-button (pressed)="openQuota(u)">Quota</admin-button>
+                      @if (canGrantAdmin(u)) {
+                        <admin-button
+                          [variant]="u.is_domain_admin ? 'secondary' : 'primary'"
+                          [disabled]="busy()"
+                          (pressed)="toggleAdmin(u)"
+                        >
+                          {{ u.is_domain_admin ? 'Remove admin' : 'Make admin' }}
+                        </admin-button>
+                      }
+                      <admin-button
+                        [variant]="u.enabled ? 'secondary' : 'primary'"
+                        [disabled]="busy()"
+                        (pressed)="toggleEnabled(u)"
+                      >
+                        {{ u.enabled ? 'Disable' : 'Enable' }}
+                      </admin-button>
+                    </div>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        }
+      </admin-panel>
+
+      @if (passwordFor(); as target) {
+        <admin-panel title="Set a new password for {{ target }}">
+          <form class="flex flex-wrap items-end gap-3" (ngSubmit)="setPassword()">
+            <admin-field
+              label="New password"
+              class="min-w-64 flex-1"
+              hint="The mailbox is signed out everywhere and must change it at the next sign-in."
+            >
+              <input
+                class="{{ inputClass }}"
+                name="password"
+                type="password"
+                autocomplete="new-password"
+                [(ngModel)]="newPassword"
+                required
+              />
+            </admin-field>
+            <admin-button variant="primary" type="submit" [disabled]="busy()">Set password</admin-button>
+            <admin-button (pressed)="passwordFor.set(null)">Cancel</admin-button>
+          </form>
+        </admin-panel>
+      }
+
+      @if (quotaFor(); as target) {
+        <admin-panel title="Quota for {{ target }}">
+          <form class="grid gap-4 sm:grid-cols-2" (ngSubmit)="setQuota()">
+            <admin-field label="Quota (MiB)" hint="Empty means unlimited.">
+              <input
+                class="{{ inputClass }}"
+                name="quota"
+                type="number"
+                min="0"
+                [(ngModel)]="quotaMiB"
+                [placeholder]="target.quota_bytes === null ? 'unlimited' : ''"
+              />
+            </admin-field>
+            <admin-field label="Send limit (per day)" hint="Empty means unlimited.">
+              <input
+                class="{{ inputClass }}"
+                name="sendLimit"
+                type="number"
+                min="0"
+                [(ngModel)]="sendLimit"
+                [placeholder]="target.daily_send_limit === null ? 'unlimited' : ''"
+              />
+            </admin-field>
+            <div class="sm:col-span-2 flex items-center gap-3">
+              <admin-button variant="primary" type="submit" [disabled]="busy()">Save quota</admin-button>
+              <admin-button (pressed)="quotaFor.set(null)">Cancel</admin-button>
+            </div>
+          </form>
+        </admin-panel>
+      }
+    </div>
+  </admin-page>
+  
