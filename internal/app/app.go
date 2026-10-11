@@ -35,13 +35,14 @@ import (
 
 // App holds the long-lived resources shared by every listener.
 type App struct {
-	Config     *config.Config
-	Logger     *slog.Logger
-	DB         *sqlx.DB
-	Blobs      *blobstore.Store
-	HTTPServer *httpapi.Server
-	HTTPListen *http.Server
-	ACMEManager *acme.Manager
+	Config       *config.Config
+	Logger       *slog.Logger
+	DB           *sqlx.DB
+	Blobs        *blobstore.Store
+	HTTPServer   *httpapi.Server
+	HTTPListen   *http.Server
+	ACMEManager  *acme.Manager
+	ACMEHTTPListen *http.Server
 
 	deliveryPool *delivery.Pool
 	inboundSMTPS *inbound.Server
@@ -285,6 +286,17 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		return nil, err
 	}
 
+	// ACME HTTP-01 challenge handler on port 80 (required for Let's Encrypt HTTP challenge).
+	// This must be started before the main HTTP server if both use port 80.
+	if a.ACMEManager != nil {
+		a.ACMEHTTPListen = &http.Server{
+			Addr:              ":80",
+			Handler:           a.ACMEManager.HTTPHandler(),
+			ReadHeaderTimeout: 15 * time.Second,
+		}
+		a.closers = append(a.closers, a.ACMEHTTPListen.Shutdown)
+	}
+
 	// The HTTP listener serves the REST API and, when a web build is present,
 	// the Angular app from the same origin. An empty address means this process
 	// is not the HTTP front end, in which case nothing is bound.
@@ -408,7 +420,7 @@ func (a *App) Serve(ctx context.Context) error {
 		}()
 	}
 
-	if a.HTTPListen == nil {
+	if a.HTTPListen == nil && a.ACMEHTTPListen == nil {
 		if inboundErrCh != nil {
 			return <-inboundErrCh
 		}
@@ -423,6 +435,14 @@ func (a *App) Serve(ctx context.Context) error {
 		}
 		<-ctx.Done()
 		return nil
+	}
+
+	if a.ACMEHTTPListen != nil {
+		go func() {
+			if err := a.ACMEHTTPListen.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				a.Logger.Error("acme http server", "error", err)
+			}
+		}()
 	}
 
 	httpErrCh := make(chan error, 1)

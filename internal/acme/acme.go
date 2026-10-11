@@ -4,18 +4,21 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
+	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 )
 
 type Manager struct {
-	manager *autocert.Manager
-	domains []string
-	email   string
-	mu      sync.RWMutex
-	cert    *tls.Certificate
+	acmeManager *autocert.Manager
+	domains     []string
+	email       string
+	mu          sync.RWMutex
+	cert        *tls.Certificate
+	httpHandler http.Handler
 }
 
 func NewManager(email string, domains []string, cacheDir string) *Manager {
@@ -24,12 +27,20 @@ func NewManager(email string, domains []string, cacheDir string) *Manager {
 		HostPolicy: autocert.HostWhitelist(domains...),
 		Cache:      autocert.DirCache(cacheDir),
 		Email:      email,
+		Client:     &acme.Client{DirectoryURL: "https://acme-v02.api.letsencrypt.org/directory"},
 	}
-	return &Manager{
-		manager: m,
-		domains: domains,
-		email:   email,
+	
+	mgr := &Manager{
+		acmeManager: m,
+		domains:     domains,
+		email:       email,
 	}
+	mgr.httpHandler = mgr.acmeManager.HTTPHandler(nil)
+	return mgr
+}
+
+func (m *Manager) HTTPHandler() http.Handler {
+	return m.httpHandler
 }
 
 func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
@@ -48,7 +59,7 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 		return m.cert, nil
 	}
 
-	cert, err := m.manager.GetCertificate(hello)
+	cert, err := m.acmeManager.GetCertificate(hello)
 	if err != nil {
 		return nil, fmt.Errorf("acme: get certificate: %w", err)
 	}
@@ -65,7 +76,7 @@ func (m *Manager) TLSConfig() *tls.Config {
 
 func (m *Manager) Start(ctx context.Context) error {
 	for _, domain := range m.domains {
-		_, err := m.manager.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
+		_, err := m.acmeManager.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
 		if err != nil {
 			return fmt.Errorf("acme: pre-fetch %s: %w", domain, err)
 		}
@@ -83,7 +94,7 @@ func (m *Manager) renewLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			for _, domain := range m.domains {
-				_, err := m.manager.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
+				_, err := m.acmeManager.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
 				if err != nil {
 					continue
 				}
