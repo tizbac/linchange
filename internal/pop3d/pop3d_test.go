@@ -88,7 +88,7 @@ func setupServerWithDirectory(t *testing.T, dir mailauth.Directory) (*pop3d.Serv
 
 	mailAuth := mailauth.New(db, logger, dir)
 
-	srv, err := pop3d.New(db, blobs, logger, aliases, mailAuth, sharedMailboxes, sharedGrants, cfg)
+	srv, err := pop3d.New(db, blobs, logger, aliases, mailAuth, sharedMailboxes, sharedGrants, cfg, nil)
 	if err != nil {
 		t.Fatalf("create pop3 server: %v", err)
 	}

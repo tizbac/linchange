@@ -1,0 +1,26 @@
+Package: linchange
+Version: 3ac0e91.dirty
+Architecture: amd64
+Maintainer: linchange <admin@linchange.example>
+Description: Self-hosted mail server with webmail, calendar, and admin panel
+ A complete self-hosted mail server with:
+  - SMTP/IMAP/POP3
+  - MAPI/HTTP (Outlook native)
+  - CalDAV/CardDAV
+  - ActiveSync (EAS)
+  - EWS (Exchange Web Services)
+  - Autodiscover
+  - Webmail with rich text editor
+  - Calendar with scheduling assistant
+  - Admin panel for domains, users, aliases, shared mailboxes
+  - DKIM signing
+  - LDAP authentication
+  - Full-text search
+Homepage: https://github.com/linchange/linchange
+License: GPL-3.0-or-later
+Depends: systemd (>= 247), postgresql-client (>= 14), ca-certificates, tzdata
+Recommends: postgresql (>= 14)
+Conflicts: courier-imap, courier-pop, dovecot-imapd, dovecot-pop3d, postfix, exim4
+Provides: mail-transport-agent, imap-server, pop3-server
+Section: mail
+Priority: optional

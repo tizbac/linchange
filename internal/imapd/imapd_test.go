@@ -90,7 +90,7 @@ func setupServerWithDirectory(t *testing.T, dir mailauth.Directory) (*imapd.Serv
 
 	mailAuth := mailauth.New(db, logger, dir)
 
-	srv, err := imapd.New(db, blobs, logger, aliases, mailAuth, sharedMailboxes, sharedGrants, cfg)
+	srv, err := imapd.New(db, blobs, logger, aliases, mailAuth, sharedMailboxes, sharedGrants, cfg, nil)
 	if err != nil {
 		t.Fatalf("create imap server: %v", err)
 	}

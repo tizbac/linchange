@@ -34,6 +34,7 @@ import (
 	"github.com/linchange/linchange/internal/auth/policy"
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/mail"
+	"github.com/linchange/linchange/internal/acme"
 	"github.com/linchange/linchange/internal/store"
 )
 
@@ -90,6 +91,7 @@ func New(db *sqlx.DB, blobs *blobstore.Store,
 	auth *mailauth.Verifier,
 	sharedMailboxes *store.SharedMailboxes, sharedGrants *store.SharedMailboxGrants,
 	cfg *config.Config,
+	acmeManager *acme.Manager,
 ) (*Server, error) {
 
 	var plainServer, tlsServer *imapserver.Server
@@ -147,15 +149,20 @@ func New(db *sqlx.DB, blobs *blobstore.Store,
 	}
 
 	if tlsAddr != "" {
-		tlsCfg := &tls.Config{
-			MinVersion: tls.VersionTLS12,
-		}
-		if cfg.TLS.CertFile != "" && cfg.TLS.KeyFile != "" {
-			cert, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile)
-			if err == nil {
-				tlsCfg.Certificates = []tls.Certificate{cert}
-			} else {
-				log.Warn("failed to load TLS cert", "cert", cfg.TLS.CertFile, "err", err)
+		var tlsCfg *tls.Config
+		if acmeManager != nil {
+			tlsCfg = acmeManager.TLSConfig()
+		} else {
+			tlsCfg = &tls.Config{
+				MinVersion: tls.VersionTLS12,
+			}
+			if cfg.TLS.CertFile != "" && cfg.TLS.KeyFile != "" {
+				cert, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+				if err == nil {
+					tlsCfg.Certificates = []tls.Certificate{cert}
+				} else {
+					log.Warn("failed to load TLS cert", "cert", cfg.TLS.CertFile, "err", err)
+				}
 			}
 		}
 

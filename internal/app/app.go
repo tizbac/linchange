@@ -6,6 +6,7 @@ package app
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -23,6 +24,7 @@ import (
 	"github.com/linchange/linchange/internal/delivery"
 	"github.com/linchange/linchange/internal/dkim"
 	"github.com/linchange/linchange/internal/httpapi"
+	"github.com/linchange/linchange/internal/acme"
 	imapd "github.com/linchange/linchange/internal/imapd"
 	"github.com/linchange/linchange/internal/inbound"
 	"github.com/linchange/linchange/internal/ldapsync"
@@ -39,6 +41,7 @@ type App struct {
 	Blobs      *blobstore.Store
 	HTTPServer *httpapi.Server
 	HTTPListen *http.Server
+	ACMEManager *acme.Manager
 
 	deliveryPool *delivery.Pool
 	inboundSMTPS *inbound.Server
@@ -115,6 +118,19 @@ func New(ctx context.Context, opts Options) (*App, error) {
 	}
 	a.Blobs = blobs
 
+	// Initialize ACME manager if enabled.
+	if cfg.TLS.ACME.Enabled {
+		a.ACMEManager = acme.NewManager(cfg.TLS.ACME.Email, cfg.TLS.ACME.Domains, cfg.TLS.ACME.CacheDir)
+		if err := a.ACMEManager.Start(ctx); err != nil {
+			a.Close(context.Background())
+			return nil, fmt.Errorf("acme: %w", err)
+		}
+		a.OnShutdown(func(context.Context) error {
+			log.Info("acme manager stopped")
+			return nil
+		})
+	}
+
 	// The directory reconcile keeps the directory-backed principals in step
 	// with the directory. It runs on its own clock and is inert when the
 	// configuration does not enable it. Its Stop is registered here, after the
@@ -186,7 +202,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 			log,
 			store.NewSendCounters(),
 		)
-		smtpSrv, err := smtpd.New(*cfg, backend, log)
+		smtpSrv, err := smtpd.New(*cfg, backend, log, a.ACMEManager)
 		if err != nil {
 			a.Close(context.Background())
 			return nil, fmt.Errorf("smtpd: %w", err)
@@ -212,6 +228,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 			store.NewSharedMailboxes(),
 			store.NewSharedMailboxGrants(),
 			cfg,
+			a.ACMEManager,
 		)
 		if err != nil {
 			a.Close(context.Background())
@@ -238,6 +255,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 			store.NewSharedMailboxes(),
 			store.NewSharedMailboxGrants(),
 			cfg,
+			a.ACMEManager,
 		)
 		if err != nil {
 			a.Close(context.Background())
@@ -285,10 +303,17 @@ func New(ctx context.Context, opts Options) (*App, error) {
 			return nil, err
 		}
 		a.HTTPServer = api
+		
+		var tlsConfig *tls.Config
+		if a.ACMEManager != nil {
+			tlsConfig = a.ACMEManager.TLSConfig()
+		}
+		
 		a.HTTPListen = &http.Server{
 			Addr:              addr,
 			Handler:           api.Handler(),
 			ReadHeaderTimeout: 15 * time.Second,
+			TLSConfig:         tlsConfig,
 		}
 		a.closers = append(a.closers, a.HTTPListen.Shutdown)
 	}
@@ -401,7 +426,13 @@ func (a *App) Serve(ctx context.Context) error {
 	}
 
 	httpErrCh := make(chan error, 1)
-	go func() { httpErrCh <- a.HTTPListen.ListenAndServe() }()
+	go func() {
+		if a.ACMEManager != nil {
+			httpErrCh <- a.HTTPListen.ListenAndServeTLS("", "")
+		} else {
+			httpErrCh <- a.HTTPListen.ListenAndServe()
+		}
+	}()
 
 	if smtpErrCh == nil && imapErrCh == nil && pop3ErrCh == nil && inboundErrCh == nil {
 		// Only HTTP.

@@ -25,6 +25,7 @@ import (
 	"github.com/linchange/linchange/internal/delivery"
 	"github.com/linchange/linchange/internal/logging"
 	"github.com/linchange/linchange/internal/mail"
+	"github.com/linchange/linchange/internal/acme"
 	"github.com/linchange/linchange/internal/store"
 )
 
@@ -331,7 +332,7 @@ type Server struct {
 }
 
 // New creates the SMTP submission listeners.
-func New(cfg config.Config, backend *Backend, logger *slog.Logger) (*Server, error) {
+func New(cfg config.Config, backend *Backend, logger *slog.Logger, acmeManager *acme.Manager) (*Server, error) {
 	var httpServer, tlsServer *smtp.Server
 
 	if cfg.Listener.SMTPSubmission.Enabled() {
@@ -351,15 +352,20 @@ func New(cfg config.Config, backend *Backend, logger *slog.Logger) (*Server, err
 	}
 
 	if cfg.Listener.SMTPSubmissionTLS.Enabled() {
-		tlsCfg := &tls.Config{
-			MinVersion: tls.VersionTLS12,
-		}
-		if cfg.TLS.CertFile != "" && cfg.TLS.KeyFile != "" {
-			cert, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile)
-			if err == nil {
-				tlsCfg.Certificates = []tls.Certificate{cert}
-			} else {
-				logger.Warn("failed to load TLS cert", "cert", cfg.TLS.CertFile, "err", err)
+		var tlsCfg *tls.Config
+		if acmeManager != nil {
+			tlsCfg = acmeManager.TLSConfig()
+		} else {
+			tlsCfg = &tls.Config{
+				MinVersion: tls.VersionTLS12,
+			}
+			if cfg.TLS.CertFile != "" && cfg.TLS.KeyFile != "" {
+				cert, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+				if err == nil {
+					tlsCfg.Certificates = []tls.Certificate{cert}
+				} else {
+					logger.Warn("failed to load TLS cert", "cert", cfg.TLS.CertFile, "err", err)
+				}
 			}
 		}
 		tlsServer = smtp.NewServer(backend)
