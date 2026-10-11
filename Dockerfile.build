@@ -1,0 +1,104 @@
+# Multi-stage Dockerfile for building linchange .deb package
+# Stage 1: Builder - compiles Go binary and builds web frontend
+# Stage 2: Packager - creates .deb package structure
+
+# Build stage - uses Debian 13 (trixie) as base
+FROM debian:trixie-slim AS builder
+
+# Install build dependencies including Node.js 22+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    golang-go \
+    curl \
+    ca-certificates \
+    gnupg \
+    dpkg-dev \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 22+ from NodeSource (includes npm)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get update && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /build
+
+# Copy Go module files first for caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy web package files for npm caching
+COPY web/package*.json ./web/
+RUN cd /build/web && npm ci
+
+# Copy all source code
+COPY . .
+
+# Build web frontend
+WORKDIR /build/web
+RUN npm run build
+
+# Build Go binary
+WORKDIR /build
+RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${VERSION:-dev}" -o /build/linchange ./cmd/linchange
+
+# Package stage
+FROM debian:trixie-slim AS packager
+
+# Install packaging tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    dpkg-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /package
+
+# Copy built artifacts
+COPY --from=builder /build/linchange /package/usr/bin/linchange
+COPY --from=builder /build/web/dist/linchange-web/browser /package/usr/share/linchange/web
+
+# Copy config example
+RUN mkdir -p /package/etc/linchange
+COPY config/linchange.example.yaml /package/etc/linchange/linchange.example.yaml
+
+# Create systemd service
+RUN mkdir -p /package/usr/lib/systemd/system
+RUN printf '[Unit]\nDescription=linchange mail server\nAfter=network.target postgresql.service\nWants=postgresql.service\n\n[Service]\nType=simple\nUser=linchange\nGroup=linchange\nExecStart=/usr/bin/linchange --config /etc/linchange/linchange.yaml\nRestart=on-failure\nRestartSec=5\nLimitNOFILE=65536\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nProtectHome=true\nReadWritePaths=/var/lib/linchange /var/log/linchange\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE\n\n[Install]\nWantedBy=multi-user.target\n' > /package/usr/lib/systemd/system/linchange.service
+
+# Create default config
+RUN mkdir -p /package/etc/linchange
+COPY config/linchange.example.yaml /package/etc/linchange/linchange.example.yaml
+
+# Create tmpfiles.d
+RUN mkdir -p /package/usr/lib/tmpfiles.d
+RUN printf 'd /var/lib/linchange 0750 linchange linchange -\nd /var/lib/linchange/blobs 0750 linchange linchange -\nd /var/log/linchange 0750 linchange linchange -\nd /etc/linchange 0750 root linchange -\n' > /package/usr/lib/tmpfiles.d/linchange.conf
+
+# Create sysusers.d
+RUN mkdir -p /package/usr/lib/sysusers.d
+RUN printf 'u linchange - "linchange mail server" /var/lib/linchange\ng linchange - "linchange mail server"\n' > /package/usr/lib/sysusers.d/linchange.conf
+
+# Create logrotate config
+RUN mkdir -p /package/etc/logrotate.d
+RUN printf '/var/log/linchange/*.log {\n    daily\n    missingok\n    rotate 14\n    compress\n    delaycompress\n    notifempty\n    create 0640 linchange linchange\n    sharedscripts\n    postrotate\n        systemctl reload linchange > /dev/null 2>&1 || true\n    endscript\n}\n' > /package/etc/logrotate.d/linchange
+
+# Create DEBIAN control files
+ARG VERSION=dev
+ARG ARCH=amd64
+RUN mkdir -p /package/DEBIAN
+RUN printf 'Package: linchange\nVersion: %s\nArchitecture: %s\nMaintainer: linchange <admin@linchange.example>\nDescription: Self-hosted mail server with webmail, calendar, and admin panel\n A complete self-hosted mail server with:\n  - SMTP/IMAP/POP3\n  - MAPI/HTTP (Outlook native)\n  - CalDAV/CardDAV\n  - ActiveSync (EAS)\n  - EWS (Exchange Web Services)\n  - Autodiscover\n  - Webmail with rich text editor\n  - Calendar with scheduling assistant\n  - Admin panel for domains, users, aliases, shared mailboxes\n  - DKIM signing\n  - LDAP authentication\n  - Full-text search\nHomepage: https://github.com/linchange/linchange\nLicense: GPL-3.0-or-later\nDepends: systemd (>= 247), postgresql-client (>= 14), ca-certificates, tzdata\nRecommends: postgresql (>= 14), nginx, certbot\nConflicts: courier-imap, courier-pop, dovecot-imapd, dovecot-pop3d, postfix, exim4\nProvides: mail-transport-agent, imap-server, pop3-server\nSection: mail\nPriority: optional\n' "${VERSION}" "${ARCH}" > /package/DEBIAN/control
+
+# Create maintainer scripts
+RUN printf '#!/bin/bash\nset -e\n\nif command -v systemd-sysusers >/dev/null; then\n    systemd-sysusers /usr/lib/sysusers.d/linchange.conf\nfi\n\nif command -v systemd-tmpfiles >/dev/null; then\n    systemd-tmpfiles --create /usr/lib/tmpfiles.d/linchange.conf\nfi\n\nchown root:linchange /etc/linchange\nchmod 750 /etc/linchange\n\nsystemctl daemon-reload\nsystemctl enable linchange >/dev/null 2>&1 || true\n\necho "linchange installed. Configure /etc/linchange/linchange.yaml then run: systemctl start linchange"\n' > /package/DEBIAN/postinst
+
+RUN printf '#!/bin/bash\nset -e\n\nif [ "$1" = "remove" ] || [ "$1" = "purge" ]; then\n    systemctl stop linchange >/dev/null 2>&1 || true\n    systemctl disable linchange >/dev/null 2>&1 || true\nfi\n' > /package/DEBIAN/prerm
+
+RUN printf '#!/bin/bash\nset -e\n\nif [ "$1" = "purge" ]; then\n    if command -v systemd-sysusers >/dev/null; then\n        systemd-sysusers --purge /usr/lib/sysusers.d/linchange.conf 2>/dev/null || true\n    fi\n    rm -rf /var/lib/linchange /var/log/linchange /etc/linchange\n    systemctl daemon-reload >/dev/null 2>&1 || true\nfi\n' > /package/DEBIAN/postrm
+
+# Make scripts executable
+RUN chmod 755 /package/DEBIAN/postinst /package/DEBIAN/prerm /package/DEBIAN/postrm
+
+# Final stage - copy the package out using a minimal base
+FROM debian:trixie-slim AS output
+COPY --from=packager /package /package
