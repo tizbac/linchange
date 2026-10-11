@@ -119,15 +119,11 @@ func New(ctx context.Context, opts Options) (*App, error) {
 	}
 	a.Blobs = blobs
 
-	// Initialize ACME manager if enabled.
+	// Initialize ACME manager if enabled (but defer Start until HTTP server is running).
 	if cfg.TLS.ACME.Enabled {
 		a.ACMEManager = acme.NewManager(cfg.TLS.ACME.Email, cfg.TLS.ACME.Domains, cfg.TLS.ACME.CacheDir)
-		if err := a.ACMEManager.Start(ctx); err != nil {
-			a.Close(context.Background())
-			return nil, fmt.Errorf("acme: %w", err)
-		}
-		a.OnShutdown(func(context.Context) error {
-			log.Info("acme manager stopped")
+a.OnShutdown(func(context.Context) error {
+			a.Logger.Info("acme manager stopped")
 			return nil
 		})
 	}
@@ -443,6 +439,13 @@ func (a *App) Serve(ctx context.Context) error {
 				a.Logger.Error("acme http server", "error", err)
 			}
 		}()
+	}
+
+	// Pre-fetch ACME certificates now that HTTP-01 challenge handler is running.
+	if a.ACMEManager != nil {
+		if err := a.ACMEManager.Start(ctx); err != nil {
+			a.Logger.Error("acme pre-fetch failed", "error", err)
+		}
 	}
 
 	httpErrCh := make(chan error, 1)
