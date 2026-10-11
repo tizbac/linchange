@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -282,17 +283,18 @@ a.OnShutdown(func(context.Context) error {
 		return nil, err
 	}
 
-	// ACME HTTP-01 challenge handler on port 80 (required for Let's Encrypt HTTP challenge).
+// ACME HTTP-01 challenge handler on port 80 (required for Let's Encrypt HTTP challenge).
 	// Only start a separate ACME HTTP server if the main HTTP listener is not already on port 80.
 	// If main HTTP is on :80, it will handle ACME challenges via its handler.
 	if a.ACMEManager != nil {
 		httpAddr := cfg.Listener.HTTP.Addr
-		if httpAddr != ":80" && httpAddr != "0.0.0.0:80" && httpAddr != "[::]:80" {
-a.ACMEHTTPListen = &http.Server{
-			Addr:              ":80",
-			Handler:           a.ACMEManager.HTTPHandler(nil),
-			ReadHeaderTimeout: 15 * time.Second,
-		}
+		isPort80 := strings.HasSuffix(httpAddr, ":80") || strings.HasSuffix(httpAddr, ":80/")
+		if !isPort80 {
+			a.ACMEHTTPListen = &http.Server{
+				Addr:              ":80",
+				Handler:           a.ACMEManager.HTTPHandler(nil),
+				ReadHeaderTimeout: 15 * time.Second,
+			}
 			a.closers = append(a.closers, a.ACMEHTTPListen.Shutdown)
 		}
 	}
@@ -456,7 +458,7 @@ func (a *App) Serve(ctx context.Context) error {
 	// If main HTTP is on port 80 and ACME is enabled, wrap handler to serve ACME challenges.
 	if a.HTTPListen != nil && a.ACMEManager != nil {
 		httpAddr := a.Config.Listener.HTTP.Addr
-		if httpAddr == ":80" || httpAddr == "0.0.0.0:80" || httpAddr == "[::]:80" {
+		if strings.HasSuffix(httpAddr, ":80") || strings.HasSuffix(httpAddr, ":80/") {
 			acmeHandler := a.ACMEManager.HTTPHandler(a.HTTPListen.Handler)
 			a.HTTPListen.Handler = acmeHandler
 		}
