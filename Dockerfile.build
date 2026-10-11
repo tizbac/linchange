@@ -99,6 +99,9 @@ RUN printf '#!/bin/bash\nset -e\n\nif [ "$1" = "purge" ]; then\n    if command -
 # Make scripts executable
 RUN chmod 755 /package/DEBIAN/postinst /package/DEBIAN/prerm /package/DEBIAN/postrm
 
+# Build the .deb package
+RUN dpkg-deb --build /package /package.deb
+
 # Final stage - copy the package out using a minimal base
 FROM debian:trixie-slim AS output
-COPY --from=packager /package /package
+COPY --from=packager /package.deb /package.deb
