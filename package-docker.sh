@@ -23,6 +23,7 @@ echo "Building ${PROJECT_NAME}_${VERSION}_${ARCH}.deb using Docker"
 # Build Docker image
 echo "Building Docker build image..."
 docker build \
+    --no-cache \
     --build-arg VERSION="${VERSION}" \
     --build-arg ARCH="${ARCH}" \
     -f "${SCRIPT_DIR}/Dockerfile.build" \

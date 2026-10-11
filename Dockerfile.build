@@ -77,7 +77,7 @@ RUN printf 'd /var/lib/linchange 0750 linchange linchange -\nd /var/lib/linchang
 
 # Create sysusers.d
 RUN mkdir -p /package/usr/lib/sysusers.d
-RUN printf 'u linchange - "linchange mail server" /var/lib/linchange\ng linchange - "linchange mail server"\n' > /package/usr/lib/sysusers.d/linchange.conf
+RUN printf 'u linchange - "linchange mail server" /var/lib/linchange\ng linchange\n' > /package/usr/lib/sysusers.d/linchange.conf
 
 # Create logrotate config
 RUN mkdir -p /package/etc/logrotate.d
@@ -87,7 +87,7 @@ RUN printf '/var/log/linchange/*.log {\n    daily\n    missingok\n    rotate 14\
 ARG VERSION=dev
 ARG ARCH=amd64
 RUN mkdir -p /package/DEBIAN
-RUN printf 'Package: linchange\nVersion: %s\nArchitecture: %s\nMaintainer: linchange <admin@linchange.example>\nDescription: Self-hosted mail server with webmail, calendar, and admin panel\n A complete self-hosted mail server with:\n  - SMTP/IMAP/POP3\n  - MAPI/HTTP (Outlook native)\n  - CalDAV/CardDAV\n  - ActiveSync (EAS)\n  - EWS (Exchange Web Services)\n  - Autodiscover\n  - Webmail with rich text editor\n  - Calendar with scheduling assistant\n  - Admin panel for domains, users, aliases, shared mailboxes\n  - DKIM signing\n  - LDAP authentication\n  - Full-text search\nHomepage: https://github.com/linchange/linchange\nLicense: GPL-3.0-or-later\nDepends: systemd (>= 247), postgresql-client (>= 14), ca-certificates, tzdata\nRecommends: postgresql (>= 14), nginx, certbot\nConflicts: courier-imap, courier-pop, dovecot-imapd, dovecot-pop3d, postfix, exim4\nProvides: mail-transport-agent, imap-server, pop3-server\nSection: mail\nPriority: optional\n' "${VERSION}" "${ARCH}" > /package/DEBIAN/control
+RUN printf 'Package: linchange\nVersion: %s\nArchitecture: %s\nMaintainer: linchange <admin@linchange.example>\nDescription: Self-hosted mail server with webmail, calendar, and admin panel\n A complete self-hosted mail server with:\n  - SMTP/IMAP/POP3\n  - MAPI/HTTP (Outlook native)\n  - CalDAV/CardDAV\n  - ActiveSync (EAS)\n  - EWS (Exchange Web Services)\n  - Autodiscover\n  - Webmail with rich text editor\n  - Calendar with scheduling assistant\n  - Admin panel for domains, users, aliases, shared mailboxes\n  - DKIM signing\n  - LDAP authentication\n  - Full-text search\nHomepage: https://github.com/linchange/linchange\nLicense: GPL-3.0-or-later\nDepends: systemd (>= 247), postgresql-client (>= 14), ca-certificates, tzdata\nRecommends: postgresql (>= 14)\nConflicts: courier-imap, courier-pop, dovecot-imapd, dovecot-pop3d, postfix, exim4\nProvides: mail-transport-agent, imap-server, pop3-server\nSection: mail\nPriority: optional\n' "${VERSION}" "${ARCH}" > /package/DEBIAN/control
 
 # Create maintainer scripts
 RUN printf '#!/bin/bash\nset -e\n\nif command -v systemd-sysusers >/dev/null; then\n    systemd-sysusers /usr/lib/sysusers.d/linchange.conf\nfi\n\nif command -v systemd-tmpfiles >/dev/null; then\n    systemd-tmpfiles --create /usr/lib/tmpfiles.d/linchange.conf\nfi\n\nchown root:linchange /etc/linchange\nchmod 750 /etc/linchange\n\nsystemctl daemon-reload\nsystemctl enable linchange >/dev/null 2>&1 || true\n\necho "linchange installed. Configure /etc/linchange/linchange.yaml then run: systemctl start linchange"\n' > /package/DEBIAN/postinst
