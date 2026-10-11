@@ -24,17 +24,18 @@ echo "Building ${PROJECT_NAME}_${VERSION}_${ARCH}.deb using Docker"
 echo "Building Docker build image..."
 docker build \
     --no-cache \
+    --target packager \
     --build-arg VERSION="${VERSION}" \
     --build-arg ARCH="${ARCH}" \
     -f "${SCRIPT_DIR}/Dockerfile.build" \
-    -t "linchange-builder:${VERSION}" \
+    -t "linchange-builder:${VERSION}-packager" \
     "${SCRIPT_DIR}"
 
 # Run container to build package
 echo "Running build container..."
 docker run --rm \
     -v "${OUTPUT_DIR}:/output" \
-    "linchange-builder:${VERSION}" \
+    "linchange-builder:${VERSION}-packager" \
     cp /package.deb "/output/${PROJECT_NAME}_${VERSION}_${ARCH}.deb"
 
 echo "Package created: ${OUTPUT_DEB}"
