@@ -283,14 +283,18 @@ a.OnShutdown(func(context.Context) error {
 	}
 
 	// ACME HTTP-01 challenge handler on port 80 (required for Let's Encrypt HTTP challenge).
-	// This must be started before the main HTTP server if both use port 80.
+	// Only start a separate ACME HTTP server if the main HTTP listener is not already on port 80.
+	// If main HTTP is on :80, it will handle ACME challenges via its handler.
 	if a.ACMEManager != nil {
-		a.ACMEHTTPListen = &http.Server{
+		httpAddr := cfg.Listener.HTTP.Addr
+		if httpAddr != ":80" && httpAddr != "0.0.0.0:80" && httpAddr != "[::]:80" {
+a.ACMEHTTPListen = &http.Server{
 			Addr:              ":80",
-			Handler:           a.ACMEManager.HTTPHandler(),
+			Handler:           a.ACMEManager.HTTPHandler(nil),
 			ReadHeaderTimeout: 15 * time.Second,
 		}
-		a.closers = append(a.closers, a.ACMEHTTPListen.Shutdown)
+			a.closers = append(a.closers, a.ACMEHTTPListen.Shutdown)
+		}
 	}
 
 	// The HTTP listener serves the REST API and, when a web build is present,
@@ -433,6 +437,7 @@ func (a *App) Serve(ctx context.Context) error {
 		return nil
 	}
 
+	// Start ACME HTTP-01 challenge server on port 80 if main HTTP is not on 80.
 	if a.ACMEHTTPListen != nil {
 		go func() {
 			if err := a.ACMEHTTPListen.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -448,16 +453,36 @@ func (a *App) Serve(ctx context.Context) error {
 		}
 	}
 
+	// If main HTTP is on port 80 and ACME is enabled, wrap handler to serve ACME challenges.
+	if a.HTTPListen != nil && a.ACMEManager != nil {
+		httpAddr := a.Config.Listener.HTTP.Addr
+		if httpAddr == ":80" || httpAddr == "0.0.0.0:80" || httpAddr == "[::]:80" {
+			acmeHandler := a.ACMEManager.HTTPHandler(a.HTTPListen.Handler)
+			a.HTTPListen.Handler = acmeHandler
+		}
+	}
+
+	// Start HTTPS server if configured and ACME is available.
+	var httpsErrCh chan error
+	if a.ACMEManager != nil && a.Config.Listener.HTTPS.Addr != "" {
+		httpsErrCh = make(chan error, 1)
+		go func() {
+			httpsErrCh <- a.HTTPListen.ListenAndServeTLS("", "")
+		}()
+	}
+
 	httpErrCh := make(chan error, 1)
 	go func() {
-		if a.ACMEManager != nil {
+		if a.ACMEManager != nil && a.Config.Listener.HTTPS.Addr == "" {
+			// ACME enabled but no HTTPS addr - still serve TLS on HTTP port if needed
 			httpErrCh <- a.HTTPListen.ListenAndServeTLS("", "")
 		} else {
 			httpErrCh <- a.HTTPListen.ListenAndServe()
 		}
 	}()
 
-	if smtpErrCh == nil && imapErrCh == nil && pop3ErrCh == nil && inboundErrCh == nil {
+	hasOtherListeners := smtpErrCh != nil || imapErrCh != nil || pop3ErrCh != nil || inboundErrCh != nil || httpsErrCh != nil
+	if !hasOtherListeners {
 		// Only HTTP.
 		select {
 		case <-ctx.Done():
@@ -480,6 +505,8 @@ func (a *App) Serve(ctx context.Context) error {
 	case err := <-imapErrCh:
 		return err
 	case err := <-pop3ErrCh:
+		return err
+	case err := <-httpsErrCh:
 		return err
 	}
 }

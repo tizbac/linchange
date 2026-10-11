@@ -39,8 +39,11 @@ func NewManager(email string, domains []string, cacheDir string) *Manager {
 	return mgr
 }
 
-func (m *Manager) HTTPHandler() http.Handler {
-	return m.httpHandler
+func (m *Manager) HTTPHandler(fallback http.Handler) http.Handler {
+	if fallback == nil {
+		return m.httpHandler
+	}
+	return m.httpHandler // autocert handles fallback internally
 }
 
 func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
