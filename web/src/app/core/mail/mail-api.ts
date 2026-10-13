@@ -28,8 +28,9 @@ export class MailApi {
 
   // --- folders ---
 
-  listFolders(): Promise<{ folders: Folder[] }> {
-    return this.fetch('/folders');
+  listFolders(owner?: string): Promise<{ folders: Folder[] }> {
+    const query = owner ? `?owner=${encodeURIComponent(owner)}` : '';
+    return this.fetch(`/folders${query}`);
   }
 
   createFolder(name: string): Promise<Folder> {

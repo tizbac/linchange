@@ -81,13 +81,29 @@ interface ListData {
               Shared with you
             </div>
             @for (s of shared(); track s.address) {
-              <div class="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-slate-600">
+              <div class="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-slate-600 cursor-pointer hover:bg-slate-50"
+                   (click)="selectShared(s)">
                 <app-mail-icon name="users" class="text-slate-400" />
                 <span class="min-w-0 flex-1 truncate" [title]="s.address">
                   {{ s.display_name || s.address }}
                 </span>
                 <span class="text-[11px] uppercase text-slate-400">{{ s.level }}</span>
+                <app-mail-icon name="chevron-right" class="text-slate-400" />
               </div>
+              @if (selectedShared() === s.address) {
+                @for (f of sharedFolders().get(s.address) || []; track f.id) {
+                  <button
+                    class="w-full flex items-center gap-2 ml-6 rounded-lg px-2 py-1.5 text-sm text-slate-600 hover:bg-slate-50 transition"
+                    (click)="selectFolder(f)"
+                    [class.bg-brand-50]="selectedFolderId() === f.id"
+                    [class.text-brand-700]="selectedFolderId() === f.id"
+                  >
+                    <app-mail-icon [name]="folderIcon(f.special_use)" class="text-slate-400" />
+                    <span class="min-w-0 flex-1 truncate">{{ f.name }}</span>
+                    <span class="text-xs text-slate-400">{{ f.total }}</span>
+                  </button>
+                }
+              }
             }
           }
         </nav>
@@ -368,6 +384,8 @@ export class MailComponent implements OnInit {
 
   readonly folders = signal<Folder[]>([]);
   readonly shared = signal<SharedMailbox[]>([]);
+  readonly sharedFolders = signal<Map<string, Folder[]>>(new Map());
+  readonly selectedShared = signal<string | null>(null);
   readonly selectedFolderId = signal<number | null>(null);
   readonly selection = signal<MailSelection>({ kind: 'none' });
   readonly searchQuery = signal<string | null>(null);
@@ -445,6 +463,7 @@ export class MailComponent implements OnInit {
 
   protected selectFolder(f: Folder): void {
     this.selectedFolderId.set(f.id);
+    this.selectedShared.set(null);
     this.searchQuery.set(null);
     this.searchInput = '';
     this.unreadOnly.set(false);
@@ -453,6 +472,31 @@ export class MailComponent implements OnInit {
     this.selectedIds.set([]);
     this.selection.set({ kind: 'none' });
     void this.loadList(true);
+  }
+
+  protected async selectShared(s: SharedMailbox): Promise<void> {
+    this.selectedShared.set(s.address);
+    this.selectedFolderId.set(null);
+    this.searchQuery.set(null);
+    this.searchInput = '';
+    this.unreadOnly.set(false);
+    this.flaggedOnly.set(false);
+    this.viewMode.set('messages');
+    this.selectedIds.set([]);
+    this.selection.set({ kind: 'none' });
+
+    const cached = this.sharedFolders().get(s.address);
+    if (cached) {
+      // Folders already loaded
+    } else {
+      try {
+        const res = await this.api.listFolders(s.address);
+        const folders = res.folders ?? [];
+        this.sharedFolders.update(m => new Map(m).set(s.address, folders));
+      } catch (err) {
+        this.error.set(errorMessage(err));
+      }
+    }
   }
 
   protected switchView(mode: 'messages' | 'threads'): void {

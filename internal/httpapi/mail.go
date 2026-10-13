@@ -354,7 +354,17 @@ func queryTime(r *http.Request, name string) time.Time {
 // ---------------------------------------------------------------------------
 
 func (s *Server) handleListFolders(w http.ResponseWriter, r *http.Request) {
-	folders, err := s.mail.Folders(r.Context(), mailOwner(r))
+	owner := mailOwner(r)
+	if v := r.URL.Query().Get("owner"); v != "" {
+		// Caller requests folders of a shared mailbox. Check they have access.
+		access, err := s.grants.Access(r.Context(), s.db, v, owner)
+		if err != nil || !access.AtLeast(policy.GrantRead) {
+			s.writeMailError(w, r, webmail.ErrDenied)
+			return
+		}
+		owner = v
+	}
+	folders, err := s.mail.Folders(r.Context(), owner)
 	if err != nil {
 		s.writeMailError(w, r, err)
 		return
