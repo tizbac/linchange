@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -553,7 +554,11 @@ func (s *Server) updateSharedMailbox(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "auto_reply_expires_at is not a timestamp")
 		return
 	}
-	box, err := s.admin.UpdateSharedMailbox(r.Context(), Principal(r.Context()), chi.URLParam(r, "address"),
+	shared, err := url.PathUnescape(chi.URLParam(r, "address"))
+	if err != nil {
+		shared = chi.URLParam(r, "address")
+	}
+	box, err := s.admin.UpdateSharedMailbox(r.Context(), Principal(r.Context()), shared,
 		store.UpdateSharedMailboxRequest{
 			DisplayName:        in.DisplayName,
 			Description:        in.Description,
@@ -572,8 +577,12 @@ func (s *Server) updateSharedMailbox(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) undeclareSharedMailbox(w http.ResponseWriter, r *http.Request) {
+	shared, err := url.PathUnescape(chi.URLParam(r, "address"))
+	if err != nil {
+		shared = chi.URLParam(r, "address")
+	}
 	if err := s.admin.UndeclareSharedMailbox(r.Context(), Principal(r.Context()),
-		chi.URLParam(r, "address")); err != nil {
+		shared); err != nil {
 		adminErrors(w, s, err)
 		return
 	}
@@ -586,7 +595,10 @@ func (s *Server) listSharedMailboxMembers(w http.ResponseWriter, r *http.Request
 		adminErrors(w, s, err)
 		return
 	}
-	address := chi.URLParam(r, "address")
+	address, err := url.PathUnescape(chi.URLParam(r, "address"))
+	if err != nil {
+		address = chi.URLParam(r, "address")
+	}
 	for _, box := range boxes {
 		if box.Address == address {
 			s.writeJSON(w, http.StatusOK, map[string]any{"members": viewSharedMailbox(box).Members})
@@ -609,8 +621,12 @@ func (s *Server) grantSharedMailboxAccess(w http.ResponseWriter, r *http.Request
 		s.writeError(w, http.StatusBadRequest, "member is required")
 		return
 	}
+	shared, err := url.PathUnescape(chi.URLParam(r, "address"))
+	if err != nil {
+		shared = chi.URLParam(r, "address")
+	}
 	if err := s.admin.GrantSharedMailboxAccess(r.Context(), Principal(r.Context()),
-		chi.URLParam(r, "address"), in.Member, in.Level); err != nil {
+		shared, in.Member, in.Level); err != nil {
 		adminErrors(w, s, err)
 		return
 	}
@@ -629,8 +645,12 @@ func (s *Server) revokeSharedMailboxAccess(w http.ResponseWriter, r *http.Reques
 		s.writeError(w, http.StatusBadRequest, "member is required")
 		return
 	}
+	shared, err := url.PathUnescape(chi.URLParam(r, "address"))
+	if err != nil {
+		shared = chi.URLParam(r, "address")
+	}
 	if err := s.admin.RevokeSharedMailboxAccess(r.Context(), Principal(r.Context()),
-		chi.URLParam(r, "address"), in.Member); err != nil {
+		shared, in.Member); err != nil {
 		adminErrors(w, s, err)
 		return
 	}
