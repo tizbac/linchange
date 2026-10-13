@@ -70,15 +70,19 @@ func (s *Server) handleListCalendars(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, mapErrorCode(err), err.Error())
 		return
 	}
-	// Also include workgroup calendars the principal belongs to
-	for _, cal := range calendars {
-		if cal.IsWorkgroup() {
-			// Already included by ByOwner? No - ByOwner only returns owned.
-			// We need to list workgroup calendars the user is a member of.
+	// A brand-new account has no calendars until something creates one, and the
+	// web client lists them before it can create an event. EnsureDefault is
+	// idempotent (it returns the existing default when there is one), so calling
+	// it here guarantees the list is never empty for a fresh user without adding
+	// a calendar on every request.
+	if len(calendars) == 0 {
+		cal, err := store.NewCalendars().EnsureDefault(ctx, s.db, who.Address, "UTC")
+		if err != nil {
+			s.writeError(w, mapErrorCode(err), err.Error())
+			return
 		}
+		calendars = append(calendars, cal)
 	}
-	// Simpler: list all calendars the principal can read
-	// For now, return owned calendars; workgroup calendars can be queried by ID
 	s.writeJSON(w, http.StatusOK, listCalendarsResponse{Calendars: calendars})
 }
 

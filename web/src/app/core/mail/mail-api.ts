@@ -5,6 +5,8 @@ import {
   ComposeRequest,
   Cursor,
   Folder,
+  ImportJob,
+  ImportJobRequest,
   MessageDetail,
   MessageSummary,
   OwnAlias,
@@ -179,6 +181,28 @@ export class MailApi {
 
   shared(): Promise<{ shared: SharedMailbox[] }> {
     return this.fetch('/shared');
+  }
+
+  // --- imports ---
+
+  listImports(): Promise<{ imports: ImportJob[] }> {
+    return this.fetch('/imports');
+  }
+
+  createImport(body: ImportJobRequest): Promise<ImportJob> {
+    return this.post('/imports', body);
+  }
+
+  getImport(id: number): Promise<ImportJob> {
+    return this.fetch(`/imports/${id}`);
+  }
+
+  cancelImport(id: number): Promise<ImportJob> {
+    return this.del(`/imports/${id}`);
+  }
+
+  remoteFolders(body: Omit<ImportJobRequest, 'source_root' | 'target_root'>): Promise<{ folders: string[] }> {
+    return this.post('/imports/remote-folders', body);
   }
 
   private fetch<T>(path: string): Promise<T> {

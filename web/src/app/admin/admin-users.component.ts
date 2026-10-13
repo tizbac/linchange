@@ -6,6 +6,8 @@ import { errorMessage } from '../core/http-error';
 import {
   AdminButton,
   Busy,
+  Dropdown,
+  DropdownItem,
   Field,
   Notice,
   PageEmpty,
@@ -25,6 +27,8 @@ import { AdminPageComponent } from '../core/admin/admin-page.component';
     FormsModule,
     AdminButton,
     Busy,
+    Dropdown,
+    DropdownItem,
     Field,
     Notice,
     PageEmpty,

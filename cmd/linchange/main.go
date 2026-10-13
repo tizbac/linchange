@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -25,6 +26,19 @@ import (
 const version = "0.1.0"
 
 func main() {
+	// Subcommands are recognised before flag parsing: the server itself takes
+	// only flags, so anything in the first position that is not a flag is a
+	// subcommand name.
+	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
+		switch os.Args[1] {
+		case "create-admin":
+			if err := runCreateAdmin(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "linchange create-admin: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+	}
 	if err := run(os.Args[1:]); err != nil {
 		// Startup failures are reported on stderr, not through the logger,
 		// because the logger may be what failed to initialise.
@@ -41,6 +55,7 @@ func run(args []string) error {
 
 Usage:
   linchange --config <path.yaml>
+  linchange create-admin --config <path.yaml> --email <address>
 
 Flags:
 `, version)

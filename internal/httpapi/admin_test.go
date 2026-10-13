@@ -270,9 +270,9 @@ func TestAdminSharedMailboxAndMembers(t *testing.T) {
 		t.Fatalf("a malformed colour was accepted: %v", body)
 	}
 
-	code, _ = do(t, srv, http.MethodPut,
-		"/api/v1/admin/shared-mailboxes/support@example.com/members/bob@example.com",
-		map[string]any{"level": "editor"}, headers)
+	code, _ = do(t, srv, http.MethodPost,
+		"/api/v1/admin/shared-mailboxes/support@example.com/members",
+		map[string]any{"member": "bob@example.com", "level": "editor"}, headers)
 	if code != http.StatusNoContent {
 		t.Fatalf("granting access = %d, want 204", code)
 	}
@@ -292,22 +292,121 @@ func TestAdminSharedMailboxAndMembers(t *testing.T) {
 	}
 
 	// A grant to itself is refused, since the owner already has every right.
-	code, body = do(t, srv, http.MethodPut,
-		"/api/v1/admin/shared-mailboxes/support@example.com/members/support@example.com",
-		map[string]any{"level": "owner"}, headers)
+	code, body = do(t, srv, http.MethodPost,
+		"/api/v1/admin/shared-mailboxes/support@example.com/members",
+		map[string]any{"member": "support@example.com", "level": "owner"}, headers)
 	if code != http.StatusBadRequest {
 		t.Fatalf("a self-grant = %d %v, want 400", code, body)
 	}
 
 	code, _ = do(t, srv, http.MethodDelete,
-		"/api/v1/admin/shared-mailboxes/support@example.com/members/bob@example.com", nil, headers)
+		"/api/v1/admin/shared-mailboxes/support@example.com/members",
+		map[string]any{"member": "bob@example.com"}, headers)
 	if code != http.StatusNoContent {
 		t.Fatalf("revoking access = %d, want 204", code)
 	}
 	code, _ = do(t, srv, http.MethodDelete,
-		"/api/v1/admin/shared-mailboxes/support@example.com/members/bob@example.com", nil, headers)
+		"/api/v1/admin/shared-mailboxes/support@example.com/members",
+		map[string]any{"member": "bob@example.com"}, headers)
 	if code != http.StatusNotFound {
 		t.Errorf("revoking twice = %d, want 404", code)
+	}
+}
+
+// declareSharedBox provisions a shared principal and declares it, which is the
+// fixture every member-grant test needs.
+func declareSharedBox(t *testing.T, srv *httpapi.Server, db *sqlx.DB, headers map[string]string, address string) {
+	t.Helper()
+	seedUser(t, db, address, "shared", true, true)
+	if code, body := do(t, srv, http.MethodPost, "/api/v1/admin/shared-mailboxes",
+		map[string]any{"address": address, "display_name": "Support"}, headers); code != http.StatusCreated {
+		t.Fatalf("declaring %s = %d %v, want 201", address, code, body)
+	}
+}
+
+// Granting a member twice must change the level, not fail. The second grant is
+// an ON CONFLICT DO UPDATE, and a member guard that also fired for UPDATE used
+// to refuse it as a 409 conflict - the reported bug.
+func TestAdminSharedMailboxMemberGrantIsRepeatable(t *testing.T) {
+	srv, db := newAdminServer(t)
+	_, headers := seedAdmin(t, srv, db)
+	seedUser(t, db, "bob@example.com", "local", true, true)
+	seedUser(t, db, "carol@example.com", "local", true, true)
+	declareSharedBox(t, srv, db, headers, "support@example.com")
+
+	const members = "/api/v1/admin/shared-mailboxes/support@example.com/members"
+
+	if code, body := do(t, srv, http.MethodPost, members,
+		map[string]any{"member": "bob@example.com", "level": "read"}, headers); code != http.StatusNoContent {
+		t.Fatalf("granting read = %d %v, want 204", code, body)
+	}
+	if code, body := do(t, srv, http.MethodPost, members,
+		map[string]any{"member": "bob@example.com", "level": "editor"}, headers); code != http.StatusNoContent {
+		t.Fatalf("re-granting as editor = %d %v, want 204", code, body)
+	}
+	if code, body := do(t, srv, http.MethodPost, members,
+		map[string]any{"member": "carol@example.com", "level": "editor"}, headers); code != http.StatusNoContent {
+		t.Fatalf("granting a second member = %d %v, want 204", code, body)
+	}
+
+	code, body := do(t, srv, http.MethodGet, "/api/v1/admin/shared-mailboxes", nil, headers)
+	if code != http.StatusOK {
+		t.Fatalf("listing shared mailboxes = %d %v, want 200", code, body)
+	}
+	boxes, _ := body["shared_mailboxes"].([]any)
+	if len(boxes) != 1 {
+		t.Fatalf("got %d shared mailboxes, want 1: %v", len(boxes), body)
+	}
+	box, _ := boxes[0].(map[string]any)
+	members2, _ := box["members"].([]any)
+	if len(members2) != 2 {
+		t.Fatalf("got %d members, want 2: %v", len(members2), box)
+	}
+	levels := map[string]string{}
+	for _, m := range members2 {
+		row, _ := m.(map[string]any)
+		levels[str(row, "member_address")] = str(row, "level")
+	}
+	if levels["bob@example.com"] != "editor" {
+		t.Errorf("bob's level = %q, want editor after the re-grant", levels["bob@example.com"])
+	}
+	if levels["carol@example.com"] != "editor" {
+		t.Errorf("carol's level = %q, want editor", levels["carol@example.com"])
+	}
+}
+
+// Every refusal a member grant can hit is a request the administrator can fix,
+// so each is a 400 naming what is wrong. None of them may come back as the
+// generic 409 "conflicts with something that already exists".
+func TestAdminSharedMailboxMemberRefusalsAreNotConflicts(t *testing.T) {
+	srv, db := newAdminServer(t)
+	_, headers := seedAdmin(t, srv, db)
+	seedUser(t, db, "bob@example.com", "local", true, true)
+	declareSharedBox(t, srv, db, headers, "support@example.com")
+
+	for _, tc := range []struct{ name, shared, member, wantMsg string }{
+		{"a domain administrator has no mailbox", "support@example.com",
+			"root@example.com", "cannot hold mail"},
+		{"a member that does not exist", "support@example.com",
+			"ghost@example.com", "does not exist"},
+		{"a shared mailbox that was never declared", "undeclared@example.com",
+			"bob@example.com", "not a declared shared mailbox"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, body := do(t, srv, http.MethodPost,
+				"/api/v1/admin/shared-mailboxes/"+tc.shared+"/members",
+				map[string]any{"member": tc.member, "level": "editor"}, headers)
+			if code != http.StatusBadRequest {
+				t.Fatalf("granting = %d %v, want 400", code, body)
+			}
+			got := str(body, "error")
+			if !strings.Contains(got, tc.wantMsg) {
+				t.Errorf("error = %q, want it to mention %q", got, tc.wantMsg)
+			}
+			if strings.Contains(got, "conflicts with something that already exists") {
+				t.Errorf("error = %q, want a specific reason rather than a conflict", got)
+			}
+		})
 	}
 }
 

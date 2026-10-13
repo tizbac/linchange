@@ -7,6 +7,7 @@ import {
   AdminButton,
   Busy,
   Field,
+  Multiselect,
   Notice,
   PageEmpty,
   PageHeader,
@@ -26,6 +27,7 @@ import { AdminPageComponent } from '../core/admin/admin-page.component';
     AdminButton,
     Busy,
     Field,
+    Multiselect,
     Notice,
     PageEmpty,
     PageHeader,
@@ -49,8 +51,9 @@ export class AdminSharedMailboxesComponent implements OnInit {
   protected readonly error = signal('');
   protected readonly ok = signal('');
   protected readonly memberFor = signal('');
+  protected readonly availableUsers = signal<string[]>([]);
 
-  protected memberAddress = '';
+  protected memberAddresses: string[] = [];
   protected memberLevel: SharedMailboxGrant['level'] = 'editor';
   protected draft = {
     address: '',
@@ -67,8 +70,12 @@ export class AdminSharedMailboxesComponent implements OnInit {
     this.loading.set(true);
     this.error.set('');
     try {
-      const res = await this.api.listSharedMailboxes();
-      this.boxes.set(res.shared_mailboxes ?? []);
+      const [boxesRes, usersRes] = await Promise.all([
+        this.api.listSharedMailboxes(),
+        this.api.listUsers(),
+      ]);
+      this.boxes.set(boxesRes.shared_mailboxes ?? []);
+      this.availableUsers.set((usersRes.users ?? []).map(u => u.address));
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {
@@ -99,18 +106,21 @@ export class AdminSharedMailboxesComponent implements OnInit {
 
   protected openMembers(box: SharedMailbox): void {
     this.error.set('');
-    this.memberAddress = '';
+    this.memberAddresses = [];
     this.memberFor.set(this.memberFor() === box.address ? '' : box.address);
   }
 
   protected async addMember(box: SharedMailbox): Promise<void> {
+    if (this.memberAddresses.length === 0) return;
     this.busy.set(true);
     this.error.set('');
     try {
-      await this.api.addSharedMailboxMember(box.address, this.memberAddress.trim(), this.memberLevel);
-      this.ok.set(`${this.memberAddress.trim()} can now reach ${box.address}.`);
+      await Promise.all(this.memberAddresses.map(addr =>
+        this.api.addSharedMailboxMember(box.address, addr, this.memberLevel)
+      ));
+      this.ok.set(`${this.memberAddresses.join(', ')} can now reach ${box.address}.`);
       this.memberFor.set('');
-      this.memberAddress = '';
+      this.memberAddresses = [];
       await this.reload();
     } catch (err) {
       this.error.set(errorMessage(err));

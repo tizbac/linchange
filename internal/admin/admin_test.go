@@ -429,6 +429,27 @@ func TestGrantSharedMailboxAccessRefusesASelfGrant(t *testing.T) {
 	}
 }
 
+// A domain_admin cannot hold mail and therefore cannot be a shared mailbox member.
+func TestGrantSharedMailboxAccessRefusesADomainAdmin(t *testing.T) {
+	svc, _ := newService(t)
+	ctx := context.Background()
+	adm := seedDomainAndAdmin(t, svc)
+
+	if _, err := svc.CreateUser(ctx, adm, admin.CreateUserRequest{
+		Address: "support@example.com", Source: policy.SourceShared,
+	}); err != nil {
+		t.Fatalf("creating the shared principal: %v", err)
+	}
+	if _, err := svc.DeclareSharedMailbox(ctx, adm, store.CreateSharedMailboxRequest{Address: "support@example.com"}); err != nil {
+		t.Fatalf("declaring the shared mailbox: %v", err)
+	}
+
+	err := svc.GrantSharedMailboxAccess(ctx, adm, "support@example.com", "root@example.com", policy.GrantOwner)
+	if !errors.Is(err, admin.ErrInvalid) {
+		t.Fatalf("domain_admin grant = %v, want ErrInvalid", err)
+	}
+}
+
 func TestDeclareSharedMailboxRejectsABadColour(t *testing.T) {
 	svc, _ := newService(t)
 	ctx := context.Background()

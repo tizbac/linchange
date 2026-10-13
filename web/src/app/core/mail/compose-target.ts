@@ -11,6 +11,12 @@ export interface ComposePrefill {
   in_reply_to?: string;
   references?: string[];
   reply_label?: string;
+  // quoted_html and quoted_text are the original message, cited in the body so
+  // the recipient can read what is being answered. quoted_html goes in the
+  // rich-text editor and quoted_text in the plain-text one; both carry the
+  // attribution line ("On <date>, <sender> wrote:") ahead of the citation.
+  quoted_html?: string;
+  quoted_text?: string;
 }
 
 @Injectable({ providedIn: 'root' })

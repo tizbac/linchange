@@ -71,6 +71,8 @@ func (s *Server) mountMail(r chi.Router) {
 		r.Get("/aliases", s.handleOwnAliases)
 		r.Get("/shared", s.handleAccessibleShared)
 
+		s.mountImportRoutes(r)
+
 		r.Get("/signature", s.handleGetSignature)
 		r.Put("/signature", s.handleSaveSignature)
 		r.Delete("/signature", s.handleClearSignature)

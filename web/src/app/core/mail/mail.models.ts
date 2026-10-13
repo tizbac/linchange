@@ -156,3 +156,39 @@ export interface SharedMailbox {
   level: string;
   writable: boolean;
 }
+
+export interface ImportJob {
+  id: number;
+  owner: string;
+  started_by: string;
+  remote_host: string;
+  remote_port: number;
+  remote_tls: string;
+  remote_username: string;
+  accept_self_signed: boolean;
+  source_root: string;
+  target_root: string;
+  status: 'queued' | 'running' | 'completed' | 'cancelled' | 'failed';
+  cancel_requested: boolean;
+  last_error?: string;
+  folders_total: number;
+  folders_done: number;
+  messages_seen: number;
+  messages_imported: number;
+  messages_skipped: number;
+  bytes_imported: number;
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+}
+
+export interface ImportJobRequest {
+  remote_host: string;
+  remote_port?: number;
+  remote_tls?: string;
+  remote_username: string;
+  remote_password: string;
+  accept_self_signed?: boolean;
+  source_root?: string;
+  target_root?: string;
+}

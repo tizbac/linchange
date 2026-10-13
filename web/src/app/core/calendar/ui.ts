@@ -199,6 +199,18 @@ export function toRFC3339(d: Date): string {
   return d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 }
 
+// toLocalInputValue formats a Date for a datetime-local input. Those inputs
+// read and write wall-clock time in the browser's local zone, so building the
+// string from local components (rather than stripping the Z off a UTC string)
+// keeps the prefilled value in the same zone the input will parse it back in.
+export function toLocalInputValue(d: Date): string {
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  );
+}
+
 // addDays returns a new Date with days added.
 export function addDays(d: Date, days: number): Date {
   const out = new Date(d);

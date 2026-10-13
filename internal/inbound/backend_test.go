@@ -2,12 +2,21 @@ package inbound
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"net"
 	"net/textproto"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -130,7 +139,7 @@ func setupInbound(t *testing.T, tune func(*config.Config)) *inboundFixture {
 	dns.ptr["127.0.0.1"] = "mail.example.com"
 	backend.dns = dns
 
-	srv, err := New(*cfg, backend, log)
+	srv, err := New(*cfg, backend, log, nil)
 	if err != nil {
 		t.Fatalf("creating inbound server: %v", err)
 	}
@@ -883,6 +892,127 @@ func TestInboundOffersNoAuth(t *testing.T) {
 	}
 }
 
+// writeSelfSignedCert generates a self-signed certificate for name and writes
+// the PEM cert and key to two files, returning their paths. It is the fixture
+// for any test that needs a real TLS handshake without a CA.
+func writeSelfSignedCert(t *testing.T, name string) (certFile, keyFile string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating key: %v", err)
+	}
+	tmpl := x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: name},
+		DNSNames:              []string{name},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("creating certificate: %v", err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshalling key: %v", err)
+	}
+	certFile = filepath.Join(t.TempDir(), "cert.pem")
+	keyFile = filepath.Join(t.TempDir(), "key.pem")
+	if err := os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+		t.Fatalf("writing cert: %v", err)
+	}
+	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
+		t.Fatalf("writing key: %v", err)
+	}
+	return certFile, keyFile
+}
+
+// With a certificate configured, the inbound port advertises STARTTLS and the
+// upgrade succeeds, after which the session is re-established over TLS.
+func TestInboundOffersStartTLS(t *testing.T) {
+	certFile, keyFile := writeSelfSignedCert(t, "mail.example.com")
+	f := setupInbound(t, func(cfg *config.Config) {
+		cfg.TLS.CertFile = certFile
+		cfg.TLS.KeyFile = keyFile
+	})
+
+	conn, err := net.Dial("tcp", f.addr)
+	if err != nil {
+		t.Fatalf("dialing: %v", err)
+	}
+	defer conn.Close()
+	tp := textproto.NewConn(conn)
+	if _, _, err := tp.ReadResponse(220); err != nil {
+		t.Fatalf("greeting: %v", err)
+	}
+	tp.PrintfLine("EHLO client.example.com")
+	_, ext, err := tp.ReadResponse(250)
+	if err != nil {
+		t.Fatalf("EHLO: %v", err)
+	}
+	if !strings.Contains(ext, "STARTTLS") {
+		t.Fatalf("EHLO did not advertise STARTTLS:\n%s", ext)
+	}
+
+	tp.PrintfLine("STARTTLS")
+	if _, _, err := tp.ReadResponse(220); err != nil {
+		t.Fatalf("STARTTLS: %v", err)
+	}
+	// The certificate is self-signed, so the handshake is verified for liveness
+	// rather than against a CA.
+	tlsConn := tls.Client(conn, &tls.Config{InsecureSkipVerify: true, ServerName: "mail.example.com"})
+	if err := tlsConn.Handshake(); err != nil {
+		t.Fatalf("TLS handshake: %v", err)
+	}
+
+	// A second EHLO over the encrypted channel must also succeed, proving the
+	// session was reset correctly by the upgrade.
+	tp = textproto.NewConn(tlsConn)
+	tp.PrintfLine("EHLO client.example.com")
+	_, ext, err = tp.ReadResponse(250)
+	if err != nil {
+		t.Fatalf("EHLO over TLS: %v", err)
+	}
+	if strings.Contains(ext, "STARTTLS") {
+		t.Errorf("EHLO over TLS re-advertised STARTTLS:\n%s", ext)
+	}
+}
+
+// Without a certificate there is no TLS config, so STARTTLS is neither
+// advertised nor accepted.
+func TestInboundStartTLSOfferedOnlyWithCertificate(t *testing.T) {
+	f := setupInbound(t, nil)
+	conn, err := net.Dial("tcp", f.addr)
+	if err != nil {
+		t.Fatalf("dialing: %v", err)
+	}
+	defer conn.Close()
+	tp := textproto.NewConn(conn)
+	if _, _, err := tp.ReadResponse(220); err != nil {
+		t.Fatalf("greeting: %v", err)
+	}
+	tp.PrintfLine("EHLO client.example.com")
+	_, ext, err := tp.ReadResponse(250)
+	if err != nil {
+		t.Fatalf("EHLO: %v", err)
+	}
+	if strings.Contains(ext, "STARTTLS") {
+		t.Errorf("EHLO advertised STARTTLS with no certificate:\n%s", ext)
+	}
+	tp.PrintfLine("STARTTLS")
+	code, _, err := tp.ReadResponse(0)
+	if err != nil {
+		t.Fatalf("STARTTLS: %v", err)
+	}
+	if code/100 != 5 {
+		t.Errorf("STARTTLS without a certificate = %d, want a 5xx refusal", code)
+	}
+}
+
 // A disabled listener does not listen at all.
 func TestInboundDisabledDoesNotListen(t *testing.T) {
 	dbURL, _ := testdb.URL()
@@ -895,7 +1025,7 @@ func TestInboundDisabledDoesNotListen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("opening blobstore: %v", err)
 	}
-	srv, err := New(*cfg, NewBackend(nil, *cfg, log, blobs), log)
+	srv, err := New(*cfg, NewBackend(nil, *cfg, log, blobs), log, nil)
 	if err != nil {
 		t.Fatalf("creating inbound server: %v", err)
 	}

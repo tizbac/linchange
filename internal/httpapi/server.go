@@ -41,6 +41,7 @@ import (
 	"github.com/linchange/linchange/internal/eas"
 	"github.com/linchange/linchange/internal/ews"
 	"github.com/linchange/linchange/internal/imapd"
+	"github.com/linchange/linchange/internal/imapimport"
 	"github.com/linchange/linchange/internal/mapihttp"
 	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/webmail"
@@ -96,6 +97,10 @@ type Server struct {
 	// service decide with, so there is one answer rather than three.
 	policies  policy.Policy
 	staticDir string
+	// imports runs remote-IMAP import jobs. It is nil when the application
+	// did not build one (tests that never touch it); the routes are then
+	// simply not mounted.
+	imports *imapimport.Service
 }
 
 // Options are the inputs to New.
@@ -126,6 +131,9 @@ type Options struct {
 	// built here from DB and Directory, which refuses directory accounts the
 	// caller did not supply a directory for.
 	MailAuth *mailauth.Verifier
+	// Imports is the remote-IMAP import service. Left nil, the import routes
+	// are not mounted.
+	Imports *imapimport.Service
 }
 
 // New builds a Server from an open database and a loaded config.
@@ -375,6 +383,7 @@ func New(opts Options) (*Server, error) {
 		shared:       store.NewSharedMailboxes(),
 		grants:       store.NewSharedMailboxGrants(),
 		staticDir:    opts.StaticDir,
+		imports:      opts.Imports,
 	}, nil
 }
 

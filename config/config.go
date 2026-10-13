@@ -88,7 +88,13 @@ type Listeners struct {
 type TLS struct {
 	CertFile string `yaml:"cert_file"`
 	KeyFile  string `yaml:"key_file"`
-	ACME     ACME   `yaml:"acme"`
+	// RedirectHTTP makes the plain HTTP listener answer every request with a
+	// permanent redirect to the same URL on HTTPS, so clients that guess
+	// http:// end up where they meant to go. ACME HTTP-01 challenges are
+	// still served on HTTP: without them no certificate could ever be
+	// issued. Defaults to on; set to false to keep serving plain HTTP.
+	RedirectHTTP bool  `yaml:"redirect_http"`
+	ACME         ACME `yaml:"acme"`
 }
 
 // ACME enables automatic certificate issuance.

@@ -18,7 +18,6 @@ type Manager struct {
 	email       string
 	mu          sync.RWMutex
 	cert        *tls.Certificate
-	httpHandler http.Handler
 }
 
 func NewManager(email string, domains []string, cacheDir string) *Manager {
@@ -29,21 +28,18 @@ func NewManager(email string, domains []string, cacheDir string) *Manager {
 		Email:      email,
 		Client:     &acme.Client{DirectoryURL: "https://acme-v02.api.letsencrypt.org/directory"},
 	}
-	
-	mgr := &Manager{
+
+	return &Manager{
 		acmeManager: m,
 		domains:     domains,
 		email:       email,
 	}
-	mgr.httpHandler = mgr.acmeManager.HTTPHandler(nil)
-	return mgr
 }
 
+// HTTPHandler returns a handler that answers ACME HTTP-01 challenges and
+// passes every other request to fallback.
 func (m *Manager) HTTPHandler(fallback http.Handler) http.Handler {
-	if fallback == nil {
-		return m.httpHandler
-	}
-	return m.httpHandler // autocert handles fallback internally
+	return m.acmeManager.HTTPHandler(fallback)
 }
 
 func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {

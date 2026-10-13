@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -253,8 +254,8 @@ func TestSharedMailboxGrantRefusesAnAdministrator(t *testing.T) {
 	}
 
 	err := store.NewSharedMailboxGrants().Grant(ctx, db, shared, admin, policy.GrantOwner, nil)
-	if err != store.ErrConflict {
-		t.Fatalf("granting an administrator access = %v, want ErrConflict", err)
+	if !errors.Is(err, store.ErrNoMailbox) {
+		t.Fatalf("granting an administrator access = %v, want ErrNoMailbox", err)
 	}
 }
 
@@ -266,8 +267,31 @@ func TestSharedMailboxGrantToAnUndeclaredPrincipalFails(t *testing.T) {
 	ctx := context.Background()
 
 	err := store.NewSharedMailboxGrants().Grant(ctx, db, shared, person, policy.GrantRead, nil)
-	if err != store.ErrConflict {
-		t.Fatalf("granting against an undeclared shared mailbox = %v, want ErrConflict", err)
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("granting against an undeclared shared mailbox = %v, want ErrNotFound", err)
+	}
+}
+
+// The member guard must only run for INSERT. It used to run for UPDATE too,
+// which meant the ON CONFLICT DO UPDATE a level change performs was refused by
+// a rule meant for new members - reported to the API as a 409 conflict.
+//
+// pg_trigger.tgtype is a bit field: 1 = ROW, 2 = BEFORE, 4 = INSERT,
+// 16 = UPDATE, so "BEFORE INSERT" is 2+4+1 = 7 and "BEFORE INSERT OR UPDATE"
+// would be 23.
+func TestSharedMailboxGrantGuardFiresOnlyOnInsert(t *testing.T) {
+	db := testMigratedDB(t)
+
+	var tgtype int
+	err := db.Get(&tgtype,
+		`SELECT tgtype FROM pg_trigger
+		 WHERE tgname = 'shared_mailbox_grants_member_guard' AND NOT tgisinternal`)
+	if err != nil {
+		t.Fatalf("reading the grant guard trigger: %v", err)
+	}
+	if tgtype != 7 {
+		t.Errorf("shared_mailbox_grants_member_guard tgtype = %d, want 7 (BEFORE INSERT); "+
+			"an UPDATE will be refused as a conflict", tgtype)
 	}
 }
 

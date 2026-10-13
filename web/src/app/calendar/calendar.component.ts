@@ -38,7 +38,7 @@ import {
   Availability,
   ICalEvent,
 } from '../core/calendar/calendar.models';
-import { formatDateTime, formatDate, startOfDay, endOfDay, toRFC3339, parseRFC3339 } from '../core/calendar/ui';
+import { formatDateTime, formatDate, startOfDay, endOfDay, toRFC3339, parseRFC3339, toLocalInputValue } from '../core/calendar/ui';
 import { NgIf, NgFor, NgClass } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { CalIcon } from '../core/calendar/ui';
@@ -605,23 +605,24 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
   }
 
   handleDateSelect(arg: DateSelectArg): void {
-    const start = toRFC3339(arg.start);
-    const end = toRFC3339(arg.end);
     const defaultCal = this.calendars().find(c => c.is_default) || this.calendars()[0];
-    if (!defaultCal) return;
 
     this.editForm = {
       id: 0,
-      calendarId: defaultCal.id,
+      // Falls back to 0, which the server treats as "my default calendar" and
+      // creates on demand. Guarding on a loaded calendar here silently dropped
+      // every drag-select on a fresh account.
+      calendarId: defaultCal ? defaultCal.id : 0,
       title: '',
-      start: start.replace('Z', '').replace('T', 'T'),
-      end: end.replace('Z', '').replace('T', 'T'),
+      start: toLocalInputValue(arg.start),
+      end: toLocalInputValue(arg.end),
       allDay: arg.allDay,
       location: '',
-      timezone: defaultCal.timezone || 'Europe/London',
+      timezone: (defaultCal && defaultCal.timezone) || 'UTC',
       sequence: 0,
     };
     this.editingEvent.set(null);
+    this.showEditModal.set(true);
   }
 
   handleEventDrop(arg: EventDropArg): void {
@@ -665,21 +666,22 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
 
   openCreateEvent(): void {
     const defaultCal = this.calendars().find(c => c.is_default) || this.calendars()[0];
-    if (!defaultCal) return;
 
     const now = new Date();
-    const start = toRFC3339(now).replace('Z', '').replace('T', 'T');
-    const end = toRFC3339(new Date(now.getTime() + 3600000)).replace('Z', '').replace('T', 'T');
+    const start = toLocalInputValue(now);
+    const end = toLocalInputValue(new Date(now.getTime() + 3600000));
 
     this.editForm = {
       id: 0,
-      calendarId: defaultCal.id,
+      // 0 means "my default calendar"; the server creates it if the account
+      // does not have one yet, so the button works on a fresh mailbox.
+      calendarId: defaultCal ? defaultCal.id : 0,
       title: '',
       start,
       end,
       allDay: false,
       location: '',
-      timezone: defaultCal.timezone || 'Europe/London',
+      timezone: (defaultCal && defaultCal.timezone) || 'UTC',
       sequence: 0,
     };
     this.editingEvent.set(null);
@@ -695,8 +697,8 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
       id: parseInt(event.id, 10),
       calendarId: ext.calendarId,
       title: ext.summary,
-      start: toRFC3339(startDate).replace('Z', '').replace('T', 'T'),
-      end: toRFC3339(endDate).replace('Z', '').replace('T', 'T'),
+      start: toLocalInputValue(startDate),
+      end: toLocalInputValue(endDate),
       allDay: event.allDay,
       location: ext.location || '',
       timezone: ext.timezone,

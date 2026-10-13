@@ -228,7 +228,11 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 			p.logger.Warn("blob not found for outbox message",
 				"message_id", msg.ID,
 				"blob_sha256", fmt.Sprintf("%x", msg.BlobSHA256))
-			return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, "blob not found")
+			dsnDelay := time.Duration(0)
+	if p.cfg.DSN.Enabled {
+		dsnDelay = p.cfg.DSN.Delay
+	}
+	return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, "blob not found", dsnDelay)
 		}
 		return fmt.Errorf("get blob: %w", err)
 	}
@@ -297,12 +301,16 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 	switch {
 	case IsTransient(err):
 		// Transient failure: schedule retry with backoff.
-		nextDelay, expired := p.cfg.Retry.CalculateBackoff(msg.Attempts, msg.CreatedAt)
-		if expired {
+		nextDelay, ok := p.cfg.Retry.CalculateBackoff(msg.Attempts, msg.CreatedAt)
+		if !ok {
 			p.logger.Info("message lifetime exceeded, marking failed",
 				"message_id", msg.ID,
 				"attempts", msg.Attempts)
-			return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, err.Error())
+			dsnDelay := time.Duration(0)
+		if p.cfg.DSN.Enabled {
+			dsnDelay = p.cfg.DSN.Delay
+		}
+		return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, err.Error(), dsnDelay)
 		}
 
 		nextAttemptAt := time.Now().Add(nextDelay)
@@ -313,13 +321,21 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 
 	case IsPermanent(err):
 		// Permanent failure: all recipients rejected.
-		return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, err.Error())
+		dsnDelay := time.Duration(0)
+		if p.cfg.DSN.Enabled {
+			dsnDelay = p.cfg.DSN.Delay
+		}
+		return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, err.Error(), dsnDelay)
 
 	default:
 		// Unknown error type: treat as transient.
-		nextDelay, expired := p.cfg.Retry.CalculateBackoff(msg.Attempts, msg.CreatedAt)
-		if expired {
-			return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, err.Error())
+		nextDelay, ok := p.cfg.Retry.CalculateBackoff(msg.Attempts, msg.CreatedAt)
+		if !ok {
+			dsnDelay := time.Duration(0)
+		if p.cfg.DSN.Enabled {
+			dsnDelay = p.cfg.DSN.Delay
+		}
+		return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, err.Error(), dsnDelay)
 		}
 		nextAttemptAt := time.Now().Add(nextDelay)
 		return p.cfg.Outbox.MarkDeferred(ctx, nil, msg.ID, msg.Attempts+1, err.Error(), nextAttemptAt)

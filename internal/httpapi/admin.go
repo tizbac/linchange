@@ -44,6 +44,11 @@ func adminErrors(w http.ResponseWriter, s *Server, err error) {
 		// A conflict is a rule refusing the write rather than a fault: the
 		// address is taken, or the change would contradict something.
 		s.writeError(w, http.StatusConflict, "that conflicts with something that already exists")
+	case errors.Is(err, store.ErrNoMailbox):
+		// Not a conflict: nothing exists twice, the principal simply may not
+		// hold mail, which is something the administrator can change.
+		s.writeError(w, http.StatusBadRequest,
+			"that principal cannot hold mail, so it cannot be a member")
 	default:
 		s.log.Error("administrative request failed", "error", err)
 		s.writeError(w, http.StatusInternalServerError, "the request could not be completed")
@@ -103,8 +108,8 @@ func mountAdminRoutes(r chi.Router, s *Server) {
 			r.Patch("/", s.updateSharedMailbox)
 			r.Delete("/", s.undeclareSharedMailbox)
 			r.Get("/members", s.listSharedMailboxMembers)
-			r.Put("/members/{member}", s.grantSharedMailboxAccess)
-			r.Delete("/members/{member}", s.revokeSharedMailboxAccess)
+			r.Post("/members", s.grantSharedMailboxAccess)
+			r.Delete("/members", s.revokeSharedMailboxAccess)
 		})
 	})
 
@@ -114,6 +119,8 @@ func mountAdminRoutes(r chi.Router, s *Server) {
 		r.Delete("/grants/{actor}/{target}", s.revokeImpersonation)
 		r.Get("/who/{target}", s.whoCanImpersonate)
 	})
+
+	s.mountAdminImportRoutes(r)
 
 	r.Get("/audit", s.listAudit)
 }
@@ -591,14 +598,19 @@ func (s *Server) listSharedMailboxMembers(w http.ResponseWriter, r *http.Request
 
 func (s *Server) grantSharedMailboxAccess(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Level policy.GrantLevel `json:"level"`
+		Member string            `json:"member"`
+		Level  policy.GrantLevel `json:"level"`
 	}
 	if err := decodeAdmin(w, r, &in); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
 		return
 	}
+	if in.Member == "" {
+		s.writeError(w, http.StatusBadRequest, "member is required")
+		return
+	}
 	if err := s.admin.GrantSharedMailboxAccess(r.Context(), Principal(r.Context()),
-		chi.URLParam(r, "address"), chi.URLParam(r, "member"), in.Level); err != nil {
+		chi.URLParam(r, "address"), in.Member, in.Level); err != nil {
 		adminErrors(w, s, err)
 		return
 	}
@@ -606,8 +618,19 @@ func (s *Server) grantSharedMailboxAccess(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) revokeSharedMailboxAccess(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Member string `json:"member"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if in.Member == "" {
+		s.writeError(w, http.StatusBadRequest, "member is required")
+		return
+	}
 	if err := s.admin.RevokeSharedMailboxAccess(r.Context(), Principal(r.Context()),
-		chi.URLParam(r, "address"), chi.URLParam(r, "member")); err != nil {
+		chi.URLParam(r, "address"), in.Member); err != nil {
 		adminErrors(w, s, err)
 		return
 	}

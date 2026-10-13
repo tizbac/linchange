@@ -98,6 +98,12 @@ interface ListData {
           >
             <app-mail-icon name="sliders" /> Rules
           </a>
+          <a
+            routerLink="/mail/import"
+            class="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-slate-600 transition hover:bg-slate-100"
+          >
+            <app-mail-icon name="download" /> Import mail
+          </a>
         </div>
       </aside>
 

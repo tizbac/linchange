@@ -28,7 +28,9 @@ database:
   auto_migrate: true
 
 listeners:
-  # Inbound MTA. Unauthenticated, accepts only mail for local domains.
+  # Inbound MTA. Unauthenticated, accepts only mail for local domains. When a
+  # certificate is configured under `tls:` (ACME or a static pair), this port
+  # also advertises STARTTLS so remote senders can encrypt the transfer.
   smtp_inbound: { addr: ":25" }
   # Submission. AUTH required, and only the authenticated user may send.
   smtp_submission: { addr: ":587" }
@@ -56,6 +58,10 @@ tls:
   # certificate, or enable the ACME block instead.
   cert_file: .certs/cert.pem
   key_file: .certs/key.pem
+  # Answer plain HTTP with a permanent redirect to HTTPS. ACME HTTP-01
+  # challenges are exempt, so certificates can still be obtained or renewed.
+  # Only takes effect when listeners.https is set.
+  redirect_http: true
   acme:
     enabled: false
     email: ""

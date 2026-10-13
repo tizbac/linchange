@@ -201,6 +201,7 @@ func New() *Config {
 			SMTPInboundMaxBytes: 52_428_800,
 		},
 		TLS: TLS{
+			RedirectHTTP: true,
 			ACME: ACME{
 				Enabled:  false,
 				CacheDir: "./data/acme",

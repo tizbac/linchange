@@ -19,6 +19,7 @@ import {
   FLAG_SEEN,
   MailIcon,
   addressLabel,
+  buildReplyQuote,
   formatBytes,
   formatDate,
   hasFlag,
@@ -413,12 +414,19 @@ export class MailReaderComponent {
       : [];
     if (msgId) references.push(msgId);
     const subject = /^re:/i.test(d.subject) ? d.subject : `Re: ${d.subject}`;
+    const quote = buildReplyQuote(
+      `On ${formatDate(d.date)}, ${(d.from ?? []).map(addressLabel).join(', ')} wrote:`,
+      d.html_body ?? '',
+      d.text_body ?? '',
+    );
     this.composeTarget.set({
       to,
       subject,
       in_reply_to: msgId,
       references,
       reply_label: `in reply to ${(d.from ?? []).map(addressLabel).join(', ')}`,
+      quoted_html: quote.quoted_html,
+      quoted_text: quote.quoted_text,
     });
     void this.router.navigate(['/mail/compose']);
   }
@@ -442,10 +450,17 @@ export class MailReaderComponent {
   protected forward(): void {
     const d = this.detail();
     if (!d) return;
+    const quote = buildReplyQuote(
+      `---------- Forwarded message ----------\nFrom: ${(d.from ?? []).map(addressLabel).join(', ')}\nDate: ${formatDate(d.date)}\nSubject: ${d.subject}`,
+      d.html_body ?? '',
+      d.text_body ?? '',
+    );
     this.composeTarget.set({
       to: [],
       subject: /^fwd:/i.test(d.subject) ? d.subject : `Fwd: ${d.subject}`,
       reply_label: 'forwarding',
+      quoted_html: quote.quoted_html,
+      quoted_text: quote.quoted_text,
     });
     void this.router.navigate(['/mail/compose']);
   }

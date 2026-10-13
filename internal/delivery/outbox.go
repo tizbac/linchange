@@ -266,11 +266,17 @@ func (r *OutboxRepository) MarkSent(ctx context.Context, tx *sqlx.Tx, messageID 
 }
 
 // MarkFailed marks the message as failed and all its pending recipients as failed.
-func (r *OutboxRepository) MarkFailed(ctx context.Context, tx *sqlx.Tx, messageID int64, attempts int, lastError string) error {
+// If dsnDelay > 0, dsn_at is set to now() + dsnDelay so the DSN processor can
+// generate a bounce after the configured delay.
+func (r *OutboxRepository) MarkFailed(ctx context.Context, tx *sqlx.Tx, messageID int64, attempts int, lastError string, dsnDelay time.Duration) error {
+	dsnAt := "NULL"
+	if dsnDelay > 0 {
+		dsnAt = "now() + interval '" + dsnDelay.String() + "'"
+	}
 	if tx != nil {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE outbox SET state = 'failed', attempts = $1, last_error = $2,
-			failed_at = now() WHERE id = $3`, attempts, lastError, messageID); err != nil {
+			failed_at = now(), dsn_at = `+dsnAt+` WHERE id = $3`, attempts, lastError, messageID); err != nil {
 			return fmt.Errorf("mark failed: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `
@@ -281,7 +287,7 @@ func (r *OutboxRepository) MarkFailed(ctx context.Context, tx *sqlx.Tx, messageI
 	} else {
 		if _, err := r.db.ExecContext(ctx, `
 			UPDATE outbox SET state = 'failed', attempts = $1, last_error = $2,
-			failed_at = now() WHERE id = $3`, attempts, lastError, messageID); err != nil {
+			failed_at = now(), dsn_at = `+dsnAt+` WHERE id = $3`, attempts, lastError, messageID); err != nil {
 			return fmt.Errorf("mark failed: %w", err)
 		}
 		if _, err := r.db.ExecContext(ctx, `

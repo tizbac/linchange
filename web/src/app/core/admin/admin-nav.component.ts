@@ -11,6 +11,7 @@ const TABS: Tab[] = [
   { label: 'Users', path: '/admin/users' },
   { label: 'Aliases', path: '/admin/aliases' },
   { label: 'Shared mailboxes', path: '/admin/shared-mailboxes' },
+  { label: 'Imports', path: '/admin/imports' },
   { label: 'Impersonation', path: '/admin/impersonation' },
   { label: 'Audit log', path: '/admin/audit' },
 ];

@@ -154,26 +154,26 @@
                     </span>
                   </td>
                   <td class="{{ cell }}">
-                    <div class="flex items-center justify-end gap-2">
-                      <admin-button (pressed)="openPassword(u)">Password</admin-button>
-                      <admin-button (pressed)="openQuota(u)">Quota</admin-button>
+                    <admin-dropdown>
+                      <span trigger>Actions</span>
+                      <admin-dropdown-item (pressed)="openPassword(u)">Password</admin-dropdown-item>
+                      <admin-dropdown-item (pressed)="openQuota(u)">Quota</admin-dropdown-item>
                       @if (canGrantAdmin(u)) {
-                        <admin-button
-                          [variant]="u.is_domain_admin ? 'secondary' : 'primary'"
+                        <admin-dropdown-item
+                          [variant]="u.is_domain_admin ? 'default' : 'default'"
                           [disabled]="busy()"
                           (pressed)="toggleAdmin(u)"
                         >
                           {{ u.is_domain_admin ? 'Remove admin' : 'Make admin' }}
-                        </admin-button>
+                        </admin-dropdown-item>
                       }
-                      <admin-button
-                        [variant]="u.enabled ? 'secondary' : 'primary'"
+                      <admin-dropdown-item
                         [disabled]="busy()"
                         (pressed)="toggleEnabled(u)"
                       >
                         {{ u.enabled ? 'Disable' : 'Enable' }}
-                      </admin-button>
-                    </div>
+                      </admin-dropdown-item>
+                    </admin-dropdown>
                   </td>
                 </tr>
               }

@@ -2,7 +2,9 @@ package admin
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
@@ -10,6 +12,8 @@ import (
 	"github.com/linchange/linchange/internal/auth/policy"
 	"github.com/linchange/linchange/internal/store"
 )
+
+func ptr[T any](v T) *T { return &v }
 
 // CreateDomain adds a domain.
 func (s *Service) CreateDomain(ctx context.Context, actor policy.Principal, req store.CreateDomainRequest) (store.Domain, error) {
@@ -239,9 +243,7 @@ func (s *Service) UpdateAliasTargets(ctx context.Context, actor policy.Principal
 // --- shared mailboxes ---
 
 // DeclareSharedMailbox turns an existing shared principal into a team mailbox.
-// The principal and the mailbox are separate acts on purpose: the principal is
-// provisioned first, so an address that is refused for holding mail leaves
-// nothing behind.
+// If the shared principal does not exist, it is created automatically.
 func (s *Service) DeclareSharedMailbox(ctx context.Context, actor policy.Principal, req store.CreateSharedMailboxRequest) (store.SharedMailbox, error) {
 	if err := requireAdmin(actor); err != nil {
 		return store.SharedMailbox{}, err
@@ -255,6 +257,25 @@ func (s *Service) DeclareSharedMailbox(ctx context.Context, actor policy.Princip
 
 	var created store.SharedMailbox
 	err := store.InTx(ctx, s.db, func(q *sqlx.Tx) error {
+		// Ensure the shared principal exists
+		if _, err := s.users.Get(ctx, q, req.Address); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				if err := s.users.Create(ctx, q, store.CreateUserRequest{
+					Address:     req.Address,
+					Source:      policy.SourceShared,
+					DisplayName: req.DisplayName,
+					Enabled:     ptr(true),
+					MailboxEnabled: ptr(true),
+					QuotaBytes:  nil,
+					Timezone:    "UTC",
+					Language:    "en",
+				}); err != nil {
+					return mapStore(err)
+				}
+			} else {
+				return mapStore(err)
+			}
+		}
 		if err := s.shared.Declare(ctx, q, req); err != nil {
 			return mapStore(err)
 		}
@@ -376,8 +397,41 @@ func (s *Service) GrantSharedMailboxAccess(ctx context.Context, actor policy.Pri
 	if strings.EqualFold(shared, member) {
 		return errors.Join(ErrInvalid, errors.New("a shared mailbox cannot be granted to itself"))
 	}
+	// The shared mailbox has to be declared. Without this the foreign key is
+	// the only thing that notices, and a violation of it reports as a conflict
+	// ("that already exists") about the very thing that does not exist.
+	var declared bool
+	if err := s.db.GetContext(ctx, &declared,
+		`SELECT EXISTS (SELECT 1 FROM shared_mailboxes WHERE address = $1)`, shared); err != nil {
+		return err
+	}
+	if !declared {
+		return errors.Join(ErrInvalid,
+			fmt.Errorf("%s is not a declared shared mailbox", shared))
+	}
+	// The member must be able to hold mail (mailbox_enabled = true). Domain
+	// admins and disabled accounts cannot be members; they use impersonation.
+	var canHoldMail bool
+	err := s.db.GetContext(ctx, &canHoldMail,
+		`SELECT mailbox_enabled FROM users WHERE address = $1 AND deleted_at IS NULL`, member)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.Join(ErrInvalid, errors.New("member address does not exist"))
+		}
+		return err
+	}
+	if !canHoldMail {
+		return errors.Join(ErrInvalid, errors.New("member cannot hold mail: only users with an enabled mailbox may be granted access"))
+	}
 	return store.InTx(ctx, s.db, func(q *sqlx.Tx) error {
 		if err := s.grants.Grant(ctx, q, shared, member, level, &actor.Address); err != nil {
+			// The guard trigger is a second opinion on the check above; if it
+			// ever fires the answer is still "this member cannot hold mail",
+			// which the caller can fix, not a conflict with something else.
+			if errors.Is(err, store.ErrNoMailbox) {
+				return errors.Join(ErrInvalid,
+					fmt.Errorf("%s cannot be a member: it cannot hold mail", member))
+			}
 			return mapStore(err)
 		}
 		return s.record(ctx, q, actor, change{

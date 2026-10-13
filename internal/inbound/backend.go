@@ -2,6 +2,7 @@ package inbound
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/linchange/linchange/config"
+	"github.com/linchange/linchange/internal/acme"
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/delivery"
 	imapd "github.com/linchange/linchange/internal/imapd"
@@ -83,7 +85,12 @@ type Server struct {
 
 // New builds the inbound listener, or a disabled Server when the address is
 // not configured.
-func New(cfg config.Config, backend *Backend, log *slog.Logger) (*Server, error) {
+//
+// STARTTLS is offered on this port whenever a certificate is available, either
+// from ACME or from the configured static pair. Remote senders negotiate it to
+// protect the transfer; without a TLS config go-smtp does not advertise the
+// extension at all, which is the honest answer when there is no certificate.
+func New(cfg config.Config, backend *Backend, log *slog.Logger, acmeManager *acme.Manager) (*Server, error) {
 	if !cfg.Listener.SMTPInbound.Enabled() {
 		return &Server{}, nil
 	}
@@ -98,7 +105,33 @@ func New(cfg config.Config, backend *Backend, log *slog.Logger) (*Server, error)
 	s.WriteTimeout = 60 * time.Second
 	s.EnableSMTPUTF8 = true
 	s.ErrorLog = logging.NewPrintf(log)
+	if tlsCfg := serverTLSConfig(cfg, acmeManager, log); tlsCfg != nil {
+		s.TLSConfig = tlsCfg
+	}
 	return &Server{srv: s}, nil
+}
+
+// serverTLSConfig builds the TLS configuration used to answer STARTTLS on the
+// inbound port, preferring ACME over the static certificate pair. It returns
+// nil when neither is configured, which is how the caller learns that STARTTLS
+// cannot be offered.
+func serverTLSConfig(cfg config.Config, acmeManager *acme.Manager, log *slog.Logger) *tls.Config {
+	if acmeManager != nil {
+		return acmeManager.TLSConfig()
+	}
+	if cfg.TLS.CertFile == "" || cfg.TLS.KeyFile == "" {
+		return nil
+	}
+	cert, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+	if err != nil {
+		log.Warn("failed to load TLS cert; STARTTLS will not be offered",
+			"cert", cfg.TLS.CertFile, "err", err)
+		return nil
+	}
+	return &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		Certificates: []tls.Certificate{cert},
+	}
 }
 
 // Enabled reports whether a listener will be started.

@@ -42,6 +42,10 @@ export const routes: Routes = [
         path: 'signature',
         loadComponent: () => import('./settings/signature.component').then((m) => m.SignatureComponent),
       },
+      {
+        path: 'import',
+        loadComponent: () => import('./settings/import.component').then((m) => m.ImportComponent),
+      },
     ],
   },
   {
@@ -83,6 +87,10 @@ export const routes: Routes = [
       {
         path: 'audit',
         loadComponent: () => import('./admin/admin-audit.component').then((m) => m.AdminAuditComponent),
+      },
+      {
+        path: 'imports',
+        loadComponent: () => import('./admin/admin-imports.component').then((m) => m.AdminImportsComponent),
       },
       { path: '**', redirectTo: 'domains' },
     ],

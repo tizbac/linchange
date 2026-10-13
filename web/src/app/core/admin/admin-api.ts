@@ -11,6 +11,7 @@ import {
   SharedMailboxGrant,
   User,
 } from './admin.models';
+import { ImportJob, ImportJobRequest } from '../mail/mail.models';
 
 const API = '/api/v1/admin';
 
@@ -161,17 +162,17 @@ export class AdminApi {
     level: SharedMailboxGrant['level'],
   ): Promise<unknown> {
     return this.request(
-      'put',
-      `/shared-mailboxes/${encodeURIComponent(shared)}/members/${encodeURIComponent(member)}`,
-      { level },
+      'post',
+      `/shared-mailboxes/${encodeURIComponent(shared)}/members`,
+      { member, level },
     );
   }
 
   removeSharedMailboxMember(shared: string, member: string): Promise<unknown> {
     return this.request(
       'delete',
-      `/shared-mailboxes/${encodeURIComponent(shared)}/members/${encodeURIComponent(member)}`,
-      null,
+      `/shared-mailboxes/${encodeURIComponent(shared)}/members`,
+      { member },
     );
   }
 
@@ -218,6 +219,29 @@ export class AdminApi {
     if (filter.limit) parts.push(`limit=${filter.limit}`);
     const query = parts.length ? `?${parts.join('&')}` : '';
     return this.get(`/audit${query}`);
+  }
+
+  // --- imports ---
+
+  listImports(owner?: string): Promise<{ imports: ImportJob[] }> {
+    const query = owner ? `?owner=${encodeURIComponent(owner)}` : '';
+    return this.get(`/imports${query}`);
+  }
+
+  createImport(body: ImportJobRequest & { owner: string }): Promise<ImportJob> {
+    return this.post('/imports', body);
+  }
+
+  getImport(id: number): Promise<ImportJob> {
+    return this.get(`/imports/${id}`);
+  }
+
+  cancelImport(id: number): Promise<ImportJob> {
+    return this.request('delete', `/imports/${id}`, null) as Promise<ImportJob>;
+  }
+
+  remoteFolders(body: Omit<ImportJobRequest, 'source_root' | 'target_root'>): Promise<{ folders: string[] }> {
+    return this.post('/imports/remote-folders', body);
   }
 
   private get<T>(path: string): Promise<T> {

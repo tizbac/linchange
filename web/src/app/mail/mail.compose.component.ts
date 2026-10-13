@@ -328,6 +328,10 @@ export class MailComposeComponent implements OnInit {
       this.inReplyTo = pre.in_reply_to ?? '';
       this.references = pre.references ?? [];
       this.replyLabel.set(pre.reply_label ?? '');
+      // Seed the citation of the original message, so a reply opens with the
+      // text it answers already in the body rather than an empty editor.
+      if (pre.quoted_html) this.bodyHtml.set(pre.quoted_html);
+      if (pre.quoted_text) this.body = pre.quoted_text;
       this.composeTarget.set(null);
     }
     void this.loadAliases();

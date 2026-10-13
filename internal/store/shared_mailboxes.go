@@ -3,9 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jmoiron/sqlx"
 
 	"github.com/linchange/linchange/internal/auth/policy"
@@ -178,6 +180,27 @@ func (g *SharedMailboxGrants) Grant(ctx context.Context, q Querier, shared, memb
 		ON CONFLICT (shared_address, member_address)
 		DO UPDATE SET level = EXCLUDED.level, granted_by = EXCLUDED.granted_by`
 	if _, err := q.ExecContext(ctx, query, shared, member, level, grantedBy); err != nil {
+		// The database is the last line of defence here, and its rules are not
+		// all "already exists": a guard trigger refuses a member who cannot
+		// hold mail, and a foreign key refuses a mailbox that was never
+		// declared. Reporting either as a conflict would tell the administrator
+		// something exists when the opposite is true, so each code keeps its
+		// own sentinel.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			switch pgErr.Code {
+			case "23514": // check_violation
+				if pgErr.ConstraintName == "shared_grant_not_self" {
+					return fmt.Errorf("%w: a shared mailbox cannot be a member of itself", ErrConflict)
+				}
+				return fmt.Errorf("%w: %s cannot hold mail", ErrNoMailbox, member)
+			case "23503": // foreign_key_violation
+				return fmt.Errorf("%w: %s is not a declared shared mailbox, or %s is not a user",
+					ErrNotFound, shared, member)
+			case "23505": // unique_violation
+				return ErrConflict
+			}
+		}
 		if IsConflict(err) {
 			return ErrConflict
 		}

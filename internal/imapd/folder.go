@@ -195,6 +195,15 @@ func (r *MailboxRepo) MoveToNamed(ctx context.Context, db *sqlx.DB, owner string
 	return len(moved), nil
 }
 
+// EnsureNamed returns the id of a folder, creating it with its declared
+// special use when it does not exist yet.
+//
+// It is exported for the import path, which creates destination folders on
+// demand; everything else reaches it through the move helpers above.
+func (r *MailboxRepo) EnsureNamed(ctx context.Context, db *sqlx.DB, owner, name string) (int64, error) {
+	return r.ensureNamed(ctx, db, owner, name)
+}
+
 // ensureNamed returns the id of a folder, creating it with its declared
 // special use when it does not exist yet.
 func (r *MailboxRepo) ensureNamed(ctx context.Context, db *sqlx.DB, owner, name string) (int64, error) {

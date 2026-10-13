@@ -1,0 +1,195 @@
+
+    <admin-page>
+      <admin-nav />
+    <div class="space-y-6">
+      <admin-page-header
+        title="IMAP imports"
+        hint="Pull mail from a remote IMAP server into any mailbox. Messages already present
+          (matched by content) are skipped, so re-running is safe."
+      >
+        <admin-button variant="primary" (pressed)="creating.set(!creating())">
+          {{ creating() ? 'Cancel' : 'New import' }}
+        </admin-button>
+        <admin-button (pressed)="reload()">Refresh</admin-button>
+      </admin-page-header>
+
+      <admin-notice [message]="error()" tone="error" />
+      <admin-notice [message]="ok()" tone="ok" />
+
+      @if (creating()) {
+        <admin-panel title="New import">
+          <form class="grid gap-4 sm:grid-cols-2" (ngSubmit)="startImport()">
+            <admin-field label="Target mailbox" hint="The address that will receive the imported mail.">
+              <input
+                class="{{ inputClass }}"
+                name="owner"
+                [(ngModel)]="draft.owner"
+                required
+                list="import-owner-list"
+                placeholder="user@example.com"
+              />
+              <datalist id="import-owner-list">
+                @for (u of users(); track u.address) {
+                  <option [value]="u.address"></option>
+                }
+              </datalist>
+            </admin-field>
+            <admin-field label="Server host">
+              <input
+                class="{{ inputClass }}"
+                name="host"
+                [(ngModel)]="draft.host"
+                required
+                placeholder="imap.old.example.com"
+              />
+            </admin-field>
+            <admin-field label="Port">
+              <input
+                type="number"
+                class="{{ inputClass }}"
+                name="port"
+                [(ngModel)]="draft.port"
+                placeholder="993"
+              />
+            </admin-field>
+            <admin-field label="Encryption">
+              <select class="{{ inputClass }}" name="tls" [(ngModel)]="draft.tls">
+                <option value="tls">TLS (993)</option>
+                <option value="starttls">STARTTLS (143)</option>
+                <option value="plain">Plain (143)</option>
+              </select>
+            </admin-field>
+            <admin-field label="Username">
+              <input
+                class="{{ inputClass }}"
+                name="username"
+                [(ngModel)]="draft.username"
+                required
+                placeholder="user&#64;old.example.com"
+              />
+            </admin-field>
+            <admin-field label="Password">
+              <input
+                type="password"
+                class="{{ inputClass }}"
+                name="password"
+                [(ngModel)]="draft.password"
+                required
+              />
+            </admin-field>
+            <label class="flex items-center gap-2 self-end pb-1.5 text-sm text-slate-700">
+              <input type="checkbox" name="acceptSelfSigned" [(ngModel)]="draft.acceptSelfSigned" />
+              Accept self-signed certificate
+            </label>
+            <admin-field label="Source folder (blank = all)">
+              <input
+                class="{{ inputClass }}"
+                name="sourceRoot"
+                [(ngModel)]="draft.sourceRoot"
+                placeholder="INBOX"
+              />
+            </admin-field>
+            <admin-field label="Target folder prefix (blank = root)">
+              <input
+                class="{{ inputClass }}"
+                name="targetRoot"
+                [(ngModel)]="draft.targetRoot"
+                placeholder="Imported"
+              />
+            </admin-field>
+            <div class="sm:col-span-2 flex items-center gap-3">
+              <admin-button variant="primary" type="submit" [disabled]="busy()">
+                Start import
+              </admin-button>
+              <admin-button type="button" [disabled]="busy()" (pressed)="listRemoteFolders()">
+                List folders
+              </admin-button>
+              <admin-busy [busy]="busy()" label="Working…" />
+            </div>
+          </form>
+
+          @if (remoteFolders().length) {
+            <div class="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <p class="mb-1 text-xs font-medium text-slate-500">Remote folders</p>
+              <ul class="max-h-40 overflow-y-auto text-xs text-slate-700">
+                @for (f of remoteFolders(); track f) {
+                  <li>
+                    <button class="text-left hover:text-brand-700" (click)="draft.sourceRoot = f">
+                      {{ f }}
+                    </button>
+                  </li>
+                }
+              </ul>
+            </div>
+          }
+        </admin-panel>
+      }
+
+      <admin-panel title="Import jobs" [bodyClass]="'p-0'">
+        <admin-busy [busy]="loading()" label="Loading imports…" />
+        @if (!loading() && !jobs().length) {
+          <admin-empty label="No imports yet" />
+        }
+        @if (jobs().length) {
+          <table class="w-full text-sm">
+            <thead class="border-b border-slate-200 bg-slate-50 text-left text-xs font-medium text-slate-500">
+              <tr>
+                <th class="{{ head }}">ID</th>
+                <th class="{{ head }}">Owner</th>
+                <th class="{{ head }}">Server</th>
+                <th class="{{ head }}">Status</th>
+                <th class="{{ head }}">Progress</th>
+                <th class="{{ head }}">Imported</th>
+                <th class="{{ head }}">Skipped</th>
+                <th class="{{ head }}">Created</th>
+                <th class="{{ head }}"></th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              @for (job of jobs(); track job.id) {
+                <tr>
+                  <td class="{{ cell }}">{{ job.id }}</td>
+                  <td class="{{ cell }}">{{ job.owner }}</td>
+                  <td class="{{ cell }}">{{ job.remote_host }}</td>
+                  <td class="{{ cell }}">
+                    <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium {{ statusClass(job.status) }}">
+                      {{ job.status }}
+                    </span>
+                  </td>
+                  <td class="{{ cell }}">
+                    {{ job.folders_done }} / {{ job.folders_total }} folders, {{ job.messages_seen }} seen
+                    @if (job.status === 'running' || job.status === 'queued') {
+                      <div class="mt-1 h-1.5 w-20 overflow-hidden rounded-full bg-slate-200">
+                        <div
+                          class="h-full rounded-full bg-brand-600 transition-all"
+                          [style.width.%]="progressPercent(job)"
+                        ></div>
+                      </div>
+                    }
+                  </td>
+                  <td class="{{ cell }}">{{ job.messages_imported }}</td>
+                  <td class="{{ cell }}">{{ job.messages_skipped }}</td>
+                  <td class="{{ cell }}">{{ job.created_at | date: 'short' }}</td>
+                  <td class="{{ cell }}">
+                    @if (job.status === 'queued' || job.status === 'running') {
+                      <button
+                        class="text-xs font-medium text-rose-600 hover:text-rose-800"
+                        (click)="cancel(job)"
+                      >
+                        Cancel
+                      </button>
+                    }
+                    @if (job.last_error) {
+                      <p class="mt-1 max-w-48 truncate text-xs text-rose-600" [title]="job.last_error">
+                        {{ job.last_error }}
+                      </p>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        }
+      </admin-panel>
+    </div>
+  </admin-page>

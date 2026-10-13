@@ -108,16 +108,16 @@
               @if (memberFor() === box.address) {
                 <form class="flex flex-wrap items-end gap-3" (ngSubmit)="addMember(box)">
                   <admin-field
-                    label="Member address"
-                    hint="An existing user, not another shared mailbox."
+                    label="Member addresses"
+                    hint="Select one or more existing users (not shared mailboxes)."
                     class="min-w-64 flex-1"
                   >
-                    <input
-                      class="{{ inputClass }}"
-                      name="member"
-                      [(ngModel)]="memberAddress"
-                      required
-                      placeholder="bob@example.com"
+                    <admin-multiselect
+                      [model]="memberAddresses"
+                      [options]="availableUsers()"
+                      placeholder="Select users..."
+                      (add)="memberAddresses = [...memberAddresses, $event]"
+                      (removeItem)="memberAddresses = memberAddresses.filter(a => a !== $event)"
                     />
                   </admin-field>
                   <admin-field label="Access">
@@ -129,7 +129,7 @@
                       <option value="owner">owner</option>
                     </select>
                   </admin-field>
-                  <admin-button variant="primary" type="submit" [disabled]="busy()">Grant</admin-button>
+                  <admin-button variant="primary" type="submit" [disabled]="busy() || memberAddresses.length === 0">Grant</admin-button>
                   <admin-button (pressed)="memberFor.set('')">Cancel</admin-button>
                 </form>
               }

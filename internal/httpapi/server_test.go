@@ -23,6 +23,7 @@ import (
 	"github.com/linchange/linchange/internal/auth/totp"
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/httpapi"
+	"github.com/linchange/linchange/internal/imapimport"
 	"github.com/linchange/linchange/internal/store"
 )
 
@@ -203,7 +204,11 @@ func testBlobs(t *testing.T) *blobstore.Store {
 
 func newServer(t *testing.T, db *sqlx.DB) *httpapi.Server {
 	t.Helper()
-	srv, err := httpapi.New(httpapi.Options{DB: db, Config: testConfig(), Blobs: testBlobs(t)})
+	blobs := testBlobs(t)
+	srv, err := httpapi.New(httpapi.Options{
+		DB: db, Config: testConfig(), Blobs: blobs,
+		Imports: imapimport.New(db, blobs, nil, testConfig().Auth.EncryptionKey),
+	})
 	if err != nil {
 		t.Fatalf("building the server: %v", err)
 	}

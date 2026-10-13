@@ -158,11 +158,13 @@ func (u *Users) Create(ctx context.Context, q Querier, req CreateUserRequest) er
 }
 
 const userSelect = `
-	SELECT address, source, display_name, enabled, mailbox_enabled,
-	       is_domain_admin, quota_bytes, daily_send_limit, timezone, language,
-	       must_change_password, address_local, last_login_at,
-	       created_at, updated_at
-	FROM users`
+	SELECT u.address, u.source, u.display_name, u.enabled, u.mailbox_enabled,
+	       u.is_domain_admin, COALESCE(u.quota_bytes, d.default_quota_bytes) AS quota_bytes,
+	       u.daily_send_limit, u.timezone, u.language,
+	       u.must_change_password, u.address_local, u.last_login_at,
+	       u.created_at, u.updated_at
+	FROM users u
+	LEFT JOIN domains d ON d.name = split_part(u.address, '@', 2) AND d.status = 'active'`
 
 // Get returns a user by address, or ErrNotFound. A disabled account is still
 // returned: an administrator needs to see it in order to re-enable it. A
@@ -170,7 +172,7 @@ const userSelect = `
 // which is what keeps the admin view honest.
 func (u *Users) Get(ctx context.Context, q Querier, address string) (User, error) {
 	var row User
-	if err := q.GetContext(ctx, &row, userSelect+` WHERE address = $1 AND deleted_at IS NULL`, address); err != nil {
+	if err := q.GetContext(ctx, &row, userSelect+` WHERE u.address = $1 AND u.deleted_at IS NULL`, address); err != nil {
 		if IsNotFound(err) {
 			return User{}, ErrNotFound
 		}
@@ -181,7 +183,7 @@ func (u *Users) Get(ctx context.Context, q Querier, address string) (User, error
 
 // List returns every non-deleted user, ordered by address.
 func (u *Users) List(ctx context.Context, q Querier) ([]User, error) {
-	rows, err := q.QueryxContext(ctx, userSelect+` WHERE deleted_at IS NULL ORDER BY address`)
+	rows, err := q.QueryxContext(ctx, userSelect+` WHERE u.deleted_at IS NULL ORDER BY u.address`)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing users: %w", err)
 	}

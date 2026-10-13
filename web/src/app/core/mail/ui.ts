@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { Address } from './mail.models';
+import { htmlToText } from './rich-text';
 
 // The presentational pieces and helpers the mail pages share.
 
@@ -184,4 +185,57 @@ export function parseAddresses(raw: string): Address[] {
     }
   }
   return out;
+}
+
+// escapeHtml turns markup characters into text, for quoting a message body
+// that arrived as plain text into an HTML citation.
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// quoteTextPrefix prefixes every line of a plain-text body with the citation
+// marker, which is how a reply cites the message it answers.
+export function quoteTextPrefix(body: string): string {
+  if (!body) return '';
+  return body
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => `> ${line}`)
+    .join('\n');
+}
+
+// buildReplyQuote renders the original message as a citation for the composer,
+// in both the rich-text and plain-text forms.
+//
+// The HTML form puts the original body inside a <blockquote> so it is visually
+// set apart and cannot be mistaken for the reply's own words. A body that
+// arrived as HTML is passed through as the citation (it is already markup); one
+// that arrived as text is escaped and line-prefixed, so nothing in the message
+// can inject markup into the composer. An empty paragraph leads the quote so
+// the caret starts above it, where the reply is written.
+//
+// attribution is the "On <date>, <sender> wrote:" line, already rendered.
+export function buildReplyQuote(attribution: string, htmlBody: string, textBody: string): {
+  quoted_html: string;
+  quoted_text: string;
+} {
+  const attributionText = attribution.replace(/\s+/g, ' ').trim();
+
+  const quoted_html = htmlBody
+    ? `<p></p><p>${escapeHtml(attributionText)}</p><blockquote>${htmlBody}</blockquote>`
+    : textBody
+      ? `<p></p><p>${escapeHtml(attributionText)}</p><blockquote>${escapeHtml(textBody).replace(/\n/g, '<br>')}</blockquote>`
+      : '';
+
+  const body = textBody || (htmlBody ? htmlToText(htmlBody) : '');
+  const quoted_text = body
+    ? `${attributionText}\n${quoteTextPrefix(body)}`
+    : '';
+
+  return { quoted_html, quoted_text };
 }
