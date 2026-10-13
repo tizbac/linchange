@@ -12,6 +12,7 @@ export interface Domain {
   default_quota_bytes: number;
   daily_send_limit?: number | null;
   dkim_selector?: string | null;
+  workgroup_id?: number | null;
 }
 
 export type UserSource = 'local' | 'ldap' | 'shared' | 'domain_admin';
@@ -112,4 +113,11 @@ export function formatBytes(bytes: number | null | undefined): string {
   }
   const rounded = unit === 0 ? String(value) : value.toFixed(value < 10 ? 1 : 0);
   return `${rounded} ${units[unit]}`;
+}
+
+export interface ContactGroup {
+  id: number;
+  name: string;
+  description: string;
+  created_at: string;
 }

@@ -123,6 +123,15 @@ func mountAdminRoutes(r chi.Router, s *Server) {
 
 	s.mountAdminImportRoutes(r)
 
+	r.Route("/contact-groups", func(r chi.Router) {
+		r.Get("/", s.listContactGroups)
+		r.Post("/", s.createContactGroup)
+		r.Route("/{id}", func(r chi.Router) {
+			r.Patch("/", s.updateContactGroup)
+			r.Delete("/", s.deleteContactGroup)
+		})
+	})
+
 	r.Get("/audit", s.listAudit)
 }
 
@@ -717,6 +726,89 @@ func (s *Server) whoCanImpersonate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"grants": viewImpersonations(who)})
+}
+
+// --- contact groups ---
+
+func (s *Server) listContactGroups(w http.ResponseWriter, r *http.Request) {
+	if err := requireImportAdmin(Principal(r.Context())); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	contactGroups, err := s.admin.ListContactGroups(r.Context(), Principal(r.Context()))
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"contact_groups": contactGroups})
+}
+
+func (s *Server) createContactGroup(w http.ResponseWriter, r *http.Request) {
+	if err := requireImportAdmin(Principal(r.Context())); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	var in struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if in.Name == "" {
+		s.writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	contactGroup, err := s.admin.CreateContactGroup(r.Context(), Principal(r.Context()), in.Name, in.Description)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusCreated, contactGroup)
+}
+
+func (s *Server) updateContactGroup(w http.ResponseWriter, r *http.Request) {
+	if err := requireImportAdmin(Principal(r.Context())); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid contact group id")
+		return
+	}
+	var in struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	contactGroup, err := s.admin.UpdateContactGroup(r.Context(), Principal(r.Context()), id, in.Name, in.Description)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, contactGroup)
+}
+
+func (s *Server) deleteContactGroup(w http.ResponseWriter, r *http.Request) {
+	if err := requireImportAdmin(Principal(r.Context())); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid contact group id")
+		return
+	}
+	if err := s.admin.DeleteContactGroup(r.Context(), Principal(r.Context()), id); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {

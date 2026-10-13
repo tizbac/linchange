@@ -13,6 +13,7 @@ package testdb
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"os"
 	"strings"
 	"testing"
@@ -67,14 +68,18 @@ func New(t *testing.T) *sqlx.DB {
 
 	// Isolated from every other test, so rows left behind by a failing test
 	// cannot be seen by the next one.
-	name := fmt.Sprintf("lc_test_%d", time.Now().UnixNano()%1_000_000_000)
+	name := fmt.Sprintf("lc_test_%d_%d", time.Now().UnixNano(), rand.Int63())
+	t.Logf("Creating test database: %s", name)
 	if _, err := admin.ExecContext(ctx, "CREATE DATABASE "+name); err != nil {
 		admin.Close()
 		t.Fatalf("creating test database: %v", err)
 	}
 
+	newDSN := replaceDatabase(base, name)
+	t.Logf("Connecting to test database: %s", newDSN)
+
 	db, err := store.Open(ctx, store.Options{
-		URL:             replaceDatabase(base, name),
+		URL:             newDSN,
 		MaxOpen:         8,
 		MaxIdle:         4,
 		ConnectTimeout:  10 * time.Second,
@@ -99,12 +104,22 @@ func New(t *testing.T) *sqlx.DB {
 	return db
 }
 
-// Migrated returns a database with the schema applied, which is what tests that
-// assert on behaviour rather than on the connection layer need.
 func Migrated(t *testing.T) *sqlx.DB {
 	t.Helper()
 
 	db := New(t)
+	t.Logf("Connected to database, checking tables...")
+	var tables []string
+	err := db.SelectContext(context.Background(), &tables, `
+		SELECT table_name FROM information_schema.tables 
+		WHERE table_schema = 'public' AND table_name IN ('workgroups', 'schema_migrations')
+	`)
+	if err != nil {
+		t.Logf("Error checking tables: %v", err)
+	} else {
+		t.Logf("Tables found: %v", tables)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 

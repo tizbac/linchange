@@ -5,6 +5,7 @@ import {
   Alias,
   AliasTarget,
   AuditEntry,
+  ContactGroup,
   Domain,
   ImpersonationGrant,
   SharedMailbox,
@@ -242,6 +243,24 @@ export class AdminApi {
 
   remoteFolders(body: Omit<ImportJobRequest, 'source_root' | 'target_root'>): Promise<{ folders: string[] }> {
     return this.post('/imports/remote-folders', body);
+  }
+
+  // --- contact groups ---
+
+  listContactGroups(): Promise<{ contact_groups: ContactGroup[] }> {
+    return this.get('/contact-groups');
+  }
+
+  createContactGroup(body: { name: string; description?: string }): Promise<ContactGroup> {
+    return this.post('/contact-groups', body);
+  }
+
+  updateContactGroup(id: number, body: Partial<ContactGroup>): Promise<ContactGroup> {
+    return this.patch(`/contact-groups/${id}`, body);
+  }
+
+  deleteContactGroup(id: number): Promise<void> {
+    return this.request('delete', `/contact-groups/${id}`, null) as Promise<void>;
   }
 
   private get<T>(path: string): Promise<T> {

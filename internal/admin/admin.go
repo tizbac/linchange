@@ -209,3 +209,84 @@ func expireAt(now time.Time, d *time.Duration) *time.Time {
 	t := now.Add(*d)
 	return &t
 }
+
+// ContactGroup represents a group of domains for contact isolation.
+type ContactGroup struct {
+	ID          int64
+	Name        string
+	Description string
+	CreatedAt   time.Time
+}
+
+// ListContactGroups returns all contact groups.
+func (s *Service) ListContactGroups(ctx context.Context, actor policy.Principal) ([]ContactGroup, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryxContext(ctx, `
+		SELECT id, name, description, created_at
+		FROM contact_groups
+		ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("admin: listing contact groups: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ContactGroup
+	for rows.Next() {
+		var c ContactGroup
+		if err := rows.StructScan(&c); err != nil {
+			return nil, fmt.Errorf("admin: scanning contact group: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// CreateContactGroup creates a new contact group.
+func (s *Service) CreateContactGroup(ctx context.Context, actor policy.Principal, name, description string) (ContactGroup, error) {
+	if err := requireAdmin(actor); err != nil {
+		return ContactGroup{}, err
+	}
+	var c ContactGroup
+	err := s.db.GetContext(ctx, &c, `
+		INSERT INTO contact_groups (name, description)
+		VALUES ($1, $2)
+		RETURNING id, name, description, created_at`, name, description)
+	if err != nil {
+		return ContactGroup{}, fmt.Errorf("admin: creating contact group: %w", err)
+	}
+	return c, nil
+}
+
+// UpdateContactGroup updates a contact group.
+func (s *Service) UpdateContactGroup(ctx context.Context, actor policy.Principal, id int64, name, description string) (ContactGroup, error) {
+	if err := requireAdmin(actor); err != nil {
+		return ContactGroup{}, err
+	}
+	var c ContactGroup
+	err := s.db.GetContext(ctx, &c, `
+		UPDATE contact_groups
+		SET name = $2, description = $3
+		WHERE id = $1
+		RETURNING id, name, description, created_at`, id, name, description)
+	if err != nil {
+		return ContactGroup{}, fmt.Errorf("admin: updating contact group: %w", err)
+	}
+	return c, nil
+}
+
+// DeleteContactGroup deletes a contact group.
+func (s *Service) DeleteContactGroup(ctx context.Context, actor policy.Principal, id int64) error {
+	if err := requireAdmin(actor); err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx, `DELETE FROM contact_groups WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("admin: deleting contact group: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}

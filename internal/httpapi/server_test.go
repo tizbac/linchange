@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -79,7 +80,7 @@ func testMigratedDB(t *testing.T) *sqlx.DB {
 		t.Skipf("no test database at %s (%v); run `make up` or set LINCHANGE_TEST_DATABASE_URL", base, err)
 	}
 
-	name := fmt.Sprintf("lc_http_test_%d", time.Now().UnixNano()%1_000_000_000)
+	name := fmt.Sprintf("lc_http_test_%d_%d", time.Now().UnixNano(), rand.Int63())
 	if _, err := admin.ExecContext(ctx, "CREATE DATABASE "+name); err != nil {
 		t.Fatalf("creating test database: %v", err)
 	}

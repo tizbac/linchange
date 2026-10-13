@@ -34,6 +34,8 @@ type User struct {
 	// AddressLocal is the lowercased local part, the part before the "@". It is
 	// what the "#sharedmailbox" login convention splits on.
 	AddressLocal string     `db:"address_local"`
+	// ContactGroupID is the contact group this user belongs to (derived from domain).
+	ContactGroupID *int64 `db:"contact_group_id"`
 	LastLoginAt  *time.Time `db:"last_login_at"`
 	CreatedAt    time.Time  `db:"created_at"`
 	UpdatedAt    time.Time  `db:"updated_at"`
