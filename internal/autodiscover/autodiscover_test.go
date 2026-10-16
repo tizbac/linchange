@@ -94,11 +94,13 @@ func TestBuildProtocolsReportsAdvertisedPorts(t *testing.T) {
 	}
 }
 
-// The EWS and ActiveSync URLs are absolute, so an advertised HTTPS port has to
-// appear in them too.
+// The EWS and ActiveSync URLs are absolute, so a deployment that publishes TLS
+// on another port has to see that port in them: the port is what the client
+// connects to, and the scheme is the handshake it performs there.
 func TestExchangeURLUsesAdvertisedHTTPSPort(t *testing.T) {
 	cfg := config.New()
 	cfg.Exchange.Enabled = true
+	cfg.Listener.HTTPS.Addr = ":8443"
 	cfg.Exchange.Advertised = config.Ports{HTTPS: 58443}
 	a := &Autodiscover{cfg: cfg}
 
@@ -127,11 +129,38 @@ func TestExchangeURLUsesAdvertisedHTTPSPort(t *testing.T) {
 	}
 }
 
+// A URL must not promise TLS where no listener answers it. The demo and a
+// fresh checkout serve HTTP only, and a client sent to an https:// URL on such
+// a deployment reports the endpoint as not found -- which is what a person
+// setting up Outlook saw, because the advertised URL was dead.
+func TestExchangeURLFollowsTheServingListener(t *testing.T) {
+	cfg := config.New()
+	cfg.Exchange.Enabled = true
+	cfg.Exchange.Advertised = config.Ports{HTTP: 18080, HTTPS: 58443}
+	a := &Autodiscover{cfg: cfg}
+
+	protocols := a.buildProtocols("localhost", "127.0.0.1")
+
+	for _, p := range protocols {
+		switch p.Type {
+		case "EXCH":
+			if want := "http://localhost:18080/ews/exchange.asmx"; p.ASUrl != want {
+				t.Errorf("EWS URL = %q, want %q", p.ASUrl, want)
+			}
+		case "EXPR":
+			if want := "http://localhost:18080/eas"; p.ASUrl != want {
+				t.Errorf("ActiveSync URL = %q, want %q", p.ASUrl, want)
+			}
+		}
+	}
+}
+
 // A deployment on the standard HTTPS port must not carry an explicit port in
 // the URL, since some clients are literal about it.
 func TestExchangeURLOmitsStandardPorts(t *testing.T) {
 	cfg := config.New()
 	cfg.Exchange.Enabled = true
+	cfg.Listener.HTTPS.Addr = ":443"
 	a := &Autodiscover{cfg: cfg}
 
 	protocols := a.buildProtocols("mail.example.com", "203.0.113.10")
