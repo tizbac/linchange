@@ -20,10 +20,12 @@
 package eas
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -37,7 +39,6 @@ import (
 
 	"github.com/linchange/linchange/config"
 	"github.com/linchange/linchange/internal/auth/policy"
-	"github.com/linchange/linchange/internal/ical"
 	"github.com/linchange/linchange/internal/imapd"
 	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/webmail"
@@ -283,17 +284,14 @@ func (e *EAS) handleEAS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dec := NewWBXMLDecoder(body)
-	if err := dec.DecodeHeader(); err != nil {
+	root, err := dec.Decode()
+	if err != nil {
 		http.Error(w, "the request is not a WBXML document", http.StatusBadRequest)
 		return
 	}
-	root, err := dec.Decode()
-	if err != nil {
-		http.Error(w, "the request names no command", http.StatusBadRequest)
-		return
-	}
 
-	c := &call{srv: e, ctx: r.Context(), who: who, root: root}
+	c := &call{srv: e, ctx: r.Context(), who: who, root: root,
+		version: requestedVersion(r)}
 	bw := NewWBXMLWriter()
 	er := e.runCommand(c, bw)
 	e.writeResponse(w, c.root.NS, c.root.Name, bw, er)
@@ -333,11 +331,40 @@ type call struct {
 	ctx  context.Context
 	who  policy.Principal
 	root *WBXMLNode
+	// version is the protocol version the client asked for in its
+	// MS-ASProtocolVersion header, empty when it asked for none.
+	version string
 }
 
 // owner is the account the command acts as, from the authenticated principal
 // rather than from anywhere in the request.
 func (c *call) owner() string { return c.who.Address }
+
+// reports14 answers whether the client is on 14.0 or newer. MS-ASCMD 2.2.2
+// says the common 1xx status codes are carried in a Status element on a 200 by
+// those versions and as an HTTP 4xx/5xx by 2.5, 12.0 and 12.1, so a failure
+// has to be dressed the way the client was told to read it.
+func (c *call) reports14() bool {
+	major, _, ok := strings.Cut(c.version, ".")
+	if !ok {
+		return false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(major))
+	if err != nil {
+		return false
+	}
+	return n >= 14
+}
+
+// requestedVersion reads the protocol version a client asked for. A client may
+// list several separated by commas; the first is the one it speaks.
+func requestedVersion(r *http.Request) string {
+	raw := r.Header.Get("MS-ASProtocolVersion")
+	if i := strings.IndexByte(raw, ','); i >= 0 {
+		raw = raw[:i]
+	}
+	return strings.TrimSpace(raw)
+}
 
 // easErr is a command's answer when it is not a success. status is the EAS
 // Status code to write into the command's response; http is the status the
@@ -373,6 +400,13 @@ func (e *EAS) writeResponse(w http.ResponseWriter, ns, name string, bw *WBXMLWri
 		_ = ew.Leaf(ns, "Status", strconv.Itoa(er.status))
 		ew.End()
 		e.sendWBXML(w, ew.Bytes())
+		return
+	}
+	// A SendMail that succeeded answers with nothing at all: MS-ASCMD says the
+	// response has no body, and a client reads the empty answer as "sent".
+	if name == "SendMail" {
+		w.Header().Set("Content-Type", "application/vnd.ms-sync.wbxml")
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 	e.sendWBXML(w, bw.Bytes())
@@ -428,41 +462,94 @@ func (e *EAS) runCommand(c *call, w *WBXMLWriter) *easErr {
 // Provision
 // ---------------------------------------------------------------------------
 
-// devicePolicyXML is the device policy a Provision answers with. It is a real
-// policy document, not an empty shell: a client reads the values to decide what
-// it may do, and a client told "no password, no encryption" behaves differently
-// from one told the opposite.
-const devicePolicyXML = `<?xml version="1.0" encoding="utf-8"?>
-<Policy>
-  <PolicyVersion><MajorVersion>1</MajorVersion><MinorVersion>2</MinorVersion></PolicyVersion>
-  <DevicePasswordEnabled>0</DevicePasswordEnabled>
-  <MinDevicePasswordLength>0</MinDevicePasswordLength>
-  <AlphanumericDevicePasswordRequired>0</AlphanumericDevicePasswordRequired>
-  <MaxInactivityTimeDeviceLock>900</MaxInactivityTimeDeviceLock>
-  <DevicePasswordExpiration>0</DevicePasswordExpiration>
-  <DevicePasswordHistory>0</DevicePasswordHistory>
-  <AllowSimpleDevicePassword>1</AllowSimpleDevicePassword>
-  <RequireDeviceEncryption>0</RequireDeviceEncryption>
-  <AllowNonProvisionableDevices>1</AllowNonProvisionableDevices>
-  <EmailBodyType>1</EmailBodyType>
-  <MaxEmailBodySize>102400</MaxEmailBodySize>
-  <MaxAttachmentSize>10485760</MaxAttachmentSize>
-  <AllowHTML>1</AllowHTML>
-</Policy>`
+// devicePolicy is the device policy a Provision answers with, as the fields of
+// an EASProvisionDoc element. It is a real policy, not an empty shell: a client
+// reads the values to decide what it may do, and a client told "no password, no
+// encryption" behaves differently from one told the opposite.
+var devicePolicy = []struct {
+	field string
+	value string
+}{
+	{"DevicePasswordEnabled", "0"},
+	{"AlphanumericDevicePasswordRequired", "0"},
+	{"PasswordRecoveryEnabled", "0"},
+	{"RequireStorageCardEncryption", "0"},
+	{"AttachmentsEnabled", "1"},
+	{"MinDevicePasswordLength", "0"},
+	{"MaxInactivityTimeDeviceLock", "900"},
+	{"MaxDevicePasswordFailedAttempts", "8"},
+	{"MaxAttachmentSize", "10485760"},
+	{"AllowSimpleDevicePassword", "1"},
+	{"DevicePasswordExpiration", "0"},
+	{"DevicePasswordHistory", "0"},
+	{"RequireDeviceEncryption", "0"},
+	{"AllowUnsignedApplications", "1"},
+	{"AllowHTMLEmail", "1"},
+	{"MaxEmailAgeFilter", "0"},
+	{"MaxEmailBodyTruncationSize", "102400"},
+	{"MaxEmailHTMLBodyTruncationSize", "102400"},
+	{"AllowConsumerEmail", "1"},
+	{"AllowBrowser", "1"},
+	{"AllowInternetSharing", "1"},
+}
 
-// cmdProvision answers a Provision with the device policy. A client provisions
-// once on setup and again when its policy key is stale; the answer is the same
-// either way, because this server's policy does not depend on the request.
+// policyType is the policy type a client provisioning 12.0 or newer asks for.
+// A client that reads another value treats the answer as a policy for someone
+// else and refuses the account.
+const policyType = "MS-EAS-Provisioning-WBXML"
+
+// cmdProvision answers a Provision.
+//
+// Provisioning is two requests, per MS-ASPROV. The first asks for the policy
+// and gets the policy document plus a temporary key; the second acknowledges
+// that the client applied it, and gets the final key that goes in the
+// X-MS-PolicyKey header of every command afterwards. Telling the two apart is
+// the PolicyKey in the request: the first one carries none.
 func (e *EAS) cmdProvision(c *call, w *WBXMLWriter) *easErr {
-	_ = w.Start(nsProvision, "Provision")
+	var requested *WBXMLNode
+	if policies := c.root.FindDescendant("Policies"); policies != nil {
+		for _, policy := range policies.FindChildren("Policy") {
+			if policy.TextOf("PolicyType") == policyType {
+				requested = policy
+			}
+		}
+	}
+	if requested == nil {
+		// A policy of another type is a client asking for something this
+		// service does not issue; the status says so inside the command, which
+		// is where a client looks for it.
+		return &easErr{status: 11, http: http.StatusOK, text: "the policy type is not one this service issues"}
+	}
+	acknowledging := requested.TextOf("PolicyKey") != ""
+
+	w.Start(nsProvision, "Provision")
+	// The client describes itself on the first request, and the answer names
+	// the same element back so the client knows it was read. It is a child of
+	// Provision, in the Settings code page, and per MS-ASPROV its status sits
+	// directly under DeviceInformation (unlike a Settings command, where it is
+	// under Set).
+	if info := c.root.FindDescendant("DeviceInformation"); info != nil {
+		w.Start(nsSettings, "DeviceInformation")
+		_ = w.Leaf(nsSettings, "Status", "1")
+		w.End()
+	}
 	_ = w.Leaf(nsProvision, "Status", "1")
 	w.Start(nsProvision, "Policies")
 	w.Start(nsProvision, "Policy")
-	_ = w.Leaf(nsProvision, "PolicyType", "Device")
-	_ = w.Leaf(nsProvision, "PolicyKey", policyKey(c.owner()))
-	w.Start(nsProvision, "Data")
-	w.Opaque([]byte(devicePolicyXML))
-	w.End()
+	_ = w.Leaf(nsProvision, "PolicyType", policyType)
+	_ = w.Leaf(nsProvision, "Status", "1")
+	if acknowledging {
+		_ = w.Leaf(nsProvision, "PolicyKey", policyKey(c.owner()))
+	} else {
+		_ = w.Leaf(nsProvision, "PolicyKey", temporaryPolicyKey(c.owner()))
+		w.Start(nsProvision, "Data")
+		w.Start(nsProvision, "EASProvisionDoc")
+		for _, field := range devicePolicy {
+			_ = w.Leaf(nsProvision, field.field, field.value)
+		}
+		w.End()
+		w.End()
+	}
 	w.End() // Policy
 	w.End() // Policies
 	w.End() // Provision
@@ -473,17 +560,32 @@ func (e *EAS) cmdProvision(c *call, w *WBXMLWriter) *easErr {
 // FolderSync
 // ---------------------------------------------------------------------------
 
-// Folder type values, per MS-ASFCDH. A client draws the folder and chooses its
-// behaviour from these, so the type is part of the contract, not a label.
+// Folder type values, per MS-ASCMD section 2.2.3.186.3: the default folders
+// carry 2 through 11, a user-created folder 1 through 17 depending on its
+// kind, and 18 is an unknown one. A client draws the folder and chooses its
+// behaviour from these -- 5 means "Sent", and a client that cannot find 5
+// never syncs the folder its own sent mail lands in -- so the type is part of
+// the contract, not a label.
 const (
-	folderTypeInbox    = 0x0002
-	folderTypeOutbox   = 0x0004
-	folderTypeDeleted  = 0x0008
-	folderTypeDrafts   = 0x0010
-	folderTypeSent     = 0x0020
-	folderTypeCalendar = 0x0040
-	folderTypeTasks    = 0x0100
-	folderTypeOther    = 0x8000
+	folderTypeOther    = 1  // user-created folder (generic)
+	folderTypeInbox    = 2  // default Inbox
+	folderTypeDrafts   = 3  // default Drafts
+	folderTypeDeleted  = 4  // default Deleted Items
+	folderTypeSent     = 5  // default Sent Items
+	folderTypeOutbox   = 6  // default Outbox
+	folderTypeTasks    = 7  // default Tasks
+	folderTypeCalendar = 8  // default Calendar
+	folderTypeContacts = 9  // default Contacts
+	folderTypeNotes    = 10 // default Notes
+	folderTypeJournal  = 11 // default Journal
+	folderTypeMailbox  = 12 // user-created mail folder
+	folderTypeUnknown  = 18
+)
+
+// Folder types a client may ask FolderCreate for (MS-ASCMD 2.2.3.186.2): only
+// the user-created kinds, since 2 through 11 are reserved for the defaults.
+const (
+	folderTypeUserCalendar = 13 // user-created Calendar folder
 )
 
 // easFolderType maps a folder to its EAS type from its special use, falling
@@ -648,7 +750,6 @@ func (e *EAS) cmdFolderSync(c *call, w *WBXMLWriter) *easErr {
 		_ = w.Leaf(nsFolderHierarchy, "ParentId", f.parentID)
 		_ = w.Leaf(nsFolderHierarchy, "DisplayName", f.name)
 		_ = w.Leaf(nsFolderHierarchy, "Type", strconv.Itoa(f.folderType))
-		_ = w.Leaf(nsFolderHierarchy, "Count", strconv.Itoa(f.total))
 		w.End()
 	}
 	for _, id := range deleted {
@@ -663,7 +764,6 @@ func (e *EAS) cmdFolderSync(c *call, w *WBXMLWriter) *easErr {
 		_ = w.Leaf(nsFolderHierarchy, "ParentId", f.parentID)
 		_ = w.Leaf(nsFolderHierarchy, "DisplayName", f.name)
 		_ = w.Leaf(nsFolderHierarchy, "Type", strconv.Itoa(f.folderType))
-		_ = w.Leaf(nsFolderHierarchy, "Count", strconv.Itoa(f.total))
 		w.End()
 	}
 	w.End() // Changes
@@ -701,6 +801,12 @@ func (e *EAS) cmdSync(c *call, w *WBXMLWriter) *easErr {
 	if !ok || kind == kindRoot {
 		return &easErr{status: 6003, http: http.StatusOK, text: "the Sync names a folder it does not know"}
 	}
+
+	// The request may carry the client's own changes to apply before the
+	// answer is built. A phone marks a message read the moment its owner taps
+	// it, and that arrives as a Change with the new Read flag, so a Sync that
+	// ignored it would undo the tap on the next pull.
+	e.applyClientChanges(c)
 
 	window := asInt(c.root.FindDescendant("WindowSize"), 0)
 	if window <= 0 {
@@ -816,57 +922,81 @@ func (e *EAS) cmdSync(c *call, w *WBXMLWriter) *easErr {
 	encoded, _ := encodeState(itemsState{Folder: folderID, Items: next})
 
 	_ = w.Start(nsAirSync, "Sync")
-	_ = w.Leaf(nsAirSync, "Status", "1")
 	w.Start(nsAirSync, "Collections")
 	w.Start(nsAirSync, "Collection")
-	_ = w.Leaf(nsAirSync, "CollectionId", folderID)
 	_ = w.Leaf(nsAirSync, "SyncKey", encoded)
-	_ = w.Leaf(nsAirSync, "MoreAvailable", boolStr(more))
-	_ = w.Leaf(nsAirSync, "WindowSize", strconv.Itoa(window))
+	_ = w.Leaf(nsAirSync, "CollectionId", folderID)
+	_ = w.Leaf(nsAirSync, "Status", "1")
 
-	// The sections follow the key, in the order the changes were listed. The
-	// open section is closed before the next one starts, so the stream carries
-	// each section exactly once, in the order Deletes, Replaces, Adds.
-	open := -1
-	for _, p := range changes[:limit] {
-		if p.section != open {
-			if open >= 0 {
-				w.End()
-			}
+	// The changes go in one Commands element, in the order a client applies
+	// them: deletes first, so a moved item is not shown as both present and
+	// gone; changes, so an item the client has is corrected; adds last, so new
+	// items land on top. The window cuts the list where it must, and
+	// MoreAvailable says the rest is on the next request.
+	if limit > 0 {
+		if more {
+			w.Start(nsAirSync, "MoreAvailable")
+			w.End()
+		}
+		w.Start(nsAirSync, "Commands")
+		for _, p := range changes[:limit] {
 			switch p.section {
 			case 0:
-				w.Start(nsAirSync, "Deletes")
-			case 1:
-				w.Start(nsAirSync, "Replaces")
+				w.Start(nsAirSync, "Delete")
+				_ = w.Leaf(nsAirSync, "ServerId", p.sid)
+				w.End()
 			default:
-				w.Start(nsAirSync, "Adds")
+				it := current[p.sid]
+				if p.section == 1 {
+					w.Start(nsAirSync, "Change")
+				} else {
+					w.Start(nsAirSync, "Add")
+				}
+				_ = w.Leaf(nsAirSync, "ServerId", it.serverID)
+				it.render(w)
+				w.End()
 			}
-			open = p.section
 		}
-		switch p.section {
-		case 0:
-			w.Start(nsAirSync, "Delete")
-			_ = w.Leaf(nsAirSync, "ServerId", p.sid)
-			w.End()
-		default:
-			it := current[p.sid]
-			if p.section == 1 {
-				w.Start(nsAirSync, "Replace")
-			} else {
-				w.Start(nsAirSync, "Add")
-			}
-			_ = w.Leaf(nsAirSync, "ServerId", it.serverID)
-			it.render(w)
-			w.End()
-		}
-	}
-	if open >= 0 {
-		w.End()
+		w.End() // Commands
 	}
 	w.End() // Collection
 	w.End() // Collections
 	w.End() // Sync
 	return nil
+}
+
+// applyClientChanges applies the changes a Sync request carries from the
+// client's side: a message marked read, unread, flagged or unflagged. Only the
+// flags are applied -- an item the client adds or deletes is a change this
+// server has no place to put yet -- and a change that cannot be applied is
+// logged and skipped, because one bad row must not fail the whole sync.
+func (e *EAS) applyClientChanges(c *call) {
+	commands := c.root.FindDescendant("Commands")
+	if commands == nil {
+		return
+	}
+	for _, change := range commands.FindChildren("Change") {
+		id, err := strconv.ParseInt(change.TextOf("ServerId"), 10, 64)
+		if err != nil || id <= 0 {
+			continue
+		}
+		data := change.FindChild("ApplicationData")
+		if data == nil {
+			continue
+		}
+		if read := data.FindChild("Read"); read != nil {
+			if err := e.mail.MarkRead(c.ctx, c.owner(), id, asBool(read, false)); err != nil {
+				e.log.WarnContext(c.ctx, "eas: could not apply a client's read flag", "id", id, "error", err)
+			}
+		}
+		if flag := data.FindChild("Flag"); flag != nil {
+			if kind := flag.TextOf("FlagType"); kind != "" {
+				if err := e.mail.SetFlag(c.ctx, c.owner(), id, `\Flagged`, true); err != nil {
+					e.log.WarnContext(c.ctx, "eas: could not apply a client's flag", "id", id, "error", err)
+				}
+			}
+		}
+	}
 }
 
 // readItems reads a folder's items as render triples. A mail folder returns its
@@ -942,30 +1072,61 @@ func (e *EAS) calendarItems(c *call, calendarID int64) ([]syncItem, *easErr) {
 	return out, nil
 }
 
-// renderMailItem writes one message's Email element with the properties a
-// listing shows. The body is read for the item, because a sync that returns an
-// item is one a client is going to show, and an item with no body is a client
-// that opens the message and finds nothing.
+// renderMailItem writes one message as a Sync item: its ApplicationData with
+// the properties inside. The properties are a flat list under ApplicationData
+// -- there is no Email element in between, because the code page of each
+// property already says what it is -- and the body is an AirSyncBase Body,
+// which is the spelling a client negotiating 12.0 or newer reads.
+//
+// The body is read for the item, because a sync that returns an item is one a
+// client is going to show, and an item with no body is a client that opens the
+// message and finds nothing.
 func (e *EAS) renderMailItem(w *WBXMLWriter, c *call, m webmail.Message, ra webmail.HeaderAddresses) {
-	w.Start(nsEmail, "Email")
-	_ = w.Leaf(nsEmail, "DisplayTo", displayAddresses(ra.To))
-	_ = w.Leaf(nsEmail, "DisplayCc", displayAddresses(ra.Cc))
+	w.Start(nsAirSync, "ApplicationData")
+	e.writeMessageProperties(w, c, m, displayAddresses(ra.To), displayAddresses(ra.Cc))
+	w.End() // ApplicationData
+}
+
+// writeMessageProperties writes the properties of one message. It is the same
+// list a Sync item and an ItemOperations fetch carry, so it is written once and
+// used by both rather than drifting apart.
+func (e *EAS) writeMessageProperties(w *WBXMLWriter, c *call, m webmail.Message, displayTo, displayCc string) {
+	_ = w.Leaf(nsEmail, "DisplayTo", displayTo)
+	if displayCc != "" {
+		_ = w.Leaf(nsEmail, "DisplayCc", displayCc)
+	}
 	_ = w.Leaf(nsEmail, "Subject", m.Subject)
 	_ = w.Leaf(nsEmail, "DateReceived", easTime(m.Date))
-	_ = w.Leaf(nsEmail, "Sender", displaySender(m.From, m.FromName))
-	_ = w.Leaf(nsEmail, "Flag", strconv.Itoa(messageFlags(m)))
+	_ = w.Leaf(nsEmail, "From", displaySender(m.From, m.FromName))
+	_ = w.Leaf(nsEmail, "MessageClass", "IPM.Note")
+	// An unread message carries Read 0, which is the value a client reads to
+	// decide how to draw the row.
+	_ = w.Leaf(nsEmail, "Read", boolStr(seenIn(m.Flags)))
+	w.Start(nsEmail, "Flag")
+	w.End()
 
 	body, truncated := e.itemBody(c, m.ID)
-	if body != "" {
-		w.Start(nsEmail, "Body")
-		_ = w.Leaf(nsEmail, "BodyType", strconv.Itoa(bodyType(body)))
-		if truncated {
-			_ = w.Leaf(nsEmail, "BodyTruncated", "1")
-		}
-		w.Opaque([]byte(body))
-		w.End()
+	if body == "" {
+		return
 	}
-	w.End() // Email
+	w.Start(nsAirSyncBase, "Body")
+	_ = w.Leaf(nsAirSyncBase, "Type", strconv.Itoa(bodyType(body)))
+	_ = w.Leaf(nsAirSyncBase, "EstimatedDataSize", strconv.Itoa(len(body)))
+	if truncated {
+		_ = w.Leaf(nsAirSyncBase, "Truncated", "1")
+	}
+	_ = w.Leaf(nsAirSyncBase, "Data", body)
+	w.End() // Body
+}
+
+// seenIn reports whether the flags say the message has been read.
+func seenIn(flags []string) bool {
+	for _, flag := range flags {
+		if flag == `\Seen` {
+			return true
+		}
+	}
+	return false
 }
 
 // itemBody reads a message's body for a sync item, preferring the plain-text
@@ -995,9 +1156,11 @@ func bodyType(body string) int {
 	return 1
 }
 
-// renderCalendarItem writes one event's Calendar element.
+// renderCalendarItem writes one event as a Sync item. Calendar properties sit
+// directly in the ApplicationData, like mail properties: the code page is what
+// says they are calendar fields.
 func (e *EAS) renderCalendarItem(w *WBXMLWriter, ev store.Event) {
-	w.Start(nsCalendar, "Calendar")
+	w.Start(nsAirSync, "ApplicationData")
 	_ = w.Leaf(nsCalendar, "Subject", ev.Summary)
 	_ = w.Leaf(nsCalendar, "StartTime", easTime(ev.DTStart))
 	_ = w.Leaf(nsCalendar, "EndTime", easTime(ev.DTEnd))
@@ -1005,7 +1168,8 @@ func (e *EAS) renderCalendarItem(w *WBXMLWriter, ev store.Event) {
 		_ = w.Leaf(nsCalendar, "AllDayEvent", "1")
 	}
 	_ = w.Leaf(nsCalendar, "Location", ev.Location)
-	w.End() // Calendar
+	_ = w.Leaf(nsCalendar, "UID", ev.UID)
+	w.End() // ApplicationData
 }
 
 // allFolderMessages reads every message of a folder, walked in pages. One query
@@ -1051,138 +1215,53 @@ func (e *EAS) allFolderMessages(c *call, folderID int64) ([]webmail.Message, err
 // recipients, subject, body and attachments -- and the answer carries the id of
 // the sent copy, which is what a client files against its own outbox.
 func (e *EAS) cmdSendMail(c *call, w *WBXMLWriter) *easErr {
-	// The message is the direct Email child of the command. It cannot be found
-	// by walking descendants, because a recipient group holds Email elements of
-	// its own and the walk would reach one of those first.
-	msg := c.root.FindChild("Email")
-	if msg == nil {
-		return e.badRequest("a SendMail carries no message")
+	// A failure is answered as a Status inside the command on a 200 for a
+	// client on 14.0 or newer, and as an HTTP 4xx/5xx for an older one: that
+	// is how MS-ASCMD 2.2.2 treats the common 1xx status codes, and a client
+	// reads only the half it was told to expect. The codes are the ones the
+	// specification names for a message: 103 (InvalidXML), 107 (InvalidMIME),
+	// 119 (MessageHasNoRecipient) and 120 (MailSubmissionFailed).
+	refuse := func(code, httpCode int, text string) *easErr {
+		if c.reports14() {
+			return &easErr{status: code, http: http.StatusOK, text: text}
+		}
+		return &easErr{status: code, http: httpCode, text: text}
 	}
 
-	req := webmail.ComposeRequest{From: c.owner()}
-	for _, group := range []struct {
-		name string
-		dst  *[]webmail.Address
-	}{
-		{"To", &req.To},
-		{"Cc", &req.Cc},
-	} {
-		*group.dst = parseRecipients(msg, group.name)
+	// The message is one MIME document in the Mime element, per MS-ASCMD. It
+	// arrives as an opaque blob or as inline text -- the two spellings the
+	// format allows -- and both carry the same bytes.
+	mime := c.root.FindDescendant("Mime")
+	var raw []byte
+	switch {
+	case mime == nil:
+		return refuse(103, http.StatusBadRequest, "a SendMail carries no message")
+	case len(mime.Opaque) > 0:
+		raw = mime.Opaque
+	default:
+		raw = []byte(mime.Text)
 	}
-	req.Subject = msg.TextOf("Subject")
-	if req.Subject == "" {
-		req.Subject = msg.TextDescendant("Subject")
-	}
-
-	// The body: a Body element with a type and a payload. A client negotiating
-	// 12.0 or newer writes the modern spelling -- a Type element and a Data
-	// child carrying the payload -- so both spellings are read.
-	if bodyEl := msg.FindChild("Body"); bodyEl != nil {
-		kind := asInt(bodyEl.FindChild("BodyType"), -1)
-		if kind < 0 {
-			kind = asInt(bodyEl.FindChild("Type"), 1)
-		}
-		payload := bodyEl.Text
-		if len(bodyEl.Opaque) > 0 {
-			payload = string(bodyEl.Opaque)
-		}
-		if payload == "" {
-			if data := bodyEl.FindChild("Data"); data != nil {
-				if len(data.Opaque) > 0 {
-					payload = string(data.Opaque)
-				} else {
-					payload = data.Text
-				}
-			}
-		}
-		if kind == 0 {
-			req.HTML = payload
-		} else {
-			req.Text = payload
-		}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return refuse(103, http.StatusBadRequest, "a SendMail carries no message")
 	}
 
-	// Attachments, when the client carried any. The payload is base64 in the
-	// wire element and base64 in the store, so it is copied through.
-	if atts := msg.FindChild("Attachments"); atts != nil {
-		for _, a := range atts.FindChildren("Attachment") {
-			name := a.TextOf("AttName")
-			if name == "" {
-				name = a.TextOf("DisplayName")
-			}
-			contentType := a.TextOf("ContentType")
-			if contentType == "" {
-				contentType = "application/octet-stream"
-			}
-			// The payload is opaque on the element in the older spelling and on
-			// a Data child in the modern one; an attachment with no payload is
-			// not an attachment, so it is dropped rather than sent as zero bytes.
-			var data string
-			switch {
-			case len(a.Opaque) > 0:
-				data = base64.StdEncoding.EncodeToString(a.Opaque)
-			default:
-				if d := a.FindChild("Data"); d != nil && len(d.Opaque) > 0 {
-					data = base64.StdEncoding.EncodeToString(d.Opaque)
-				} else {
-					data = a.Text
-				}
-			}
-			if data == "" {
-				continue
-			}
-			req.Attachment = append(req.Attachment, webmail.AttachmentInput{
-				Filename: name,
-				MIMEType: contentType,
-				Content:  data,
-			})
-		}
-	}
-
-	res, err := e.mail.Send(c.ctx, c.owner(), req)
+	// The message is read the way any other mail client would read it: headers
+	// for the envelope, the text parts for the body, the rest as attachments.
+	req, err := composeFromMIME(c.owner(), raw)
 	if err != nil {
+		if errors.Is(err, errNoRecipient) {
+			return refuse(119, http.StatusBadRequest, "the message names no recipient")
+		}
+		e.log.WarnContext(c.ctx, "eas: SendMail carried no readable message", "error", err)
+		return refuse(107, http.StatusBadRequest, "the message could not be read")
+	}
+
+	if _, err := e.mail.Send(c.ctx, c.owner(), req); err != nil {
 		e.log.ErrorContext(c.ctx, "eas: SendMail failed", "error", err)
-		return &easErr{status: 2, http: http.StatusOK, text: err.Error()}
+		return refuse(120, http.StatusInternalServerError, "the message could not be sent")
 	}
-
-	_ = w.Start(nsEmail, "SendMail")
-	_ = w.Leaf(nsEmail, "Status", "1")
-	_ = w.Leaf(nsEmail, "MessageId", res.MessageID)
-	if res.SentMessageID != 0 {
-		// The SentReplica is the sent copy the client reconciles against: the
-		// same item a Sync of the Sent folder will report, under its own id.
-		w.Start(nsEmail, "SentReplica")
-		w.Start(nsEmail, "Email")
-		_ = w.Leaf(nsEmail, "Subject", req.Subject)
-		_ = w.Leaf(nsEmail, "DisplayTo", displayAddresses(req.To))
-		w.End() // Email
-		w.End() // SentReplica
-	}
-	w.End() // SendMail
+	// The success answer is an empty body; writeResponse sends it.
 	return nil
-}
-
-// parseRecipients reads the recipients of one group (To or Cc) from the message.
-// A group is a set of Email elements, each with an Address and a Name, which is
-// the shape the protocol gives recipients rather than a comma list, because a
-// recipient is a person with a display name, not a string.
-func parseRecipients(msg *WBXMLNode, group string) []webmail.Address {
-	var out []webmail.Address
-	g := msg.FindChild(group)
-	if g == nil {
-		return out
-	}
-	for _, r := range g.FindChildren("Email") {
-		addr := r.TextOf("Address")
-		if addr == "" {
-			addr = r.Text
-		}
-		if addr == "" {
-			continue
-		}
-		out = append(out, webmail.Address{Address: addr, Name: r.TextOf("Name")})
-	}
-	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -1195,49 +1274,37 @@ func parseRecipients(msg *WBXMLNode, group string) []webmail.Address {
 // folder is refused: moving mail into a calendar is not a thing, and a client
 // that asks for it gets the answer rather than a surprise.
 func (e *EAS) cmdMoveItems(c *call, w *WBXMLWriter) *easErr {
-	var ids []int64
-	if items := c.root.FindDescendant("Items"); items != nil {
-		for _, idEl := range items.FindChildren("Id") {
-			id, err := strconv.ParseInt(idEl.Text, 10, 64)
-			if err != nil || id <= 0 {
-				continue
+	// One request may move several items, and each is answered on its own:
+	// a move that fails for one item must not hide the ones that worked.
+	w.Start(nsMove, "MoveItems")
+	for _, move := range c.root.FindChildren("Move") {
+		src := move.TextOf("SrcMsgId")
+		w.Start(nsMove, "Response")
+		_ = w.Leaf(nsMove, "SrcMsgId", src)
+
+		id, err := strconv.ParseInt(src, 10, 64)
+		kind, destID, ok := parseServerID(move.TextOf("DstFldId"))
+		switch {
+		case err != nil || id <= 0:
+			_ = w.Leaf(nsMove, "Status", "2")
+		case !ok || kind != kindMailbox:
+			// Moving mail into a calendar is not a thing, and a client that
+			// asks for it gets the answer rather than a surprise.
+			_ = w.Leaf(nsMove, "Status", "2")
+		default:
+			if _, err := e.mail.Move(c.ctx, c.owner(), []int64{id}, destID); err != nil {
+				e.log.ErrorContext(c.ctx, "eas: MoveItems failed", "id", id, "error", err)
+				_ = w.Leaf(nsMove, "Status", "2")
+			} else {
+				// The item keeps its id where it lands, so the destination id
+				// is the same number a client already knows it by.
+				_ = w.Leaf(nsMove, "Status", "3")
+				_ = w.Leaf(nsMove, "DstMsgId", src)
 			}
-			ids = append(ids, id)
 		}
+		w.End() // Response
 	}
-	destText := c.root.TextDescendant("Destination")
-	if destText == "" {
-		return e.badRequest("a MoveItems names no destination")
-	}
-	kind, destID, ok := parseServerID(destText)
-	if !ok || kind != kindMailbox {
-		return &easErr{status: 6003, http: http.StatusOK, text: "the destination is not a mail folder"}
-	}
-
-	_ = w.Start(nsMove, "MoveItems")
-	if len(ids) == 0 {
-		_ = w.Leaf(nsMove, "Status", "1")
-		w.End()
-		return nil
-	}
-
-	_, err := e.mail.Move(c.ctx, c.owner(), ids, destID)
-	if err != nil {
-		e.log.ErrorContext(c.ctx, "eas: MoveItems failed", "error", err)
-		_ = w.Leaf(nsMove, "Status", "1301")
-		w.Start(nsMove, "MoveErrors")
-		for _, id := range ids {
-			w.Start(nsMove, "MoveError")
-			_ = w.Leaf(nsMove, "Id", strconv.FormatInt(id, 10))
-			w.End()
-		}
-		w.End() // MoveErrors
-		w.End() // MoveItems
-		return nil
-	}
-
-	_ = w.Leaf(nsMove, "Status", "1")
-	w.End()
+	w.End() // MoveItems
 	return nil
 }
 
@@ -1281,15 +1348,15 @@ func (e *EAS) cmdGetItemEstimate(c *call, w *WBXMLWriter) *easErr {
 	}
 
 	_ = w.Start(nsGetItemEstimate, "GetItemEstimate")
+	w.Start(nsGetItemEstimate, "Response")
 	_ = w.Leaf(nsGetItemEstimate, "Status", "1")
-	w.Start(nsGetItemEstimate, "Collections")
 	for _, est := range estimates {
 		w.Start(nsGetItemEstimate, "Collection")
 		_ = w.Leaf(nsGetItemEstimate, "CollectionId", est.id)
 		_ = w.Leaf(nsGetItemEstimate, "Estimate", strconv.Itoa(est.count))
 		w.End()
 	}
-	w.End() // Collections
+	w.End() // Response
 	w.End() // GetItemEstimate
 	return nil
 }
@@ -1304,34 +1371,104 @@ func (e *EAS) cmdFolderCreate(c *call, w *WBXMLWriter) *easErr {
 	if name == "" {
 		return e.badRequest("a FolderCreate names no folder")
 	}
-	f, err := e.mail.CreateFolder(c.ctx, c.owner(), name)
+	// The Type element says which kind of folder is being asked for
+	// (MS-ASCMD 2.2.3.186.2). A calendar folder becomes a real calendar: a
+	// mailbox that merely answers "Calendar" would be listed as one, then
+	// refuse every event a client puts in it, which is worse than failing the
+	// create. The default folder types (2 through 11) are reserved for the
+	// server, so a client never asks to create one.
+	folderType, err := strconv.Atoi(strings.TrimSpace(c.root.TextDescendant("Type")))
 	if err != nil {
-		e.log.ErrorContext(c.ctx, "eas: FolderCreate failed", "error", err)
-		return &easErr{status: 6002, http: http.StatusOK, text: "the folder could not be created"}
+		// No Type at all is a malformed request rather than a guess about
+		// what was meant (status 10, MS-ASCMD 2.2.1.3).
+		return &easErr{status: 10, http: http.StatusOK, text: "the FolderCreate names no folder type"}
+	}
+
+	var serverID string
+	switch folderType {
+	case folderTypeUserCalendar:
+		owner := c.owner()
+		cal, cerr := store.NewCalendars().Create(c.ctx, e.db, store.CreateCalendarRequest{
+			Owner: &owner,
+			Name:  strings.TrimSpace(name),
+		})
+		if cerr != nil {
+			if errors.Is(cerr, store.ErrConflict) {
+				// Status 2 is the spec's answer for "a folder with this name
+				// already exists" -- the calendar name is unique per owner.
+				return &easErr{status: 2, http: http.StatusOK, text: "a folder with this name already exists"}
+			}
+			e.log.ErrorContext(c.ctx, "eas: FolderCreate (calendar) failed", "error", cerr)
+			return &easErr{status: 6002, http: http.StatusOK, text: "the folder could not be created"}
+		}
+		serverID = "cal" + strconv.FormatInt(cal.ID, 10)
+	case folderTypeMailbox, folderTypeOther:
+		f, ferr := e.mail.CreateFolder(c.ctx, c.owner(), name)
+		if ferr != nil {
+			e.log.ErrorContext(c.ctx, "eas: FolderCreate failed", "error", ferr)
+			return &easErr{status: 6002, http: http.StatusOK, text: "the folder could not be created"}
+		}
+		serverID = strconv.FormatInt(f.ID, 10)
+	default:
+		// Contacts, tasks and the rest have no store behind them here.
+		// Creating a mail folder instead would give the client a folder that
+		// cannot hold what it was asked to hold.
+		e.log.WarnContext(c.ctx, "eas: FolderCreate for an unsupported folder type",
+			"owner", c.owner(), "type", folderType, "name", name)
+		return &easErr{status: 6002, http: http.StatusOK,
+			text: "this server cannot create folders of that type"}
+	}
+
+	folders, er := e.collectFolders(c)
+	if er != nil {
+		return er
 	}
 	_ = w.Start(nsFolderHierarchy, "FolderCreate")
 	_ = w.Leaf(nsFolderHierarchy, "Status", "1")
-	_ = w.Leaf(nsFolderHierarchy, "ServerId", strconv.FormatInt(f.ID, 10))
+	// The key the answer carries is the tree as it is now, so the next folder
+	// command or folder sync starts from the folder the client was just given.
+	_ = w.Leaf(nsFolderHierarchy, "SyncKey", folderSyncKey(folders))
+	_ = w.Leaf(nsFolderHierarchy, "ServerId", serverID)
 	w.End()
 	return nil
 }
 
-// cmdFolderDelete deletes a mail folder.
+// cmdFolderDelete deletes a mail folder, or a calendar folder's calendar.
 func (e *EAS) cmdFolderDelete(c *call, w *WBXMLWriter) *easErr {
 	idText := c.root.TextDescendant("ServerId")
 	kind, id, ok := parseServerID(idText)
-	if !ok || kind != kindMailbox {
+	if !ok {
 		return &easErr{status: 6002, http: http.StatusOK, text: "the folder cannot be deleted"}
 	}
-	if err := e.mail.DeleteFolder(c.ctx, c.owner(), id); err != nil {
-		e.log.ErrorContext(c.ctx, "eas: FolderDelete failed", "error", err)
-		return &easErr{status: 6002, http: http.StatusOK, text: "the folder could not be deleted"}
+	switch kind {
+	case kindMailbox:
+		if err := e.mail.DeleteFolder(c.ctx, c.owner(), id); err != nil {
+			e.log.ErrorContext(c.ctx, "eas: FolderDelete failed", "error", err)
+			return &easErr{status: 6002, http: http.StatusOK, text: "the folder could not be deleted"}
+		}
+	case kindCalendar:
+		// A calendar folder created over EAS is deleted the same way it was
+		// created: as a calendar, not as a mailbox. The calendar has to
+		// belong to the owner asking -- ServerIds are guessable, ownership is
+		// not implied by knowing one.
+		cal, err := store.NewCalendars().Get(c.ctx, e.db, id)
+		if err != nil || cal.Owner == nil || *cal.Owner != c.owner() {
+			return &easErr{status: 6002, http: http.StatusOK, text: "the folder cannot be deleted"}
+		}
+		if err := store.NewCalendars().Delete(c.ctx, e.db, id); err != nil {
+			e.log.ErrorContext(c.ctx, "eas: FolderDelete (calendar) failed", "error", err)
+			return &easErr{status: 6002, http: http.StatusOK, text: "the folder could not be deleted"}
+		}
+	default:
+		return &easErr{status: 6002, http: http.StatusOK, text: "the folder cannot be deleted"}
+	}
+	folders, er := e.collectFolders(c)
+	if er != nil {
+		return er
 	}
 	_ = w.Start(nsFolderHierarchy, "FolderDelete")
 	_ = w.Leaf(nsFolderHierarchy, "Status", "1")
-	w.Start(nsFolderHierarchy, "Delete")
-	_ = w.Leaf(nsFolderHierarchy, "ServerId", idText)
-	w.End()
+	_ = w.Leaf(nsFolderHierarchy, "SyncKey", folderSyncKey(folders))
 	w.End()
 	return nil
 }
@@ -1340,24 +1477,58 @@ func (e *EAS) cmdFolderDelete(c *call, w *WBXMLWriter) *easErr {
 func (e *EAS) cmdFolderUpdate(c *call, w *WBXMLWriter) *easErr {
 	idText := c.root.TextDescendant("ServerId")
 	kind, id, ok := parseServerID(idText)
-	if !ok || kind != kindMailbox {
+	if !ok {
 		return &easErr{status: 6002, http: http.StatusOK, text: "the folder cannot be updated"}
 	}
 	name := c.root.TextDescendant("DisplayName")
 	if name == "" {
 		return e.badRequest("a FolderUpdate names no new name")
 	}
-	if _, err := e.mail.RenameFolder(c.ctx, c.owner(), id, name); err != nil {
-		e.log.ErrorContext(c.ctx, "eas: FolderUpdate failed", "error", err)
-		return &easErr{status: 6002, http: http.StatusOK, text: "the folder could not be renamed"}
+	switch kind {
+	case kindMailbox:
+		if _, err := e.mail.RenameFolder(c.ctx, c.owner(), id, name); err != nil {
+			e.log.ErrorContext(c.ctx, "eas: FolderUpdate failed", "error", err)
+			return &easErr{status: 6002, http: http.StatusOK, text: "the folder could not be renamed"}
+		}
+	case kindCalendar:
+		// Renaming a calendar changes the label a client shows; the calendar's
+		// unique name underneath is not a display concern and stays put.
+		cal, err := store.NewCalendars().Get(c.ctx, e.db, id)
+		if err != nil || cal.Owner == nil || *cal.Owner != c.owner() {
+			return &easErr{status: 6002, http: http.StatusOK, text: "the folder cannot be updated"}
+		}
+		label := strings.TrimSpace(name)
+		if err := store.NewCalendars().Update(c.ctx, e.db, id, store.UpdateCalendarRequest{
+			DisplayName: &label,
+		}); err != nil {
+			e.log.ErrorContext(c.ctx, "eas: FolderUpdate (calendar) failed", "error", err)
+			return &easErr{status: 6002, http: http.StatusOK, text: "the folder could not be renamed"}
+		}
+	default:
+		return &easErr{status: 6002, http: http.StatusOK, text: "the folder cannot be updated"}
+	}
+	folders, er := e.collectFolders(c)
+	if er != nil {
+		return er
 	}
 	_ = w.Start(nsFolderHierarchy, "FolderUpdate")
 	_ = w.Leaf(nsFolderHierarchy, "Status", "1")
-	w.Start(nsFolderHierarchy, "Update")
-	_ = w.Leaf(nsFolderHierarchy, "ServerId", idText)
-	w.End()
+	_ = w.Leaf(nsFolderHierarchy, "SyncKey", folderSyncKey(folders))
 	w.End()
 	return nil
+}
+
+// folderSyncKey renders the state a folder command answers with: the snapshot
+// of the folders as they are now. A client takes the key away and sends it with
+// its next folder request, and the tree the key describes is the one it has
+// just been told about.
+func folderSyncKey(folders []easFolder) string {
+	snapshot := make(map[string]string, len(folders))
+	for _, f := range folders {
+		snapshot[f.serverID] = f.key
+	}
+	encoded, _ := encodeState(folderSyncState{Folders: snapshot})
+	return encoded
 }
 
 // ---------------------------------------------------------------------------
@@ -1381,72 +1552,97 @@ func (e *EAS) cmdPing(c *call, w *WBXMLWriter) *easErr {
 // MeetingResponse
 // ---------------------------------------------------------------------------
 
-// cmdMeetingResponse records an attendee's answer to a meeting. The request
-// carries the meeting as an opaque iCalendar document, and the answer is read
-// from the attendee that is the user, in the document's own partstat, and
-// written to the local copy so the calendar shows the user accepted, declined
-// or is tentative.
+// cmdMeetingResponse records an attendee's answer to a meeting.
+//
+// The request names the meeting and the answer: a client responds to an
+// invitation with Accept, Decline or Tentative, and the server writes that as
+// the attendee's partstat on the local copy of the event, so the organizer's
+// calendar and the attendee's agree on what was answered.
 func (e *EAS) cmdMeetingResponse(c *call, w *WBXMLWriter) *easErr {
-	answer := func() *easErr {
-		_ = w.Start(nsMeetingResponse, "MeetingResponse")
+	// One request may answer several meetings, and each answer gets its own
+	// Result, per MS-ASCMD.
+	w.Start(nsMeetingResponse, "MeetingResponse")
+	for _, request := range c.root.FindChildren("Request") {
+		// The meeting is named by its calendar id, which this server writes as
+		// the calendar row and the event's UID.
+		calendarID := request.TextOf("CalendarId")
+		uid := eventUIDFromServerID(calendarID)
+		partstat := meetingPartstat(asInt(request.FindChild("MeetingResponse"), -1))
+		if uid != "" && partstat != "" {
+			if _, err := store.NewEvents().SetPartStat(c.ctx, e.db, uid, c.owner(), partstat); err != nil {
+				e.log.WarnContext(c.ctx, "eas: MeetingResponse could not record the answer",
+					"uid", uid, "error", err)
+			}
+		}
+		w.Start(nsMeetingResponse, "Result")
+		if requestID := request.TextOf("RequestId"); requestID != "" {
+			_ = w.Leaf(nsMeetingResponse, "RequestId", requestID)
+		}
+		// The answer is the answer the client gave, not a claim that the
+		// calendar accepted it: a client that is told otherwise re-sends the
+		// response and never knows whether it landed.
 		_ = w.Leaf(nsMeetingResponse, "Status", "1")
-		w.End()
-		return nil
-	}
-
-	var ics []byte
-	if meeting := c.root.FindDescendant("Meeting"); meeting != nil {
-		if data := meeting.FindChild("Data"); data != nil && len(data.Opaque) > 0 {
-			ics = data.Opaque
-		} else if data := meeting.FindDescendant("Data"); data != nil && len(data.Opaque) > 0 {
-			ics = data.Opaque
+		if calendarID != "" {
+			_ = w.Leaf(nsMeetingResponse, "CalendarId", calendarID)
 		}
+		w.End() // Result
 	}
-	if len(ics) == 0 {
-		// A MeetingResponse that carries no readable meeting is answered without
-		// a change rather than with an error: the client's local copy is what
-		// it is, and a server that cannot see it should not claim it saw it.
-		return answer()
-	}
+	w.End() // MeetingResponse
+	return nil
+}
 
-	doc, err := ical.Parse(ics)
-	if err != nil || len(doc.Events) == 0 {
-		e.log.WarnContext(c.ctx, "eas: MeetingResponse carried no readable meeting", "error", err)
-		return answer()
+// meetingPartstat maps the protocol's answer to the calendar partstat.
+func meetingPartstat(code int) string {
+	switch code {
+	case 1:
+		return "ACCEPTED"
+	case 2:
+		return "DECLINED"
+	case 3:
+		return "TENTATIVE"
+	default:
+		return ""
 	}
-	ev := doc.Events[0]
+}
 
-	partstat := ""
-	for _, a := range ev.Attendees {
-		if strings.EqualFold(a.Address, c.owner()) {
-			partstat = a.PartStat
-			break
-		}
+// eventUIDFromServerID reads the event UID out of a calendar server id, which
+// this server writes as "cal<calendar>:<uid>" and, for one occurrence of a
+// recurring series, with the occurrence time after it.
+func eventUIDFromServerID(serverID string) string {
+	i := strings.Index(serverID, "cal")
+	if i != 0 {
+		return ""
 	}
-	if partstat != "" {
-		if _, err := store.NewEvents().SetPartStat(c.ctx, e.db, ev.UID, c.owner(), partstat); err != nil {
-			e.log.WarnContext(c.ctx, "eas: MeetingResponse could not record the answer", "error", err)
-		}
+	rest := serverID[strings.Index(serverID, ":")+1:]
+	if j := strings.Index(rest, ":"); j >= 0 {
+		return rest[:j]
 	}
-	return answer()
+	return rest
 }
 
 // ---------------------------------------------------------------------------
 // Search
 // ---------------------------------------------------------------------------
 
-// cmdSearch reports the stores a client may search. This server exposes its
-// account's directory as one store; the command's job is to name it, which is
-// what a client does before it sends a search string.
+// cmdSearch answers a Search.
+//
+// A client searches by naming a store and a query, and the answer is a list of
+// results or an empty one. This server exposes no directory to search yet, so
+// the answer is the empty list: a successful search that matched nothing. It is
+// an answer a client understands, rather than an error a client reports as a
+// broken account.
 func (e *EAS) cmdSearch(c *call, w *WBXMLWriter) *easErr {
-	_ = w.Start(nsSearch, "Search")
+	if c.root.FindDescendant("Store") == nil {
+		return e.badRequest("a Search names no store")
+	}
+	w.Start(nsSearch, "Search")
 	_ = w.Leaf(nsSearch, "Status", "1")
-	w.Start(nsSearch, "Stores")
+	w.Start(nsSearch, "Response")
 	w.Start(nsSearch, "Store")
-	_ = w.Leaf(nsSearch, "DisplayName", "Global Address List")
-	_ = w.Leaf(nsSearch, "StoreId", "GAL")
+	_ = w.Leaf(nsSearch, "Status", "1")
+	_ = w.Leaf(nsSearch, "Total", "0")
 	w.End() // Store
-	w.End() // Stores
+	w.End() // Response
 	w.End() // Search
 	return nil
 }
@@ -1455,21 +1651,25 @@ func (e *EAS) cmdSearch(c *call, w *WBXMLWriter) *easErr {
 // Settings
 // ---------------------------------------------------------------------------
 
-// cmdSettings answers a settings request with the account's push interval,
-// which is the one setting a client asks for on setup.
+// cmdSettings answers a Settings request.
+//
+// A client sends its device information on setup and asks for the settings it
+// is allowed to read. The answer names the elements it asked for: the device
+// information is stored with the account's devices, and the settings that are
+// not this server's to give are answered for by the Status alone, which is what
+// a client reads first.
 func (e *EAS) cmdSettings(c *call, w *WBXMLWriter) *easErr {
-	account := c.root.TextDescendant("Account")
-	if account == "" {
-		account = c.owner()
-	}
-	_ = w.Start(nsSettings, "Settings")
-	_ = w.Leaf(nsSettings, "Status", "1")
+	answeredDeviceInfo := c.root.FindDescendant("DeviceInformation") != nil
+
 	w.Start(nsSettings, "Settings")
-	_ = w.Leaf(nsSettings, "Account", account)
-	w.Start(nsSettings, "Push")
-	_ = w.Leaf(nsSettings, "Interval", strconv.Itoa(heartbeatInterval))
-	w.End() // Push
-	w.End() // Settings
+	_ = w.Leaf(nsSettings, "Status", "1")
+	if answeredDeviceInfo {
+		w.Start(nsSettings, "DeviceInformation")
+		w.Start(nsSettings, "Set")
+		_ = w.Leaf(nsSettings, "Status", "1")
+		w.End()
+		w.End()
+	}
 	w.End() // Settings
 	return nil
 }
@@ -1478,42 +1678,96 @@ func (e *EAS) cmdSettings(c *call, w *WBXMLWriter) *easErr {
 // ItemOperations
 // ---------------------------------------------------------------------------
 
-// cmdItemOperations applies per-item flag changes: marking a message read or
-// unread, or complete or not. Each operation names an item and the change, and
-// the changes go through the same service the web client uses, so a flag set
-// here is the flag the web client shows.
+// cmdItemOperations answers an ItemOperations.
+//
+// The command carries one operation per request. Fetch pulls one item in full --
+// which is what a client does when a Sync handed it a truncated body and the
+// user opened the message -- and EmptyFolderContents empties a folder, which is
+// what a client does when its owner asks for "empty deleted items".
+//
+// Marking a message read is not one of these operations: per MS-ASCMD that is a
+// Change in a Sync request, which cmdSync applies.
 func (e *EAS) cmdItemOperations(c *call, w *WBXMLWriter) *easErr {
-	if ops := c.root.FindDescendant("Operations"); ops != nil {
-		for _, op := range ops.FindChildren("Operation") {
-			idText := op.TextOf("ServerId")
-			id, err := strconv.ParseInt(idText, 10, 64)
-			if err != nil || id <= 0 {
-				continue
-			}
-			switch {
-			case op.FindChild("MarkAsRead") != nil:
-				if err := e.mail.MarkRead(c.ctx, c.owner(), id, true); err != nil {
-					e.log.WarnContext(c.ctx, "eas: MarkAsRead failed", "id", id, "error", err)
-				}
-			case op.FindChild("MarkAsUnread") != nil:
-				if err := e.mail.MarkRead(c.ctx, c.owner(), id, false); err != nil {
-					e.log.WarnContext(c.ctx, "eas: MarkAsUnread failed", "id", id, "error", err)
-				}
-			case op.FindChild("MarkAsCompleted") != nil:
-				if err := e.mail.SetFlag(c.ctx, c.owner(), id, `\Flagged`, false); err != nil {
-					e.log.WarnContext(c.ctx, "eas: MarkAsCompleted failed", "id", id, "error", err)
-				}
-			case op.FindChild("MarkAsUncompleted") != nil:
-				if err := e.mail.SetFlag(c.ctx, c.owner(), id, `\Flagged`, true); err != nil {
-					e.log.WarnContext(c.ctx, "eas: MarkAsUncompleted failed", "id", id, "error", err)
-				}
+	w.Start(nsItemOperations, "ItemOperations")
+
+	if purge := c.root.FindDescendant("EmptyFolderContents"); purge != nil {
+		kind, folderID, ok := parseServerID(purge.TextOf("CollectionId"))
+		switch {
+		case !ok || kind != kindMailbox:
+			_ = w.Leaf(nsItemOperations, "Status", "5")
+		default:
+			if _, err := e.mail.EmptyFolder(c.ctx, c.owner(), folderID); err != nil {
+				e.log.ErrorContext(c.ctx, "eas: ItemOperations could not empty a folder",
+					"folder", folderID, "error", err)
+				_ = w.Leaf(nsItemOperations, "Status", "6")
+			} else {
+				_ = w.Leaf(nsItemOperations, "Status", "1")
 			}
 		}
+		w.End() // ItemOperations
+		return nil
 	}
-	_ = w.Start(nsItemOperations, "ItemOperations")
-	_ = w.Leaf(nsItemOperations, "Status", "1")
-	w.End()
+
+	fetch := c.root.FindDescendant("Fetch")
+	if fetch == nil {
+		_ = w.Leaf(nsItemOperations, "Status", "2")
+		w.End()
+		return nil
+	}
+	e.cmdItemFetch(c, w, fetch)
+	w.End() // ItemOperations
 	return nil
+}
+
+// cmdItemFetch answers one Fetch: the item in full, with its properties.
+func (e *EAS) cmdItemFetch(c *call, w *WBXMLWriter, fetch *WBXMLNode) {
+	failed := func(status string) {
+		_ = w.Leaf(nsItemOperations, "Status", status)
+		w.Start(nsItemOperations, "Response")
+		w.Start(nsItemOperations, "Fetch")
+		_ = w.Leaf(nsItemOperations, "Status", status)
+		w.End()
+		w.End()
+	}
+
+	collectionID := fetch.TextOf("CollectionId")
+	serverID := fetch.TextOf("ServerId")
+	id, err := strconv.ParseInt(serverID, 10, 64)
+	kind, _, ok := parseServerID(collectionID)
+	if err != nil || id <= 0 || !ok || kind != kindMailbox {
+		// A fetch that names an item the server does not have is answered per
+		// item, so a client fetching several still learns which one failed.
+		failed("5")
+		return
+	}
+	detail, err := e.mail.Message(c.ctx, c.owner(), id)
+	if err != nil {
+		e.log.WarnContext(c.ctx, "eas: ItemOperations could not fetch an item",
+			"id", id, "error", err)
+		failed("5")
+		return
+	}
+	recips, err := e.mail.Recipients(c.ctx, c.owner(), []int64{id})
+	if err != nil {
+		e.log.WarnContext(c.ctx, "eas: ItemOperations could not read an item's recipients",
+			"id", id, "error", err)
+		failed("6")
+		return
+	}
+
+	_ = w.Leaf(nsItemOperations, "Status", "1")
+	w.Start(nsItemOperations, "Response")
+	w.Start(nsItemOperations, "Fetch")
+	_ = w.Leaf(nsItemOperations, "Status", "1")
+	_ = w.Leaf(nsAirSync, "CollectionId", collectionID)
+	_ = w.Leaf(nsAirSync, "ServerId", serverID)
+	_ = w.Leaf(nsAirSync, "Class", "Email")
+	w.Start(nsItemOperations, "Properties")
+	ra := recips[id]
+	e.writeMessageProperties(w, c, detail.Message, displayAddresses(ra.To), displayAddresses(ra.Cc))
+	w.End() // Properties
+	w.End() // Fetch
+	w.End() // Response
 }
 
 // ---------------------------------------------------------------------------
@@ -1645,9 +1899,15 @@ func encodeState(v any) (string, error) {
 // synchronisation, and a state that is not blank and does not decode is refused
 // rather than treated as fresh, because re-sending a folder against a corrupt
 // state would make a client re-send every local change it made.
+// decodeState reads back a state this server issued. The empty string and the
+// protocol's own "0" both mean the client has no state yet -- MS-ASCMD names
+// 0 as the initial SyncKey for FolderSync and Sync -- so neither is decoded,
+// and a client that sends 0 is answered with everything rather than refused
+// for sending something unreadable.
 func decodeState[T any](encoded string) (T, bool, *easErr) {
 	var out T
-	if strings.TrimSpace(encoded) == "" {
+	encoded = strings.TrimSpace(encoded)
+	if encoded == "" || encoded == "0" {
 		return out, false, nil
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(encoded)
@@ -1740,6 +2000,14 @@ func policyKey(address string) string {
 	return fmt.Sprintf("%016X", h)
 }
 
+// temporaryPolicyKey is the key a server hands out before the client has
+// acknowledged the policy. MS-ASPROV gives the client one key to acknowledge
+// with and another, final, one to use afterwards, so the two are different
+// values and a client can tell which half of provisioning it is in.
+func temporaryPolicyKey(address string) string {
+	return policyKey("temporary:" + address)
+}
+
 // namespace names for the writer, so a handler does not spell them.
 const (
 	nsAirSync         = "AirSync"
@@ -1754,4 +2022,6 @@ const (
 	nsSearch          = "Search"
 	nsSettings        = "Settings"
 	nsItemOperations  = "ItemOperations"
+	nsAirSyncBase     = "AirSyncBase"
+	nsComposeMail     = "ComposeMail"
 )

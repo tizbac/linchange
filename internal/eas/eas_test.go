@@ -146,12 +146,15 @@ func (ts *testService) deliver(t *testing.T, mailboxID int64, subject, body, mes
 	}
 }
 
-// post sends one command, with credentials the fixed authenticator accepts.
+// post sends one command, with credentials the fixed authenticator accepts and
+// the version header a modern client speaks: 14.1, where a failure carries a
+// Status element in a 200 rather than an HTTP error.
 func (ts *testService) post(t *testing.T, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/eas/Microsoft-Server-ActiveSync",
 		bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/vnd.ms-sync.wbxml")
+	req.Header.Set("MS-ASProtocolVersion", "14.1")
 	req.SetBasicAuth(testOwner, "correct-horse")
 	rr := httptest.NewRecorder()
 	ts.eas.Handler().ServeHTTP(rr, req)
@@ -165,9 +168,6 @@ func decodeRoot(t *testing.T, rr *httptest.ResponseRecorder) *WBXMLNode {
 		t.Fatalf("status = %d, want 200; body: %q", rr.Code, rr.Body.String())
 	}
 	dec := NewWBXMLDecoder(rr.Body.Bytes())
-	if err := dec.DecodeHeader(); err != nil {
-		t.Fatalf("the answer is not a WBXML stream: %v", err)
-	}
 	root, err := dec.Decode()
 	if err != nil {
 		t.Fatalf("decoding the answer: %v", err)
@@ -366,23 +366,36 @@ func TestSelectProtocolVersion(t *testing.T) {
 
 // The writer and the decoder are the contract with a real client, so a
 // document the writer produces must decode back to the same elements, in the
-// same code pages, with the same text and the same opaque payloads.
+// same code pages, with the same text and the same opaque payloads. The header
+// and the content bits are checked here too: they are what a real client reads
+// first, and a document that gets them wrong is a document no client can read
+// however well the rest of it is formed.
 func TestWBXMLRoundTrip(t *testing.T) {
 	w := NewWBXMLWriter()
 	_ = w.Start(nsAirSync, "Sync")
 	_ = w.Leaf(nsAirSync, "CollectionId", "42")
-	_ = w.Start(nsEmail, "Email")
+	w.Start(nsAirSync, "ApplicationData")
 	_ = w.Leaf(nsEmail, "Subject", "héllo wörld")
-	_ = w.Start(nsEmail, "Body")
+	w.Start(nsAirSyncBase, "Body")
+	_ = w.Leaf(nsAirSyncBase, "Type", "1")
 	w.Opaque([]byte{0x00, 0x01, 0xFF, 0x7F})
 	w.End()
 	w.End()
 	w.End()
 
-	dec := NewWBXMLDecoder(w.Bytes())
-	if err := dec.DecodeHeader(); err != nil {
-		t.Fatalf("decoding the header: %v", err)
+	raw := w.Bytes()
+	// The header ActiveSync clients write and read: WBXML 1.3, the public
+	// identifier 0x01, UTF-8 (MIBEnum 106) and no string table.
+	if want := []byte{0x03, 0x01, 0x6A, 0x00}; !bytes.Equal(raw[:4], want) {
+		t.Fatalf("header = % x, want % x", raw[:4], want)
 	}
+	// Every element with content carries bit 6 of its token and an END token
+	// after it; the root element Sync has content, so its token is 0x45.
+	if raw[4] != byte(0x05|tokenHasContent) {
+		t.Errorf("the root element token = 0x%02x, want 0x45 (content bit set)", raw[4])
+	}
+
+	dec := NewWBXMLDecoder(raw)
 	root, err := dec.Decode()
 	if err != nil {
 		t.Fatalf("decoding the stream: %v", err)
@@ -394,16 +407,60 @@ func TestWBXMLRoundTrip(t *testing.T) {
 	if got := root.TextOf("CollectionId"); got != "42" {
 		t.Errorf("CollectionId = %q, want 42", got)
 	}
-	email := root.FindChild("Email")
-	if email == nil || email.NS != "Email" {
-		t.Fatalf("the Email child is missing or in the wrong code page: %+v", email)
+	data := root.FindChild("ApplicationData")
+	if data == nil || data.NS != "AirSync" {
+		t.Fatalf("the ApplicationData child is missing or in the wrong code page: %+v", data)
 	}
-	if got := email.TextOf("Subject"); got != "héllo wörld" {
+	if got := data.TextOf("Subject"); got != "héllo wörld" {
 		t.Errorf("Subject = %q, want %q", got, "héllo wörld")
 	}
-	body := email.FindChild("Body")
-	if body == nil || !bytes.Equal(body.Opaque, []byte{0x00, 0x01, 0xFF, 0x7F}) {
+	body := data.FindChild("Body")
+	if body == nil || body.NS != "AirSyncBase" {
+		t.Fatalf("the Body child is missing or in the wrong code page: %+v", body)
+	}
+	if !bytes.Equal(body.Opaque, []byte{0x00, 0x01, 0xFF, 0x7F}) {
 		t.Errorf("the opaque body did not survive the round trip: %+v", body)
+	}
+}
+
+// A document written the way a real client writes it -- content bits set, an
+// END token after every element with content, and none after an empty element
+// -- decodes the same document the other way round. This is the shape on the
+// wire that the round trip above cannot produce by itself, because writer and
+// decoder share a file.
+func TestSpecShapedDocumentDecodes(t *testing.T) {
+	// Written out byte by byte: the stream is the thing under test.
+	//
+	// <Sync><Collections><Collection><SyncKey>7</SyncKey><CollectionId>1</>
+	// <MoreAvailable/></Collection></Collections></Sync>
+	document := []byte{0x03, 0x01, 0x6A, 0x00,
+		0x45,                        //   Sync, has content
+		0x5C,                        //     Collections, has content (0x1C|0x40)
+		0x4F,                        //       Collection, has content (0x0F|0x40)
+		0x4B, 0x03, '7', 0x00, 0x01, //         SyncKey "7"
+		0x52, 0x03, '1', 0x00, 0x01, //         CollectionId "1"
+		0x14, //                                MoreAvailable, empty: no content bit, no END
+		0x01, //       end Collection
+		0x01, //     end Collections
+		0x01, //   end Sync
+	}
+
+	root, err := NewWBXMLDecoder(document).Decode()
+	if err != nil {
+		t.Fatalf("decoding a spec-shaped document: %v", err)
+	}
+	if root.Name != "Sync" {
+		t.Fatalf("root = %s, want Sync", root.Name)
+	}
+	coll := root.FindDescendant("Collection")
+	if coll == nil {
+		t.Fatal("the Collection element did not survive")
+	}
+	if got := coll.TextOf("SyncKey"); got != "7" {
+		t.Errorf("SyncKey = %q, want 7", got)
+	}
+	if coll.FindChild("MoreAvailable") == nil {
+		t.Error("the empty MoreAvailable element did not survive")
 	}
 }
 
@@ -437,12 +494,14 @@ func TestFolderSyncListsEveryFolderAndThenReportsNoChange(t *testing.T) {
 		byName[f.TextOf("DisplayName")] = f
 	}
 	for name, typ := range map[string]string{
+		// MS-ASCMD 2.2.3.186.3: 2 Inbox, 3 Drafts, 4 Deleted (Junk and Trash
+		// both), 5 Sent, 1 any other user-created folder.
 		"INBOX":   "2",
-		"Sent":    "32",
-		"Drafts":  "16",
-		"Junk":    "8",
-		"Trash":   "8",
-		"Archive": "32768",
+		"Sent":    "5",
+		"Drafts":  "3",
+		"Junk":    "4",
+		"Trash":   "4",
+		"Archive": "1",
 	} {
 		f, ok := byName[name]
 		if !ok {
@@ -463,7 +522,7 @@ func TestFolderSyncListsEveryFolderAndThenReportsNoChange(t *testing.T) {
 	// A calendar is in the tree, under its own kind of id.
 	calendars := 0
 	for _, f := range adds {
-		if f.TextOf("Type") == "64" && strings.HasPrefix(f.TextOf("ServerId"), "cal") {
+		if f.TextOf("Type") == "8" && strings.HasPrefix(f.TextOf("ServerId"), "cal") {
 			calendars++
 		}
 	}
@@ -535,8 +594,8 @@ func TestSyncAddsThenReportsOnlyTheDiff(t *testing.T) {
 	if key == "" {
 		t.Fatal("the first Sync must return a SyncKey")
 	}
-	if got := coll.TextOf("MoreAvailable"); got != "0" {
-		t.Errorf("MoreAvailable = %s, want 0 for a folder this small", got)
+	if coll.FindChild("MoreAvailable") != nil {
+		t.Error("MoreAvailable is set for a folder this small")
 	}
 
 	adds := syncAdds(coll)
@@ -551,21 +610,24 @@ func TestSyncAddsThenReportsOnlyTheDiff(t *testing.T) {
 	if !ok {
 		t.Fatalf("the first message is not an add; subjects: %v", subjectsOf(bySubject))
 	}
-	if got := first.TextOf("Flag"); got != "0" {
-		t.Errorf("a read message has Flag = %s, want 0 (no unread bit)", got)
+	if got := first.TextOf("Read"); got != "1" {
+		t.Errorf("a read message has Read = %s, want 1", got)
 	}
 	second, ok := bySubject["second message"]
 	if !ok {
 		t.Fatalf("the second message is not an add; subjects: %v", subjectsOf(bySubject))
 	}
-	if got := second.TextOf("Flag"); got != "1" {
-		t.Errorf("an unread message has Flag = %s, want 1 (unread bit)", got)
+	if got := second.TextOf("Read"); got != "0" {
+		t.Errorf("an unread message has Read = %s, want 0", got)
 	}
 	// The body a client will show is in the add, not in a follow-up it must
 	// make separately.
 	body := first.FindChild("Body")
-	if body == nil || !bytes.Contains(body.Opaque, []byte("the first body")) {
-		t.Errorf("the add carries no body: %+v", body)
+	if body == nil || body.NS != "AirSyncBase" {
+		t.Fatalf("the add carries no AirSyncBase Body: %+v", body)
+	}
+	if !strings.Contains(body.TextOf("Data"), "the first body") {
+		t.Errorf("the body is not in the add's Body/Data: %+v", body)
 	}
 	if got := first.TextOf("DateReceived"); got == "" || len(got) != 15 {
 		t.Errorf("DateReceived = %q, want the yyyymmddThhmmss form", got)
@@ -605,17 +667,14 @@ func TestSyncAddsThenReportsOnlyTheDiff(t *testing.T) {
 	if got := onlyValue(replaces).TextOf("Subject"); got != "first message" {
 		t.Errorf("the replace is %q, want the first message", got)
 	}
-	if got := onlyValue(replaces).TextOf("Flag"); got != "1" {
-		t.Errorf("the replaced message has Flag = %s, want 1 (now unread)", got)
+	if got := onlyValue(replaces).TextOf("Read"); got != "0" {
+		t.Errorf("the replaced message has Read = %s, want 0 (now unread)", got)
 	}
 }
 
 // syncCollection is the Collection element of a Sync answer.
 func syncCollection(t *testing.T, root *WBXMLNode) *WBXMLNode {
 	t.Helper()
-	if got := root.TextOf("Status"); got != "1" {
-		t.Fatalf("Status = %s, want 1", got)
-	}
 	cols := root.FindChild("Collections")
 	if cols == nil {
 		t.Fatal("the Sync answer has no Collections element")
@@ -624,26 +683,31 @@ func syncCollection(t *testing.T, root *WBXMLNode) *WBXMLNode {
 	if coll == nil {
 		t.Fatal("the Sync answer has no Collection element")
 	}
+	// The status is the collection's, not the whole answer's: a client
+	// syncing two collections in one request reads one status per collection.
+	if got := coll.TextOf("Status"); got != "1" {
+		t.Fatalf("Collection Status = %s, want 1", got)
+	}
 	return coll
 }
 
-// syncAdds maps each Add's ServerId to its Email element.
+// syncAdds maps each Add's ServerId to its item properties.
 func syncAdds(coll *WBXMLNode) map[string]*WBXMLNode {
 	out := map[string]*WBXMLNode{}
-	if adds := coll.FindChild("Adds"); adds != nil {
-		for _, add := range adds.FindChildren("Add") {
-			out[add.TextOf("ServerId")] = add.FindChild("Email")
+	if commands := coll.FindChild("Commands"); commands != nil {
+		for _, add := range commands.FindChildren("Add") {
+			out[add.TextOf("ServerId")] = add.FindChild("ApplicationData")
 		}
 	}
 	return out
 }
 
-// syncReplaces maps each Replace's ServerId to its Email element.
+// syncReplaces maps each Change's ServerId to its item properties.
 func syncReplaces(coll *WBXMLNode) map[string]*WBXMLNode {
 	out := map[string]*WBXMLNode{}
-	if reps := coll.FindChild("Replaces"); reps != nil {
-		for _, r := range reps.FindChildren("Replace") {
-			out[r.TextOf("ServerId")] = r.FindChild("Email")
+	if commands := coll.FindChild("Commands"); commands != nil {
+		for _, change := range commands.FindChildren("Change") {
+			out[change.TextOf("ServerId")] = change.FindChild("ApplicationData")
 		}
 	}
 	return out
@@ -651,8 +715,8 @@ func syncReplaces(coll *WBXMLNode) map[string]*WBXMLNode {
 
 func syncDeletes(coll *WBXMLNode) map[string]*WBXMLNode {
 	out := map[string]*WBXMLNode{}
-	if dels := coll.FindChild("Deletes"); dels != nil {
-		for _, d := range dels.FindChildren("Delete") {
+	if commands := coll.FindChild("Commands"); commands != nil {
+		for _, d := range commands.FindChildren("Delete") {
 			out[d.TextOf("ServerId")] = d
 		}
 	}
@@ -741,39 +805,40 @@ func TestSyncRefusesAStateFromAnotherFolder(t *testing.T) {
 // SendMail sends through the same path the web client uses, so the message is
 // in the Sent folder when the answer comes back, and the answer carries the
 // Message-ID a client files against its own outbox.
+// sendMailRequest builds a SendMail: one MIME document in the Mime element,
+// which is the shape MS-ASCMD specifies.
+func sendMailRequest(rawMIME string) []byte {
+	w := NewWBXMLWriter()
+	_ = w.Start(nsComposeMail, "SendMail")
+	_ = w.Start(nsComposeMail, "SaveInSentItems")
+	w.End()
+	w.Start(nsComposeMail, "Mime")
+	w.Opaque([]byte(rawMIME))
+	w.End()
+	w.End()
+	return w.Bytes()
+}
+
+// A SendMail carries the message as one MIME document and is answered with an
+// empty body: MS-ASCMD says a successful SendMail has no response content, and
+// a client reads anything else as a failure to send.
 func TestSendMailFilesIntoSent(t *testing.T) {
 	ts := newTestService(t)
 
-	w := NewWBXMLWriter()
-	_ = w.Start(nsEmail, "SendMail")
-	_ = w.Start(nsEmail, "Email")
-	_ = w.Start(nsEmail, "To")
-	_ = w.Start(nsEmail, "Email")
-	_ = w.Leaf(nsEmail, "Address", "bob@example.test")
-	_ = w.Leaf(nsEmail, "Name", "Bob")
-	w.End()
-	w.End()
-	_ = w.Leaf(nsEmail, "Subject", "hello from eas")
-	_ = w.Start(nsEmail, "Body")
-	_ = w.Leaf(nsEmail, "BodyType", "1")
-	w.Text("the sent body")
-	w.End()
-	w.End()
-	w.End()
+	mimeMessage := "From: " + testOwner + "\r\n" +
+		"To: Bob <bob@example.test>\r\n" +
+		"Subject: hello from eas\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n" +
+		"\r\n" +
+		"the sent body\r\n"
 
-	rr := ts.post(t, w.Bytes())
-	root := decodeRoot(t, rr)
-	if root.Name != "SendMail" {
-		t.Fatalf("root = %s, want SendMail", root.Name)
+	rr := ts.post(t, sendMailRequest(mimeMessage))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %q", rr.Code, rr.Body.String())
 	}
-	if got := root.TextOf("Status"); got != "1" {
-		t.Fatalf("Status = %s, want 1", got)
-	}
-	if root.TextOf("MessageId") == "" {
-		t.Error("the SendMail answer carries no MessageId")
-	}
-	if rep := root.FindChild("SentReplica"); rep == nil || rep.FindChild("Email") == nil {
-		t.Error("the SendMail answer carries no SentReplica")
+	if rr.Body.Len() != 0 {
+		t.Fatalf("a successful SendMail must answer with an empty body, got %q",
+			rr.Body.String())
 	}
 
 	var n int
@@ -789,29 +854,25 @@ func TestSendMailFilesIntoSent(t *testing.T) {
 	}
 }
 
-// A client that sends no recipients gets the refusal in the body of a 200,
-// because the command was understood and the message is the fault.
+// A SendMail whose MIME document names no recipient is understood but fails,
+// and the failure is a status inside the command on a 200: an empty body is
+// the success answer, so a failure has to say something a client can read.
 func TestSendMailWithoutRecipientsIsRefused(t *testing.T) {
 	ts := newTestService(t)
 
-	w := NewWBXMLWriter()
-	_ = w.Start(nsEmail, "SendMail")
-	_ = w.Start(nsEmail, "Email")
-	_ = w.Leaf(nsEmail, "Subject", "nowhere to go")
-	_ = w.Start(nsEmail, "Body")
-	_ = w.Leaf(nsEmail, "BodyType", "1")
-	w.Text("body")
-	w.End()
-	w.End()
-	w.End()
+	mimeMessage := "Subject: nowhere to go\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n" +
+		"\r\n" +
+		"body\r\n"
 
-	rr := ts.post(t, w.Bytes())
+	rr := ts.post(t, sendMailRequest(mimeMessage))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 with an in-body status", rr.Code)
 	}
 	root := decodeRoot(t, rr)
-	if got := root.TextOf("Status"); got == "" || got == "1" {
-		t.Errorf("Status = %s, want a non-1 status for a message with no recipients", got)
+	// 119 is MessageHasNoRecipient, the code MS-ASCMD 2.2.2 names for this.
+	if got := root.TextOf("Status"); got != "119" {
+		t.Errorf("Status = %s, want 119 (MessageHasNoRecipient)", got)
 	}
 }
 
@@ -822,7 +883,7 @@ func TestPingAnswersTheHeartbeat(t *testing.T) {
 
 	w := NewWBXMLWriter()
 	_ = w.Start(nsPing, "Ping")
-	_ = w.Leaf(nsPing, "Wait", "300")
+	_ = w.Leaf(nsPing, "HeartbeatInterval", "300")
 	w.End()
 
 	rr := ts.post(t, w.Bytes())
@@ -838,13 +899,113 @@ func TestPingAnswersTheHeartbeat(t *testing.T) {
 	}
 }
 
-// Provision answers with a policy, not an empty shell: the client reads the
-// values to decide what it may do, and the key is stable for the account.
+// Provision runs in two requests, MS-ASPROV's phases 2 and 3: the first asks
+// for the policy and gets the policy document under a temporary key, the
+// second acknowledges that key and gets the final one. The two keys differ, so
+// a client can tell which half it is in, and the policy is a real document of
+// elements rather than an empty shell, because a client reads its values to
+// decide what it may do.
 func TestProvisionAnswersAPolicy(t *testing.T) {
 	ts := newTestService(t)
 
+	// Phase 2: ask for the policy. The request names the policy type a
+	// client on 12.0 or newer uses and carries its device information.
+	request := func(policyKey string) []byte {
+		w := NewWBXMLWriter()
+		_ = w.Start(nsProvision, "Provision")
+		w.Start(nsSettings, "DeviceInformation")
+		w.Start(nsSettings, "Set")
+		_ = w.Leaf(nsSettings, "Model", "test device")
+		w.End()
+		w.End()
+		w.Start(nsProvision, "Policies")
+		w.Start(nsProvision, "Policy")
+		_ = w.Leaf(nsProvision, "PolicyType", "MS-EAS-Provisioning-WBXML")
+		if policyKey != "" {
+			_ = w.Leaf(nsProvision, "PolicyKey", policyKey)
+			_ = w.Leaf(nsProvision, "Status", "1")
+		}
+		w.End()
+		w.End()
+		w.End()
+		return w.Bytes()
+	}
+
+	root := decodeRoot(t, ts.post(t, request("")))
+	if got := root.TextOf("Status"); got != "1" {
+		t.Fatalf("Status = %s, want 1", got)
+	}
+	if info := root.FindChild("DeviceInformation"); info == nil || info.TextOf("Status") != "1" {
+		t.Errorf("the answer does not acknowledge the device information: %+v", info)
+	}
+	policyEl := root.FindChild("Policies").FindChild("Policy")
+	if policyEl == nil {
+		t.Fatal("the Provision answer has no Policy element")
+	}
+	if got := policyEl.TextOf("PolicyType"); got != "MS-EAS-Provisioning-WBXML" {
+		t.Errorf("PolicyType = %q, want MS-EAS-Provisioning-WBXML", got)
+	}
+	if got := policyEl.TextOf("Status"); got != "1" {
+		t.Errorf("Policy Status = %s, want 1", got)
+	}
+	tempKey := policyEl.TextOf("PolicyKey")
+	if tempKey == "" {
+		t.Fatal("the policy download carries no PolicyKey")
+	}
+	doc := policyEl.FindDescendant("EASProvisionDoc")
+	if doc == nil {
+		t.Fatal("the policy Data carries no EASProvisionDoc")
+	}
+	if doc.TextOf("DevicePasswordEnabled") == "" {
+		t.Errorf("the EASProvisionDoc carries no policy fields: %+v", doc.Children)
+	}
+
+	// Phase 3: acknowledge the temporary key and get the final one.
+	root2 := decodeRoot(t, ts.post(t, request(tempKey)))
+	if got := root2.TextOf("Status"); got != "1" {
+		t.Fatalf("acknowledgement Status = %s, want 1", got)
+	}
+	policy2 := root2.FindChild("Policies").FindChild("Policy")
+	finalKey := policy2.TextOf("PolicyKey")
+	if finalKey == "" {
+		t.Fatal("the acknowledgement carries no final PolicyKey")
+	}
+	if finalKey == tempKey {
+		t.Errorf("the final PolicyKey equals the temporary one (%s); the two are distinct", finalKey)
+	}
+	if policy2.FindChild("Data") != nil {
+		t.Error("the acknowledgement repeats the policy document; only the download carries it")
+	}
+}
+
+// ItemOperations fetches one item in full: the same properties a Sync add
+// carries, under Properties, which is what a client reads when it opens a
+// message whose body a Sync truncated.
+func TestItemOperationsFetchesAnItem(t *testing.T) {
+	ts := newTestService(t)
+	inboxID := ts.folderID(t, "INBOX")
+
+	ts.deliver(t, inboxID, "fetch me", "the whole body", "fetchme@test", nil)
+	var id int64
+	if err := ts.db.GetContext(context.Background(), &id,
+		`SELECT m.id FROM messages m
+		 JOIN mailboxes b ON b.id = m.mailbox_id
+		 WHERE b.owner = $1 AND m.subject = $2`, testOwner, "fetch me"); err != nil {
+		t.Fatalf("looking up the message: %v", err)
+	}
+
 	w := NewWBXMLWriter()
-	_ = w.Start(nsProvision, "Provision")
+	_ = w.Start(nsItemOperations, "ItemOperations")
+	w.Start(nsItemOperations, "Fetch")
+	_ = w.Leaf(nsItemOperations, "Store", "Mailbox")
+	_ = w.Leaf(nsAirSync, "CollectionId", strconv.FormatInt(inboxID, 10))
+	_ = w.Leaf(nsAirSync, "ServerId", strconv.FormatInt(id, 10))
+	w.Start(nsItemOperations, "Options")
+	w.Start(nsAirSyncBase, "BodyPreference")
+	_ = w.Leaf(nsAirSyncBase, "Type", "1")
+	w.End()
+	w.End()
+	w.End()
 	w.End()
 
 	rr := ts.post(t, w.Bytes())
@@ -852,41 +1013,34 @@ func TestProvisionAnswersAPolicy(t *testing.T) {
 	if got := root.TextOf("Status"); got != "1" {
 		t.Fatalf("Status = %s, want 1", got)
 	}
-	policies := root.FindChild("Policies")
-	if policies == nil {
-		t.Fatal("the Provision answer has no Policies element")
+	fetch := root.FindDescendant("Fetch")
+	if fetch == nil {
+		t.Fatal("the ItemOperations answer has no Response/Fetch")
 	}
-	policyEl := policies.FindChild("Policy")
-	if policyEl == nil {
-		t.Fatal("the Provision answer has no Policy element")
+	if got := fetch.TextOf("Status"); got != "1" {
+		t.Fatalf("Fetch Status = %s, want 1", got)
 	}
-	if got := policyEl.TextOf("PolicyKey"); got == "" {
-		t.Error("the policy has no PolicyKey")
+	properties := fetch.FindChild("Properties")
+	if properties == nil {
+		t.Fatal("the fetch carries no Properties")
 	}
-	data := policyEl.FindChild("Data")
-	if data == nil || len(data.Opaque) == 0 {
-		t.Fatal("the policy carries no data")
+	if got := properties.TextOf("Subject"); got != "fetch me" {
+		t.Errorf("Subject = %q, want %q", got, "fetch me")
 	}
-	if !strings.Contains(string(data.Opaque), "<Policy>") {
-		t.Errorf("the policy data is not a policy document: %q", string(data.Opaque[:min(len(data.Opaque), 40)]))
+	body := properties.FindChild("Body")
+	if body == nil || body.NS != "AirSyncBase" {
+		t.Fatalf("the fetch carries no AirSyncBase Body: %+v", body)
 	}
-
-	// The key is a function of the account, so the next provision of the same
-	// account gets the same key.
-	w2 := NewWBXMLWriter()
-	_ = w2.Start(nsProvision, "Provision")
-	w2.End()
-	root2 := decodeRoot(t, ts.post(t, w2.Bytes()))
-	key2 := root2.FindChild("Policies").FindChild("Policy").TextOf("PolicyKey")
-	if key2 != policyEl.TextOf("PolicyKey") {
-		t.Errorf("the PolicyKey changed between provisions of the same account: %s and %s",
-			policyEl.TextOf("PolicyKey"), key2)
+	if !strings.Contains(body.TextOf("Data"), "the whole body") {
+		t.Errorf("the fetched body is missing: %q", body.TextOf("Data"))
 	}
 }
 
-// ItemOperations applies the flag changes through the same service the web
-// client uses, so a flag set here is the flag the web client shows.
-func TestItemOperationsMarksAMessageRead(t *testing.T) {
+// A read flag the client sends in a Sync request is applied through the same
+// service the web client uses, so a message marked read on a phone is marked
+// read in the web client too. Marking read is a Sync Change per MS-ASCMD, not
+// an ItemOperations operation.
+func TestSyncAppliesAReadFlag(t *testing.T) {
 	ts := newTestService(t)
 	inboxID := ts.folderID(t, "INBOX")
 
@@ -899,22 +1053,30 @@ func TestItemOperationsMarksAMessageRead(t *testing.T) {
 		t.Fatalf("looking up the message: %v", err)
 	}
 
+	// A sync request carrying the client's own change: the message was read
+	// on the device.
 	w := NewWBXMLWriter()
-	_ = w.Start(nsItemOperations, "ItemOperations")
-	_ = w.Start(nsItemOperations, "Operations")
-	_ = w.Start(nsItemOperations, "Operation")
-	_ = w.Leaf(nsItemOperations, "ServerId", strconv.FormatInt(id, 10))
-	_ = w.Start(nsItemOperations, "MarkAsRead")
+	_ = w.Start(nsAirSync, "Sync")
+	w.Start(nsAirSync, "Collections")
+	w.Start(nsAirSync, "Collection")
+	_ = w.Leaf(nsAirSync, "SyncKey", "1")
+	_ = w.Leaf(nsAirSync, "CollectionId", strconv.FormatInt(inboxID, 10))
+	_ = w.Leaf(nsAirSync, "GetChanges", "1")
+	w.Start(nsAirSync, "Commands")
+	w.Start(nsAirSync, "Change")
+	_ = w.Leaf(nsAirSync, "ServerId", strconv.FormatInt(id, 10))
+	w.Start(nsAirSync, "ApplicationData")
+	_ = w.Leaf(nsEmail, "Read", "1")
+	w.End()
+	w.End()
+	w.End()
 	w.End()
 	w.End()
 	w.End()
 	w.End()
 
 	rr := ts.post(t, w.Bytes())
-	root := decodeRoot(t, rr)
-	if got := root.TextOf("Status"); got != "1" {
-		t.Fatalf("Status = %s, want 1", got)
-	}
+	decodeRoot(t, rr)
 
 	var flags []string
 	if err := ts.db.SelectContext(context.Background(), &flags,
