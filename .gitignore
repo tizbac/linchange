@@ -23,4 +23,6 @@ coverage.*
 
 # Test logs
 .test-integration.log
-linchange
+# The binary `go build` drops at the repository root. Anchored, because an
+# unanchored name would also swallow the cmd/linchange/ package directory.
+/linchange
