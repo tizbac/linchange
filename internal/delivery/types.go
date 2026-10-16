@@ -329,6 +329,112 @@ func (c *smtpClient) Send(ctx context.Context, from string, to []string, data []
 	return nil
 }
 
+// RecipientOutcome is what became of each recipient of one SendEach call:
+// the three groups are disjoint, and everybody is in exactly one of them.
+type RecipientOutcome struct {
+	Delivered []string
+	Permanent []string
+	Transient []string
+	// Reasons explains the failures above, keyed by recipient address (or by
+	// "*" when a connection-level failure hit every recipient). Without it a
+	// deferred message says only that something did not work, which is not
+	// enough to find out what.
+	Reasons map[string]string
+}
+
+func (o *RecipientOutcome) failTransient(rcpts []string, reason string) {
+	if o.Reasons == nil {
+		o.Reasons = map[string]string{}
+	}
+	for _, r := range rcpts {
+		o.Reasons[r] = reason
+	}
+	o.Transient = append(o.Transient, rcpts...)
+}
+
+func (o *RecipientOutcome) failPermanent(rcpt, reason string) {
+	if o.Reasons == nil {
+		o.Reasons = map[string]string{}
+	}
+	o.Reasons[rcpt] = reason
+	o.Permanent = append(o.Permanent, rcpt)
+}
+
+// SendEach delivers the message to each recipient in its own SMTP transaction
+// and reports what became of that recipient, so a caller can settle one
+// recipient's fate without guessing at the batch's. A failure to connect at
+// all is transient for everybody: nothing was accepted and a retry is worth
+// making.
+func (c *smtpClient) SendEach(ctx context.Context, from string, to []string, data []byte) RecipientOutcome {
+	var out RecipientOutcome
+	if len(to) == 0 {
+		return out
+	}
+
+	dialer := &net.Dialer{Timeout: c.cfg.ConnectTimeout}
+	addr := net.JoinHostPort(c.cfg.Host, fmt.Sprintf("%d", c.cfg.Port))
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		out.failTransient(to, fmt.Sprintf("connect %s: %v", addr, err))
+		return out
+	}
+
+	var s *smtp.Client
+	if c.cfg.TLS {
+		s, err = smtp.NewClientStartTLS(conn, &tls.Config{
+			ServerName:         c.cfg.Host,
+			InsecureSkipVerify: c.cfg.InsecureSkipVerify,
+		})
+	} else {
+		s = smtp.NewClient(conn)
+		if err = s.Hello("linchange"); err != nil {
+			s.Close()
+			out.failTransient(to, fmt.Sprintf("EHLO: %v", err))
+			return out
+		}
+	}
+	if err != nil {
+		out.failTransient(to, fmt.Sprintf("STARTTLS: %v", err))
+		return out
+	}
+	defer s.Close()
+	s.CommandTimeout = c.cfg.CommandTimeout
+
+	if c.cfg.Username != "" && c.cfg.Password != "" {
+		auth := sasl.NewPlainClient("", c.cfg.Username, c.cfg.Password)
+		if err := s.Auth(auth); err != nil {
+			out.failTransient(to, fmt.Sprintf("AUTH: %v", err))
+			return out
+		}
+	}
+
+	for _, rcpt := range to {
+		// Every recipient is its own transaction: MAIL FROM, RCPT, DATA. An
+		// SMTP transaction covers one delivery, and reusing the envelope
+		// across deliveries would make one recipient's failure the next
+		// recipient's mail.
+		if err := s.Mail(from, nil); err != nil {
+			out.failTransient([]string{rcpt}, fmt.Sprintf("MAIL FROM: %v", err))
+			continue
+		}
+		if err := s.Rcpt(rcpt, nil); err != nil {
+			reason := fmt.Sprintf("RCPT TO: %v", err)
+			if smtpIsPermanent(err) {
+				out.failPermanent(rcpt, reason)
+			} else {
+				out.failTransient([]string{rcpt}, reason)
+			}
+			continue
+		}
+		if err := sendMailData(s, data); err != nil {
+			out.failTransient([]string{rcpt}, fmt.Sprintf("DATA: %v", err))
+			continue
+		}
+		out.Delivered = append(out.Delivered, rcpt)
+	}
+	return out
+}
+
 // smtpIsPermanent checks if an SMTP error indicates a permanent failure
 // (5xx class).
 func smtpIsPermanent(err error) bool {

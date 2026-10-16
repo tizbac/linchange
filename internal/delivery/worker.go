@@ -8,8 +8,12 @@ package delivery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +24,7 @@ import (
 	"github.com/linchange/linchange/config"
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/dkim"
+	"github.com/linchange/linchange/internal/store"
 )
 
 // ---------------------------------------------------------------------------
@@ -50,6 +55,15 @@ type Config struct {
 	DKIMKeys *dkim.Keys
 	// DKIMSelectorPrefix is the prefix for DKIM selectors (e.g. "mail").
 	DKIMSelectorPrefix string
+	// Loopback, when set, is how this server reaches its own inbound SMTP
+	// listener. Recipients at domains hosted here are handed back through it
+	// rather than to the relay, so a message to a colleague on the same
+	// server is delivered instead of being sent to a host that was never
+	// configured. Nil keeps the old relay-only behaviour.
+	Loopback *SMTPConfig
+	// IsLocalDomain reports whether a domain is hosted on this server. Nil
+	// means the split is never made (see Loopback).
+	IsLocalDomain func(ctx context.Context, domain string) (bool, error)
 }
 
 // Pool manages the delivery worker pool.
@@ -102,6 +116,40 @@ func FromConfig(appCfg *config.Config, logger *slog.Logger, db *sqlx.DB) *Pool {
 		BlobStore: nil, // Must be set by the caller.
 		DKIMKeys:  nil, // Optional: set by the caller if DKIM signing is desired.
 	}
+
+	// Local recipients are delivered through this server's own inbound
+	// listener, unauthenticated and without TLS, because that is what a
+	// public inbound MTA speaks. Without it the relay handles every
+	// recipient, and a single-server deployment that never configured a
+	// relay delivers nothing to its own domains.
+	if addr := appCfg.Listener.SMTPInbound.Addr; addr != "" {
+		if host, port, err := net.SplitHostPort(addr); err == nil {
+			if port != "" {
+				if pnum, err := strconv.Atoi(port); err == nil {
+					if host == "" {
+						host = "127.0.0.1"
+					}
+					cfg.Loopback = &SMTPConfig{
+						Host:           host,
+						Port:           pnum,
+						ConnectTimeout: appCfg.Mail.Outbound.ConnectTimeout,
+						CommandTimeout: appCfg.Mail.Outbound.CommandTimeout,
+					}
+				}
+			}
+		}
+	}
+	domains := store.NewDomains()
+	cfg.IsLocalDomain = func(ctx context.Context, domain string) (bool, error) {
+		if _, err := domains.Get(ctx, db, domain); err != nil {
+			if store.IsNotFound(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	}
+
 	return NewPool(cfg, logger, db)
 }
 
@@ -229,10 +277,10 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 				"message_id", msg.ID,
 				"blob_sha256", fmt.Sprintf("%x", msg.BlobSHA256))
 			dsnDelay := time.Duration(0)
-	if p.cfg.DSN.Enabled {
-		dsnDelay = p.cfg.DSN.Delay
-	}
-	return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, "blob not found", dsnDelay)
+			if p.cfg.DSN.Enabled {
+				dsnDelay = p.cfg.DSN.Delay
+			}
+			return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, "blob not found", dsnDelay)
 		}
 		return fmt.Errorf("get blob: %w", err)
 	}
@@ -277,69 +325,260 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 		return fmt.Errorf("mark sending: %w", err)
 	}
 
-	// Extract recipient addresses.
-	recipients := make([]string, len(msg.Recipients))
-	for i, r := range msg.Recipients {
-		recipients[i] = r.Address
+	// Only recipients that have not settled are sent. A message whose local
+	// half has already arrived is retried for the rest, and sending the
+	// first half again would deliver it twice.
+	var pending []OutboxRecipient
+	for _, r := range msg.Recipients {
+		if r.State == RecipientPending || r.State == RecipientDeferred {
+			pending = append(pending, r)
+		}
+	}
+	if len(pending) == 0 {
+		return p.settle(ctx, msg, nil)
 	}
 
-	// Send via SMTP.
-	client := NewSMTPClient(p.cfg.SMTP)
+	// Recipients at domains hosted here are handed back through this server's
+	// own inbound listener; everything else goes to the configured relay. The
+	// relay exists for other servers -- pointing it at a server that never
+	// configured one delivers nothing, which is what happened to every message
+	// addressed to a colleague on the same box.
+	var local, remote []OutboxRecipient
+	if p.cfg.Loopback != nil && p.cfg.IsLocalDomain != nil {
+		for _, r := range pending {
+			if p.hostsLocally(ctx, r.Address) {
+				local = append(local, r)
+			} else {
+				remote = append(remote, r)
+			}
+		}
+	} else {
+		remote = pending
+	}
+
 	sendCtx, cancel := context.WithTimeout(ctx, p.cfg.SMTP.CommandTimeout)
 	defer cancel()
 
-	err = client.Send(sendCtx, msg.EnvelopeFrom, recipients, blob)
-	if err == nil {
-		// Success: mark everything as delivered.
-		if err := p.cfg.Outbox.MarkSent(ctx, nil, msg.ID); err != nil {
-			p.logger.Error("mark sent", "message_id", msg.ID, "error", err)
+	addresses := func(rs []OutboxRecipient) []string {
+		out := make([]string, len(rs))
+		for i, r := range rs {
+			out[i] = r.Address
 		}
-		return nil
+		return out
+	}
+	positionOf := make(map[string]int, len(pending))
+	for _, r := range pending {
+		positionOf[r.Address] = r.Position
+	}
+	// markAddresses settles recipients by address, which is how a sending
+	// path reports its outcome.
+	markAddresses := func(addrs []string, state RecipientState, lastError string) {
+		for _, a := range addrs {
+			pos, ok := positionOf[a]
+			if !ok {
+				continue
+			}
+			if err := p.cfg.Outbox.UpdateRecipientState(ctx, nil, msg.ID, pos, state, lastError); err != nil {
+				p.logger.Error("mark recipient", "message_id", msg.ID,
+					"recipient", a, "state", state, "error", err)
+			}
+		}
 	}
 
-	// Determine the failure outcome.
+	var lastErr error
+	if len(local) > 0 {
+		// The loopback speaks what a public inbound MTA speaks: plain SMTP,
+		// no credentials, one transaction per recipient.
+		out := (&smtpClient{cfg: *p.cfg.Loopback}).SendEach(
+			sendCtx, msg.EnvelopeFrom, addresses(local), blob)
+		markAddresses(out.Delivered, RecipientDelivered, "")
+		markAddresses(out.Permanent, RecipientFailed, "rejected by local delivery")
+		if len(out.Transient) > 0 {
+			p.logger.Warn("local delivery left recipients pending",
+				"message_id", msg.ID, "reasons", out.Reasons)
+			if lastErr == nil {
+				lastErr = fmt.Errorf("local delivery: %v", out.Reasons)
+			}
+		}
+		// Transient local failures stay unresolved for the next claim; the
+		// settle below decides what the message does meanwhile.
+	}
+	if len(remote) > 0 {
+		if p.cfg.SMTP.Host != "" {
+			// One relay handles every remote recipient: the operator said
+			// where remote mail should go.
+			client := NewSMTPClient(p.cfg.SMTP)
+			sendErr := client.Send(sendCtx, msg.EnvelopeFrom, addresses(remote), blob)
+			switch {
+			case sendErr == nil:
+				markAddresses(addresses(remote), RecipientDelivered, "")
+			case IsPermanent(sendErr):
+				markAddresses(addresses(remote), RecipientFailed, sendErr.Error())
+				lastErr = sendErr
+			default:
+				// Stays unresolved; settle defers the message for another try.
+				lastErr = sendErr
+			}
+		} else {
+			// No relay is configured, so each destination domain is dialed at
+			// its own mail exchanger, which is what the SMTP configuration
+			// documents for an unset smart host. A domain whose exchanger
+			// cannot be found stays unresolved -- DNS may come back -- rather
+			// than being written off permanently.
+			byDomain := make(map[string][]OutboxRecipient)
+			for _, r := range remote {
+				_, domain, _ := strings.Cut(r.Address, "@")
+				byDomain[strings.ToLower(domain)] = append(byDomain[strings.ToLower(domain)], r)
+			}
+			domains := make([]string, 0, len(byDomain))
+			for d := range byDomain {
+				domains = append(domains, d)
+			}
+			sort.Strings(domains)
+			for _, domain := range domains {
+				group := byDomain[domain]
+				exchanger, err := p.mailExchanger(ctx, domain)
+				if err != nil {
+					p.logger.Warn("no mail exchanger for domain; deferring",
+						"message_id", msg.ID, "domain", domain, "error", err)
+					if lastErr == nil {
+						lastErr = err
+					}
+					continue
+				}
+				out := (&smtpClient{cfg: exchanger}).SendEach(
+					sendCtx, msg.EnvelopeFrom, addresses(group), blob)
+				markAddresses(out.Delivered, RecipientDelivered, "")
+				markAddresses(out.Permanent, RecipientFailed,
+					"the destination mail exchanger rejected the message")
+				if len(out.Transient) > 0 && lastErr == nil {
+					lastErr = fmt.Errorf("%s: the mail exchanger could not be reached", domain)
+				}
+			}
+		}
+	}
+
+	return p.settle(ctx, msg, lastErr)
+}
+
+// mailExchanger answers where to deliver mail for a domain when no smart host
+// is configured: its MX record, lowest preference first, falling back to the
+// domain's own address as the RFC allows. This is what the SMTP configuration
+// documents for an empty smtp_host, and without it a single-server deployment
+// can only ever talk to itself.
+func (p *Pool) mailExchanger(ctx context.Context, domain string) (SMTPConfig, error) {
+	records, err := net.DefaultResolver.LookupMX(ctx, domain)
+	if err != nil {
+		var dnsErr *net.DNSError
+		if !errors.As(err, &dnsErr) || !dnsErr.IsNotFound {
+			return SMTPConfig{}, fmt.Errorf("resolving MX for %s: %w", domain, err)
+		}
+		// No MX published: many domains still accept mail at their address.
+		return p.directTo(domain), nil
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].Pref < records[j].Pref })
+	for _, mx := range records {
+		host := strings.TrimSuffix(mx.Host, ".")
+		if host != "" {
+			return p.directTo(host), nil
+		}
+	}
+	return p.directTo(domain), nil
+}
+
+// directTo builds the SMTP configuration for talking straight to a mail
+// exchanger: port 25, no credentials -- relays authenticate, destinations do
+// not.
+func (p *Pool) directTo(host string) SMTPConfig {
+	return SMTPConfig{
+		Host:           host,
+		Port:           25,
+		ConnectTimeout: p.cfg.SMTP.ConnectTimeout,
+		CommandTimeout: p.cfg.SMTP.CommandTimeout,
+	}
+}
+
+// hostsLocally reports whether a recipient's domain is hosted on this server.
+// A lookup that fails is answered "no" and logged: the mail still leaves by
+// the relay rather than being stranded over a database hiccup.
+func (p *Pool) hostsLocally(ctx context.Context, address string) bool {
+	if p.cfg.IsLocalDomain == nil {
+		return false
+	}
+	_, domain, ok := strings.Cut(address, "@")
+	if !ok {
+		return false
+	}
+	hosted, err := p.cfg.IsLocalDomain(ctx, strings.ToLower(domain))
+	if err != nil {
+		p.logger.Warn("hosted-domain lookup failed; relaying instead",
+			"address", address, "error", err)
+		return false
+	}
+	return hosted
+}
+
+// settle closes a delivery round by reading what became of every recipient:
+// with some still unresolved the message is deferred to try only those again,
+// with none unresolved it is sent, and when a recipient refused the mail it is
+// failed so the bounce lists exactly the recipients that did not get it.
+func (p *Pool) settle(ctx context.Context, msg OutboxMessage, lastErr error) error {
+	recipients, err := p.cfg.Outbox.loadRecipients(ctx, nil, msg.ID)
+	if err != nil {
+		return fmt.Errorf("reload recipients: %w", err)
+	}
+	pending, failed := 0, 0
+	for _, r := range recipients {
+		switch r.State {
+		case RecipientPending, RecipientDeferred:
+			pending++
+		case RecipientFailed:
+			failed++
+		}
+	}
+
 	switch {
-	case IsTransient(err):
-		// Transient failure: schedule retry with backoff.
+	case pending > 0:
+		text := "some recipients are still pending"
+		if lastErr != nil {
+			text = lastErr.Error()
+		}
 		nextDelay, ok := p.cfg.Retry.CalculateBackoff(msg.Attempts, msg.CreatedAt)
 		if !ok {
 			p.logger.Info("message lifetime exceeded, marking failed",
 				"message_id", msg.ID,
 				"attempts", msg.Attempts)
-			dsnDelay := time.Duration(0)
-		if p.cfg.DSN.Enabled {
-			dsnDelay = p.cfg.DSN.Delay
+			return p.fail(ctx, msg, text)
 		}
-		return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, err.Error(), dsnDelay)
-		}
-
-		nextAttemptAt := time.Now().Add(nextDelay)
-		if err := p.cfg.Outbox.MarkDeferred(ctx, nil, msg.ID, msg.Attempts+1, err.Error(), nextAttemptAt); err != nil {
+		if err := p.cfg.Outbox.MarkDeferred(ctx, nil, msg.ID, msg.Attempts+1,
+			text, time.Now().Add(nextDelay)); err != nil {
 			p.logger.Error("mark deferred", "message_id", msg.ID, "error", err)
 		}
 		return nil
 
-	case IsPermanent(err):
-		// Permanent failure: all recipients rejected.
-		dsnDelay := time.Duration(0)
-		if p.cfg.DSN.Enabled {
-			dsnDelay = p.cfg.DSN.Delay
+	case failed > 0:
+		text := "a recipient refused the message"
+		if lastErr != nil {
+			text = lastErr.Error()
 		}
-		return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, err.Error(), dsnDelay)
+		return p.fail(ctx, msg, text)
 
 	default:
-		// Unknown error type: treat as transient.
-		nextDelay, ok := p.cfg.Retry.CalculateBackoff(msg.Attempts, msg.CreatedAt)
-		if !ok {
-			dsnDelay := time.Duration(0)
-		if p.cfg.DSN.Enabled {
-			dsnDelay = p.cfg.DSN.Delay
+		if err := p.cfg.Outbox.MarkSent(ctx, nil, msg.ID); err != nil {
+			p.logger.Error("mark sent", "message_id", msg.ID, "error", err)
 		}
-		return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, err.Error(), dsnDelay)
-		}
-		nextAttemptAt := time.Now().Add(nextDelay)
-		return p.cfg.Outbox.MarkDeferred(ctx, nil, msg.ID, msg.Attempts+1, err.Error(), nextAttemptAt)
+		return nil
 	}
+}
+
+// fail marks the message failed: the bounce that follows lists the recipients
+// whose delivery failed, and only those.
+func (p *Pool) fail(ctx context.Context, msg OutboxMessage, text string) error {
+	dsnDelay := time.Duration(0)
+	if p.cfg.DSN.Enabled {
+		dsnDelay = p.cfg.DSN.Delay
+	}
+	return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, text, dsnDelay)
 }
 
 // ---------------------------------------------------------------------------

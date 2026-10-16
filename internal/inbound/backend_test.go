@@ -243,7 +243,16 @@ type smtpSession struct {
 
 func dialSMTP(t *testing.T, addr string) *smtpSession {
 	t.Helper()
-	conn, err := net.Dial("tcp", addr)
+	return dialSMTPAs(t, addr, nil)
+}
+
+// dialSMTPAs connects with an explicit source address, so that a test can
+// appear to come from somewhere other than this machine's own loopback
+// interface. A nil source dials from loopback, which the server treats as its
+// own submission path.
+func dialSMTPAs(t *testing.T, addr string, src *net.TCPAddr) *smtpSession {
+	t.Helper()
+	conn, err := (&net.Dialer{LocalAddr: src}).Dial("tcp", addr)
 	if err != nil {
 		t.Fatalf("dialing %s: %v", addr, err)
 	}
@@ -640,6 +649,31 @@ func TestInboundAliasRespectsTargetRules(t *testing.T) {
 
 // The first contact from a sender is deferred, and once the retry falls inside
 // the window the message is accepted.
+// remoteSource finds a local address that is not loopback, so that a test can
+// appear to arrive from another machine. It returns nil when the host has only
+// loopback, and the tests that need it skip rather than lie.
+func remoteSource(t *testing.T) *net.TCPAddr {
+	t.Helper()
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatalf("listing interfaces: %v", err)
+	}
+	for _, iface := range ifaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok || !ipnet.IP.IsGlobalUnicast() || ipnet.IP.IsLoopback() || ipnet.IP.To4() == nil {
+				continue
+			}
+			return &net.TCPAddr{IP: ipnet.IP}
+		}
+	}
+	return nil
+}
+
 func TestInboundGreylistsFirstContact(t *testing.T) {
 	f := setupInbound(t, func(c *config.Config) {
 		c.Mail.Inbound.Greylisting = config.Greylisting{
@@ -650,7 +684,12 @@ func TestInboundGreylistsFirstContact(t *testing.T) {
 		}
 	})
 
-	c := dialSMTP(t, f.addr)
+	src := remoteSource(t)
+	if src == nil {
+		t.Skip("this host has only loopback addresses; the greylist exempts loopback")
+	}
+
+	c := dialSMTPAs(t, f.addr, src)
 	code, msg := c.cmd("MAIL FROM:<sender@example.com>")
 	if code != 450 {
 		t.Fatalf("first MAIL FROM = %d %s, want 450", code, msg)
@@ -663,7 +702,7 @@ func TestInboundGreylistsFirstContact(t *testing.T) {
 		t.Fatalf("ageing greylist entry: %v", err)
 	}
 
-	c2 := dialSMTP(t, f.addr)
+	c2 := dialSMTPAs(t, f.addr, src)
 	if code, msg := c2.cmd("MAIL FROM:<sender@example.com>"); code != 250 {
 		t.Fatalf("retried MAIL FROM = %d %s, want 250", code, msg)
 	}
@@ -671,6 +710,35 @@ func TestInboundGreylistsFirstContact(t *testing.T) {
 		t.Fatalf("RCPT TO = %d %s", code, msg)
 	}
 	if code, msg := c2.data(inboundMessage("s@example.com", "alice@example.com", "Retry", "hi")); code != 250 {
+		t.Fatalf("DATA = %d %s", code, msg)
+	}
+	if msgs := f.messages(t, "alice@example.com"); len(msgs) != 1 {
+		t.Fatalf("alice has %d messages, want 1", len(msgs))
+	}
+}
+
+// A sender on this machine's own loopback interface is the server handing its
+// local mail back for local delivery, and is not greylisted: the deferral
+// window exists to make strangers' MTAs retry, and applying it to the server's
+// own submissions would delay a user's own mail by the full delay.
+func TestInboundDoesNotGreylistLoopback(t *testing.T) {
+	f := setupInbound(t, func(c *config.Config) {
+		c.Mail.Inbound.Greylisting = config.Greylisting{
+			Enabled:     true,
+			Delay:       time.Hour,
+			Expiry:      4 * time.Hour,
+			RetryWindow: 30 * time.Minute,
+		}
+	})
+
+	c := dialSMTP(t, f.addr) // dials from 127.0.0.1
+	if code, msg := c.cmd("MAIL FROM:<sender@example.com>"); code != 250 {
+		t.Fatalf("MAIL FROM from loopback = %d %s, want 250 without greylist deferral", code, msg)
+	}
+	if code, msg := c.cmd("RCPT TO:<alice@example.com>"); code != 250 {
+		t.Fatalf("RCPT TO = %d %s", code, msg)
+	}
+	if code, msg := c.data(inboundMessage("s@example.com", "alice@example.com", "Local", "hi")); code != 250 {
 		t.Fatalf("DATA = %d %s", code, msg)
 	}
 	if msgs := f.messages(t, "alice@example.com"); len(msgs) != 1 {

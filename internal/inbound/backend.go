@@ -224,15 +224,22 @@ func (s *session) Mail(from string, opts *smtp.MailOptions) error {
 		}
 	}
 
-	action, err := s.backend.greylist.Check(ctx, s.backend.db, s.ip, s.envFrom, time.Now().UTC())
-	if err != nil {
-		s.backend.log.Warn("greylist check failed; accepting", "error", err)
-	}
-	if action == GreyDefer {
-		return &smtp.SMTPError{
-			Code:         450,
-			EnhancedCode: smtp.EnhancedCode{4, 7, 0},
-			Message:      "greylisted, please retry later",
+	// A message arriving from this machine's own loopback interface is the
+	// submission path handing local mail back for local delivery, not a
+	// stranger's first attempt: greylisting exists to make strangers retry,
+	// and would only delay a user's own mail to their own server by the full
+	// deferral window.
+	if !s.ip.IsLoopback() {
+		action, err := s.backend.greylist.Check(ctx, s.backend.db, s.ip, s.envFrom, time.Now().UTC())
+		if err != nil {
+			s.backend.log.Warn("greylist check failed; accepting", "error", err)
+		}
+		if action == GreyDefer {
+			return &smtp.SMTPError{
+				Code:         450,
+				EnhancedCode: smtp.EnhancedCode{4, 7, 0},
+				Message:      "greylisted, please retry later",
+			}
 		}
 	}
 	return nil

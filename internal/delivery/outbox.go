@@ -308,9 +308,9 @@ func (r *OutboxRepository) MarkDeferred(ctx context.Context, tx *sqlx.Tx, messag
 			return fmt.Errorf("mark deferred: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `
-			UPDATE outbox_recipients SET state = 'failed', last_error = $1, delivered_at = now()
+			UPDATE outbox_recipients SET state = 'deferred', last_error = $1
 			WHERE outbox_id = $2 AND state IN ('pending', 'deferred')`, lastError, messageID); err != nil {
-			return fmt.Errorf("mark recipients failed (partial delivery): %w", err)
+			return fmt.Errorf("mark recipients deferred: %w", err)
 		}
 	} else {
 		if _, err := r.db.ExecContext(ctx, `
@@ -319,9 +319,9 @@ func (r *OutboxRepository) MarkDeferred(ctx context.Context, tx *sqlx.Tx, messag
 			return fmt.Errorf("mark deferred: %w", err)
 		}
 		if _, err := r.db.ExecContext(ctx, `
-			UPDATE outbox_recipients SET state = 'failed', last_error = $1, delivered_at = now()
+			UPDATE outbox_recipients SET state = 'deferred', last_error = $1
 			WHERE outbox_id = $2 AND state IN ('pending', 'deferred')`, lastError, messageID); err != nil {
-			return fmt.Errorf("mark recipients failed (partial delivery): %w", err)
+			return fmt.Errorf("mark recipients deferred: %w", err)
 		}
 	}
 	return nil

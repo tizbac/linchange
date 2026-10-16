@@ -661,12 +661,17 @@ func stripBcc(raw []byte) []byte {
 	return append(out, body...)
 }
 
+// splitHeader cuts the header block off the body. The separator belongs to the
+// body half: stripBcc reassembles header+body, and handing the separator back
+// with the header instead would make every reassembled message a document with
+// no empty line between headers and body -- unparseable to every recipient,
+// and to this server's own inbound listener.
 func splitHeader(raw []byte) (header, body []byte, ok bool) {
 	if i := indexBytes(raw, "\r\n\r\n"); i >= 0 {
-		return raw[:i+2], raw[i+4:], true
+		return raw[:i+2], raw[i+2:], true
 	}
 	if i := indexBytes(raw, "\n\n"); i >= 0 {
-		return raw[:i+1], raw[i+2:], true
+		return raw[:i+1], raw[i+1:], true
 	}
 	return nil, raw, false
 }
