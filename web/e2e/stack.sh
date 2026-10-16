@@ -29,6 +29,24 @@ sed -E \
   -e "s|^  pop3s: .*|  pop3s: { addr: \":1995\" }|" \
   -e "s|^  smtp_submission_tls: .*|  smtp_submission_tls: { addr: \":1465\" }|" \
   -e "s|^  http: .*|  http: { addr: \":${PORT}\" }|" \
+  -e "/greylisting:/,/delay:/ s|^      enabled: .*|      enabled: false|" \
   linchange.dev.yaml > .e2e-linchange.yaml
+
+# Autodiscover answers with the advertised ports, and the tests insist every
+# URL it names can be reached, so the set has to describe the ports this stack
+# actually publishes.
+awk -v port="$PORT" '
+  { print }
+  /^exchange:/ {
+    print "  advertised:"
+    print "    imap: 1143"
+    print "    imaps: 1993"
+    print "    pop3: 1110"
+    print "    pop3s: 1995"
+    print "    smtp: 1025"
+    print "    submission: 1587"
+    print "    http: " port
+  }' .e2e-linchange.yaml > .e2e-linchange.yaml.tmp \
+  && mv .e2e-linchange.yaml.tmp .e2e-linchange.yaml
 
 exec ./bin/linchange --config .e2e-linchange.yaml --web-dir web/dist/linchange-web/browser
