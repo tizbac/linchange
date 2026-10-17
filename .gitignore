@@ -23,6 +23,9 @@ coverage.*
 
 # Test logs
 .test-integration.log
+
+# Python bytecode from the e2e suite
+__pycache__/
 # The binary `go build` drops at the repository root. Anchored, because an
 # unanchored name would also swallow the cmd/linchange/ package directory.
 /linchange

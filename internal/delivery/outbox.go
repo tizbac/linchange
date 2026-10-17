@@ -388,17 +388,19 @@ func (r *OutboxRepository) ClaimDSNMessages(ctx context.Context, tx *sqlx.Tx, ma
 
 // UpdateRecipientState marks a single recipient's delivery state.
 func (r *OutboxRepository) UpdateRecipientState(ctx context.Context, tx *sqlx.Tx, outboxID int64, position int, state RecipientState, lastError string) error {
+	// $1 is used both as an enum value and as text in the CASE, so Postgres
+	// needs the cast spelled out or it cannot deduce a single type.
 	if tx != nil {
 		if _, err := tx.ExecContext(ctx, `
-			UPDATE outbox_recipients SET state = $1, last_error = $2,
-			delivered_at = CASE WHEN $1 = 'delivered' THEN now() ELSE delivered_at END
+			UPDATE outbox_recipients SET state = $1::recipient_state, last_error = $2,
+			delivered_at = CASE WHEN $1::text = 'delivered' THEN now() ELSE delivered_at END
 			WHERE outbox_id = $3 AND position = $4`, string(state), lastError, outboxID, position); err != nil {
 			return fmt.Errorf("update recipient state: %w", err)
 		}
 	} else {
 		if _, err := r.db.ExecContext(ctx, `
-			UPDATE outbox_recipients SET state = $1, last_error = $2,
-			delivered_at = CASE WHEN $1 = 'delivered' THEN now() ELSE delivered_at END
+			UPDATE outbox_recipients SET state = $1::recipient_state, last_error = $2,
+			delivered_at = CASE WHEN $1::text = 'delivered' THEN now() ELSE delivered_at END
 			WHERE outbox_id = $3 AND position = $4`, string(state), lastError, outboxID, position); err != nil {
 			return fmt.Errorf("update recipient state: %w", err)
 		}

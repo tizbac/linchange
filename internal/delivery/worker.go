@@ -7,11 +7,13 @@
 package delivery
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
+	"net/mail"
 	"sort"
 	"strconv"
 	"strings"
@@ -370,15 +372,20 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 	for _, r := range pending {
 		positionOf[r.Address] = r.Position
 	}
-	// markAddresses settles recipients by address, which is how a sending
-	// path reports its outcome.
-	markAddresses := func(addrs []string, state RecipientState, lastError string) {
+	// mark settles recipients by address, which is how a sending path reports
+	// its outcome. The reason stored here is the text the bounce shows, so a
+	// specific failure (a 550 from the destination) beats a generic one.
+	mark := func(addrs []string, state RecipientState, reasons map[string]string, fallback string) {
 		for _, a := range addrs {
 			pos, ok := positionOf[a]
 			if !ok {
 				continue
 			}
-			if err := p.cfg.Outbox.UpdateRecipientState(ctx, nil, msg.ID, pos, state, lastError); err != nil {
+			reason := fallback
+			if r := reasons[a]; r != "" {
+				reason = r
+			}
+			if err := p.cfg.Outbox.UpdateRecipientState(ctx, nil, msg.ID, pos, state, reason); err != nil {
 				p.logger.Error("mark recipient", "message_id", msg.ID,
 					"recipient", a, "state", state, "error", err)
 			}
@@ -391,8 +398,8 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 		// no credentials, one transaction per recipient.
 		out := (&smtpClient{cfg: *p.cfg.Loopback}).SendEach(
 			sendCtx, msg.EnvelopeFrom, addresses(local), blob)
-		markAddresses(out.Delivered, RecipientDelivered, "")
-		markAddresses(out.Permanent, RecipientFailed, "rejected by local delivery")
+		mark(out.Delivered, RecipientDelivered, nil, "")
+		mark(out.Permanent, RecipientFailed, out.Reasons, "rejected by local delivery")
 		if len(out.Transient) > 0 {
 			p.logger.Warn("local delivery left recipients pending",
 				"message_id", msg.ID, "reasons", out.Reasons)
@@ -411,9 +418,9 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 			sendErr := client.Send(sendCtx, msg.EnvelopeFrom, addresses(remote), blob)
 			switch {
 			case sendErr == nil:
-				markAddresses(addresses(remote), RecipientDelivered, "")
+				mark(addresses(remote), RecipientDelivered, nil, "")
 			case IsPermanent(sendErr):
-				markAddresses(addresses(remote), RecipientFailed, sendErr.Error())
+				mark(addresses(remote), RecipientFailed, nil, sendErr.Error())
 				lastErr = sendErr
 			default:
 				// Stays unresolved; settle defers the message for another try.
@@ -422,9 +429,9 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 		} else {
 			// No relay is configured, so each destination domain is dialed at
 			// its own mail exchanger, which is what the SMTP configuration
-			// documents for an unset smart host. A domain whose exchanger
-			// cannot be found stays unresolved -- DNS may come back -- rather
-			// than being written off permanently.
+			// documents for an unset smart host. A domain that publishes no
+			// mail exchanger and resolves to no address at all is written off
+			// permanently; one whose DNS is merely flaky stays unresolved.
 			byDomain := make(map[string][]OutboxRecipient)
 			for _, r := range remote {
 				_, domain, _ := strings.Cut(r.Address, "@")
@@ -439,6 +446,19 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 				group := byDomain[domain]
 				exchanger, err := p.mailExchanger(ctx, domain)
 				if err != nil {
+					if IsPermanent(err) {
+						// The destination exists nowhere: nothing will change
+						// that before the retry lifetime ends, so the recipient
+						// is written off now and the sender gets a bounce
+						// naming it.
+						p.logger.Warn("no mail exchanger for domain; failing permanently",
+							"message_id", msg.ID, "domain", domain, "error", err)
+						mark(addresses(group), RecipientFailed, nil, err.Error())
+						if lastErr == nil {
+							lastErr = err
+						}
+						continue
+					}
 					p.logger.Warn("no mail exchanger for domain; deferring",
 						"message_id", msg.ID, "domain", domain, "error", err)
 					if lastErr == nil {
@@ -448,8 +468,8 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 				}
 				out := (&smtpClient{cfg: exchanger}).SendEach(
 					sendCtx, msg.EnvelopeFrom, addresses(group), blob)
-				markAddresses(out.Delivered, RecipientDelivered, "")
-				markAddresses(out.Permanent, RecipientFailed,
+				mark(out.Delivered, RecipientDelivered, nil, "")
+				mark(out.Permanent, RecipientFailed, out.Reasons,
 					"the destination mail exchanger rejected the message")
 				if len(out.Transient) > 0 && lastErr == nil {
 					lastErr = fmt.Errorf("%s: the mail exchanger could not be reached", domain)
@@ -466,6 +486,11 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 // domain's own address as the RFC allows. This is what the SMTP configuration
 // documents for an empty smtp_host, and without it a single-server deployment
 // can only ever talk to itself.
+//
+// A domain that publishes no mail exchanger and resolves to no address at all
+// is reported as a permanent failure: it exists nowhere, and retrying it for a
+// week only delays the bounce that tells the sender so. A lookup that failed
+// for any other reason is transient, since DNS may come back.
 func (p *Pool) mailExchanger(ctx context.Context, domain string) (SMTPConfig, error) {
 	records, err := net.DefaultResolver.LookupMX(ctx, domain)
 	if err != nil {
@@ -474,14 +499,28 @@ func (p *Pool) mailExchanger(ctx context.Context, domain string) (SMTPConfig, er
 			return SMTPConfig{}, fmt.Errorf("resolving MX for %s: %w", domain, err)
 		}
 		// No MX published: many domains still accept mail at their address.
+		if _, err := net.DefaultResolver.LookupHost(ctx, domain); err != nil {
+			var hostErr *net.DNSError
+			if errors.As(err, &hostErr) && hostErr.IsNotFound {
+				return SMTPConfig{}, &ErrPermanent{
+					Err: fmt.Errorf("no mail exchanger or address is published for %s", domain),
+				}
+			}
+			return SMTPConfig{}, fmt.Errorf("resolving %s: %w", domain, err)
+		}
 		return p.directTo(domain), nil
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].Pref < records[j].Pref })
 	for _, mx := range records {
 		host := strings.TrimSuffix(mx.Host, ".")
-		if host != "" {
-			return p.directTo(host), nil
+		if host == "" {
+			// RFC 7505: a mail exchanger of "." means the domain says it
+			// accepts no mail at all. Dialing its web address would be a guess.
+			return SMTPConfig{}, &ErrPermanent{
+				Err: fmt.Errorf("%s publishes that it accepts no mail", domain),
+			}
 		}
+		return p.directTo(host), nil
 	}
 	return p.directTo(domain), nil
 }
@@ -620,7 +659,7 @@ func (p *DSNProcessor) Process(ctx context.Context, blobStore BlobStore, submiss
 
 		if len(messages) == 0 {
 			select {
-			case <-time.After(10 * time.Second):
+			case <-time.After(2 * time.Second):
 			case <-ctx.Done():
 				return nil
 			}
@@ -643,8 +682,24 @@ func (p *DSNProcessor) Process(ctx context.Context, blobStore BlobStore, submiss
 				continue
 			}
 
+			// The original message is read so the report can name it. A blob
+			// that cannot be read is not a reason to withhold the bounce: the
+			// report is generated without the excerpt.
+			original := originalMessage(blobStore, msg)
+			if original != nil && original.Header.Get("Auto-Submitted") != "" {
+				// A delivery report is itself mail, and it can fail. Generating
+				// a report for a report would loop forever, so automatically
+				// generated messages are never bounced.
+				p.pool.logger.Info("not bouncing an automatically generated message",
+					"message_id", msg.ID)
+				if err := p.pool.cfg.Outbox.MarkBounced(ctx, nil, msg.ID); err != nil {
+					p.pool.logger.Error("mark bounced", "message_id", msg.ID, "error", err)
+				}
+				continue
+			}
+
 			// Generate DSN bounce.
-			bounceData, err := GenerateDSN(p.pool.cfg.DSN, msg, failedRecipients)
+			bounceData, err := GenerateDSN(p.pool.cfg.DSN, msg, failedRecipients, original)
 			if err != nil {
 				p.pool.logger.Error("generate DSN", "message_id", msg.ID, "error", err)
 				continue
@@ -657,8 +712,15 @@ func (p *DSNProcessor) Process(ctx context.Context, blobStore BlobStore, submiss
 				continue
 			}
 
-			// Insert the DSN into the outbox for delivery.
-			_, err = submissionFn(msg.SubmittedBy, msg.EnvelopeFrom, bounceData, []OutboxRecipient{
+			// Insert the DSN into the outbox for delivery. The report leaves
+			// from the postmaster address rather than the original sender's
+			// envelope, which a remote server would read as the sender writing
+			// to itself.
+			envelopeFrom := msg.EnvelopeFrom
+			if p.pool.cfg.DSN.FromAddress != "" {
+				envelopeFrom = p.pool.cfg.DSN.FromAddress
+			}
+			_, err = submissionFn(msg.SubmittedBy, envelopeFrom, bounceData, []OutboxRecipient{
 				{
 					Position: 0,
 					Address:  msg.SubmittedBy,
@@ -677,6 +739,26 @@ func (p *DSNProcessor) Process(ctx context.Context, blobStore BlobStore, submiss
 			}
 		}
 	}
+}
+
+// originalMessage reads the headers of the message that failed, so the bounce
+// can quote the subject it was about. Nothing here is worth losing a bounce
+// over: an unreadable blob simply yields nil.
+func originalMessage(blobStore BlobStore, msg OutboxMessage) *mail.Message {
+	if blobStore == nil || len(msg.BlobSHA256) == 0 {
+		return nil
+	}
+	var d blobstore.Digest
+	copy(d[:], msg.BlobSHA256)
+	blob, err := blobStore.Get(d)
+	if err != nil {
+		return nil
+	}
+	m, err := mail.ReadMessage(bytes.NewReader(blob))
+	if err != nil {
+		return nil
+	}
+	return m
 }
 
 // ---------------------------------------------------------------------------

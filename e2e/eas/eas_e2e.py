@@ -533,6 +533,92 @@ def step_sync_after_send(s: Session) -> str:
         time.sleep(2.0)
 
 
+def step_sendmail_failing(s: Session) -> str:
+    """A send that cannot succeed has to fail out loud.
+
+    ActiveSync accepts the message: at the moment it is submitted nobody knows
+    the recipients are unreachable. Delivery finds out, and the server owes the
+    sender a report naming each recipient that did not get the message and why.
+    Two kinds of failure are sent together so the report has to cover both: an
+    address on this server's own domain that does not exist, and a domain that
+    exists nowhere at all.
+    """
+    domain = s.user.split("@", 1)[1]
+    s.bounce_target = f"nobody-{s.nonce}@{domain}"
+    s.bounce_remote = f"nobody-{s.nonce}@linchange-does-not-exist.invalid"
+    subject = f"linchange e2e {s.nonce} undeliverable"
+
+    message = email.message.EmailMessage()
+    message["From"] = s.user
+    message["To"] = s.bounce_target
+    message["Cc"] = s.bounce_remote
+    message["Subject"] = subject
+    message["Date"] = formatdate(localtime=True)
+    message["Message-ID"] = make_msgid(domain="example.com")
+    message.set_content("this message has no reachable recipients\n")
+
+    request = el("ComposeMail", "SendMail",
+                 el("ComposeMail", "SaveInSentItems"),
+                 el("ComposeMail", "Mime", message.as_bytes()))
+    reply = s.client.command("SendMail", request)
+    expect(reply.status == 200, f"SendMail returned {reply.status}")
+    if reply.doc is not None:
+        status_in(reply.doc, {1}, "SendMail (failing send)")
+    s.bounce_subject = subject
+    return f"accepted for {s.bounce_target} and {s.bounce_remote}"
+
+
+def step_bounce_report(s: Session) -> str:
+    """The failed send comes back to the sender as a delivery report.
+
+    A bounce that is generated but never delivered is as useless to a user as
+    no bounce at all, so the report is read out of the mailbox the same way a
+    phone reads it: a Sync of the Inbox.
+    """
+    expect(getattr(s, "bounce_subject", None), "the failing send did not run")
+    deadline = time.monotonic() + 60.0
+    while True:
+        request = _sync_request(s, s.sync_key)
+        reply = s.client.command("Sync", request)
+        collection = _collection(reply, "Sync (delivery report)")
+        status_in(collection, {1}, "Sync (delivery report)")
+        key = collection.text_of("SyncKey").strip()
+        expect(key, "Sync for the delivery report returned no SyncKey")
+        s.sync_key = key
+
+        reports = []
+        commands = collection.find("Commands")
+        if commands is not None:
+            for add in commands.findall("Add"):
+                data = add.find("ApplicationData")
+                if data is None:
+                    continue
+                subject = data.text_of("Subject")
+                if "Delivery Status Notification" not in subject:
+                    continue
+                body = data.find("Body")
+                reports.append((subject, body.text_of("Data") if body is not None else ""))
+
+        if reports:
+            subject, body = reports[-1]
+            expect(s.bounce_target in body,
+                   f"the delivery report does not name the recipient that failed "
+                   f"({s.bounce_target!r}); body was:\n{body}")
+            expect(s.bounce_remote in body,
+                   f"the delivery report does not name the unreachable domain "
+                   f"({s.bounce_remote!r}); body was:\n{body}")
+            expect(s.bounce_subject in body,
+                   f"the report does not say which message failed "
+                   f"({s.bounce_subject!r}); body was:\n{body}")
+            return (f"report in the Inbox ({subject!r}) naming "
+                    f"{s.bounce_target} and {s.bounce_remote} at key {key}")
+
+        if time.monotonic() > deadline:
+            expect(False, f"no delivery report for the failed send arrived in the "
+                         f"Inbox within 60 seconds (sync key {s.sync_key})")
+        time.sleep(2.0)
+
+
 def step_settings(s: Session) -> str:
     request = el("Settings", "Settings",
                  el("Settings", "DeviceInformation",
@@ -841,6 +927,8 @@ STEPS = [
     ("SendMail: MIME submission", step_sendmail, True),
     ("Sync: sent mail arrives back", step_sync_after_send, True),
     ("Sync: sent folder holds the sent copy", step_sync_sent_folder, True),
+    ("SendMail: a send that cannot succeed", step_sendmail_failing, True),
+    ("Delivery report: the bounce reaches the sender", step_bounce_report, True),
     ("Settings: device information", step_settings, True),
     ("Ping: heartbeat", step_ping, True),
     ("FolderCreate/FolderUpdate/FolderDelete", step_folder_crud, True),

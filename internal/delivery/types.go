@@ -474,10 +474,16 @@ type DSNConfig struct {
 	Delay       time.Duration
 }
 
-// GenerateDSN creates a DSN bounce message for a failed outbox message.
-// The message is sent back to the original sender (SubmittedBy) explaining
-// which recipients failed.
-func GenerateDSN(cfg DSNConfig, msg OutboxMessage, failedRecipients []OutboxRecipient) ([]byte, error) {
+// GenerateDSN creates a DSN bounce message for a failed outbox message. The
+// report goes back to the original sender and names every recipient that did
+// not get the message, with the reason the destination gave for refusing it.
+//
+// The shape follows RFC 3464: an auto-submitted plain-text message whose body
+// lists the failed recipients, one block each, so a client that shows the body
+// as a delivery report has something to show rather than a bare "failed".
+// original is the headers of the message that failed, when they can be read;
+// it is only used to quote the subject the sender sent.
+func GenerateDSN(cfg DSNConfig, msg OutboxMessage, failedRecipients []OutboxRecipient, original *mail.Message) ([]byte, error) {
 	if !cfg.Enabled {
 		return nil, nil
 	}
@@ -491,39 +497,44 @@ func GenerateDSN(cfg DSNConfig, msg OutboxMessage, failedRecipients []OutboxReci
 		return nil, fmt.Errorf("DSN: parse from_address %q: %w", cfg.FromAddress, err)
 	}
 
-	// Build the list of failed recipients for the DSN body.
-	var failedList strings.Builder
-	for i, r := range failedRecipients {
-		if i > 0 {
-			failedList.WriteString("\n")
-		}
-		fmt.Fprintf(&failedList, "  - %s: %s", r.Address, r.LastError)
-	}
-
-	// Construct a simple RFC 5322 message.
 	var b strings.Builder
 	fmt.Fprintf(&b, "From: %s\r\n", sender.String())
 	fmt.Fprintf(&b, "To: %s\r\n", msg.SubmittedBy)
+	fmt.Fprintf(&b, "Date: %s\r\n", time.Now().UTC().Format(time.RFC1123))
 	fmt.Fprintf(&b, "Subject: Delivery Status Notification (Failure)\r\n")
+	fmt.Fprintf(&b, "Auto-Submitted: auto-replied\r\n")
 	fmt.Fprintf(&b, "MIME-Version: 1.0\r\n")
 	fmt.Fprintf(&b, "Content-Type: text/plain; charset=utf-8\r\n")
 	fmt.Fprintf(&b, "Content-Transfer-Encoding: 7bit\r\n")
-	fmt.Fprintf(&b, "\r\n")
-	fmt.Fprintf(&b, "Your message was not delivered to the following recipients:\r\n")
-	fmt.Fprintf(&b, "\r\n")
-	fmt.Fprintf(&b, "Envelope from: %s\r\n", msg.EnvelopeFrom)
-	fmt.Fprintf(&b, "\r\n")
-	fmt.Fprintf(&b, "Failed recipients:\r\n")
-	if failedList.Len() > 0 {
-		failedList.WriteString("\r\n")
+	b.WriteString("\r\n")
+	fmt.Fprintf(&b, "Your message was not delivered.\r\n")
+	b.WriteString("\r\n")
+
+	for _, r := range failedRecipients {
+		reason := r.LastError
+		if reason == "" {
+			reason = msg.LastError
+		}
+		if reason == "" {
+			reason = "delivery failed"
+		}
+		fmt.Fprintf(&b, "Recipient: %s\r\n", r.Address)
+		fmt.Fprintf(&b, "  action: failed\r\n")
+		fmt.Fprintf(&b, "  reason: %s\r\n", reason)
+		b.WriteString("\r\n")
 	}
-	fmt.Fprint(&b, failedList.String())
-	fmt.Fprintf(&b, "\r\n")
-	fmt.Fprintf(&b, "Total attempts: %d\r\n", msg.Attempts)
+
+	if original != nil {
+		if subject := original.Header.Get("Subject"); subject != "" {
+			fmt.Fprintf(&b, "Original message: %s\r\n", subject)
+		}
+		fmt.Fprintf(&b, "Sent from: %s\r\n", msg.EnvelopeFrom)
+	}
+
+	fmt.Fprintf(&b, "Attempts: %d\r\n", msg.Attempts)
 	if msg.LastError != "" {
 		fmt.Fprintf(&b, "Last error: %s\r\n", msg.LastError)
 	}
-	fmt.Fprintf(&b, "\r\n")
 
 	return []byte(b.String()), nil
 }
