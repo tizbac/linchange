@@ -122,7 +122,12 @@ func parseShape(raw *shapeRequest) shape {
 func (s shape) all() bool { return s.base == shapeAllProperties }
 
 // identity reports whether only identifiers were asked for.
-func (s shape) identity() bool { return s.base == shapeIDOnly }
+//
+// IdOnly with named extras is not identity-only: the extras are the exception
+// that makes IdOnly usable (see asked), and a renderer that short-circuited on
+// the base shape alone would silently drop exactly the properties the client
+// asked for beyond the identifier.
+func (s shape) identity() bool { return s.base == shapeIDOnly && len(s.extra) == 0 }
 
 // asked reports whether the shape asks for one property.
 //

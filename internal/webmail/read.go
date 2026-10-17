@@ -40,11 +40,25 @@ type Address struct {
 // It exists because the composer posts addresses and the composer has to be
 // able to send them straight back out: a form that returns "Alice <a@example.com>"
 // for display must not send that string as the address.
+//
+// The display name is quoted when it contains specials. An EWS client puts the
+// address itself in the name field, and "a@example.com <a@example.com>" is not a
+// legal RFC 5322 phrase: the unquoted atom breaks at the first special, and the
+// validator then rejects a perfectly good address. Quoting is the form the
+// standard provides, and net/mail parses it back exactly.
 func (a Address) String() string {
 	if a.Name == "" {
 		return a.Address
 	}
-	return fmt.Sprintf("%s <%s>", a.Name, a.Address)
+	return fmt.Sprintf("%s <%s>", headerDisplayName(a.Name), a.Address)
+}
+
+// headerDisplayName makes a display name safe for a header.
+func headerDisplayName(name string) string {
+	if strings.ContainsAny(name, "()[]<>.,;:@\"\\") {
+		return `"` + strings.ReplaceAll(name, "\"", "") + `"`
+	}
+	return name
 }
 
 // MessageDetail is a message as the reader needs it: the stored summary, the

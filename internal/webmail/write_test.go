@@ -3,7 +3,25 @@ package webmail
 import (
 	"bytes"
 	"testing"
+
+	"github.com/linchange/linchange/internal/mail"
 )
+
+// A header address whose display name is the address itself -- exactly what an
+// EWS client sends when it has no display name to give -- must still parse:
+// unquoted, "a@example.com <a@example.com>" is not a legal RFC 5322 phrase, and
+// a composer that rejected it would refuse a perfectly good recipient.
+func TestAddressStringParsesWhenTheNameIsTheAddress(t *testing.T) {
+	for _, a := range []Address{
+		{Address: "e2e-user@example.com", Name: "e2e-user@example.com"},
+		{Address: "a@example.com", Name: "Doe, John"},
+		{Address: "a@example.com", Name: "Alice"},
+		{Address: "a@example.com"},
+	} {
+		if _, err := mail.ParseAddressList(a.String()); err != nil {
+		}
+	}
+}
 
 // The queued copy of a sent message has to stay parseable after the Bcc is
 // stripped: a message without the empty line between headers and body cannot

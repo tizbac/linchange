@@ -298,12 +298,15 @@ func (e *EWS) getItem(c *call) responseCode {
 	}
 	sh := parseShape(req.ItemShape)
 
-	var b strings.Builder
-	b.WriteString(`<m:Items>`)
+	var items strings.Builder
+	var failures strings.Builder
+	items.WriteString(`<m:Items>`)
 	for _, ref := range req.ItemIds.ItemIDs {
 		view, serr := e.resolveItem(c, ref.ID, sh)
 		if serr != nil {
-			b.WriteString(faultResponseMessage(serr))
+			// One missing item does not fail the batch: it is answered beside the
+			// others as its own error response message.
+			failures.WriteString(faultResponseMessage("GetItemResponseMessage", serr))
 			continue
 		}
 		if view.message != nil && sh.anyOf("message:to", "message:cc", "message:bcc",
@@ -311,12 +314,12 @@ func (e *EWS) getItem(c *call) responseCode {
 			"message:displayto", "message:displaycc", "message:displaybcc") {
 			view.addresses = e.recipientsFor(c, []int64{view.id})
 		}
-		renderItem(&b, view, sh)
+		renderItem(&items, view, sh)
 	}
-	b.WriteString(`</m:Items>`)
+	items.WriteString(`</m:Items>`)
 	return responseCode{
 		element: "GetItemResponse",
-		body:    responseMessageOne("GetItem", b.String()),
+		body:    responseMessagesErrors("GetItemResponseMessage", items.String(), failures.String()),
 	}
 }
 
@@ -541,8 +544,12 @@ type updateItemRequest struct {
 	// MessageDisposition is SaveOnly or SendAndSaveCopy.
 	MessageDisposition string `xml:"MessageDisposition,attr"`
 	// MaxChangesReturned bounds the number of conflicts reported.
-	MaxChangesReturned int          `xml:"MaxChangesReturned,attr"`
-	ItemChanges        *itemChanges `xml:"ItemChanges"`
+	MaxChangesReturned int `xml:"MaxChangesReturned,attr"`
+	// ItemShape says what the client wants back about the item it just changed:
+	// the answer is the updated item, and a client that asked for the flag it
+	// wrote needs to see it to know the write landed.
+	ItemShape   *shapeRequest `xml:"ItemShape"`
+	ItemChanges *itemChanges  `xml:"ItemChanges"`
 }
 
 // itemChanges wraps the list of t:ItemChange elements.
@@ -598,8 +605,12 @@ func (e *EWS) updateItem(c *call) responseCode {
 
 	// The updated items are returned under <m:Items>, because a change key
 	// changes along with the flags and a client that was not handed the new one
-	// keeps editing against a stale token.
+	// keeps editing against a stale token. The item is rendered through the
+	// same shape machinery as a GetItem, so the client that wrote a flag can
+	// read it back in the answer rather than guessing that the write landed.
+	sh := parseShape(req.ItemShape)
 	var updated strings.Builder
+	var failures strings.Builder
 	updated.WriteString(`<m:Items>`)
 
 	for _, ch := range req.ItemChanges.Changes {
@@ -627,17 +638,19 @@ func (e *EWS) updateItem(c *call) responseCode {
 			continue
 		}
 		// IsDeleted removes the item, and there is nothing to hand back for one
-		// that is gone.
-		if detail, derr := e.mail.Message(c.ctx(), c.owner(), messageID); derr == nil {
-			updated.WriteString(`<t:Message><t:ItemId Id="`)
-			updated.WriteString(escape(messageIDString(detail.FolderID, detail.ID)))
-			updated.WriteString(`" ChangeKey="`)
-			updated.WriteString(escape(changeKey(detail.ID, detail.UID, detail.Size,
-				detail.Date.UTC().UnixNano(), strings.Join(detail.Flags, "\x00"))))
-			updated.WriteString(`"/><t:ParentFolderId Id="`)
-			updated.WriteString(escape(folderID(detail.FolderID)))
-			updated.WriteString(`"/></t:Message>`)
+		// that is gone; that is reported as its own error response message
+		// beside the items that are still there.
+		view, verr := e.resolveItem(c, ch.ItemID.ID, sh)
+		if verr != nil {
+			failures.WriteString(faultResponseMessage("UpdateItemResponseMessage", verr))
+			continue
 		}
+		if view.message != nil && sh.anyOf("message:to", "message:cc", "message:bcc",
+			"message:replyto", "message:from", "message:sender",
+			"message:displayto", "message:displaycc", "message:displaybcc") {
+			view.addresses = e.recipientsFor(c, []int64{view.id})
+		}
+		renderItem(&updated, view, sh)
 	}
 	updated.WriteString(`</m:Items>`)
 
@@ -648,7 +661,7 @@ func (e *EWS) updateItem(c *call) responseCode {
 	body := `<m:ConflictResults><t:Count>` + itoa(conflictCount) + `</t:Count></m:ConflictResults>` + updated.String()
 	return responseCode{
 		element: "UpdateItemResponse",
-		body:    responseMessageOne("UpdateItem", body),
+		body:    responseMessagesErrors("UpdateItemResponseMessage", body, failures.String()),
 	}
 }
 

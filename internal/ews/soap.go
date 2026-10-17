@@ -385,6 +385,19 @@ func responseMessageOne(operation, body string) string {
 	return responseMessages(operation+"ResponseMessage", body)
 }
 
+// responseMessagesErrors wraps a batch answer whose failures are reported as
+// additional response messages beside the successful one.
+//
+// A batch that is partly successful is answered in full: the items that resolved
+// ride in the success message and each failure gets its own error message, which
+// is how the schema carries "three of the four you asked for, and here is why the
+// fourth is not there".
+func responseMessagesErrors(messageElement, body, failures string) string {
+	return `<m:ResponseMessages><m:` + messageElement + ` ResponseClass="Success">` +
+		`<m:ResponseCode>` + codeNoError + `</m:ResponseCode>` + body +
+		`</m:` + messageElement + `>` + failures + `</m:ResponseMessages>`
+}
+
 // fault renders a failure.
 //
 // The status is 500 for a fault the caller caused and 200 for one the protocol

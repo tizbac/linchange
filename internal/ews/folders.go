@@ -310,8 +310,9 @@ func (e *EWS) getFolder(c *call) responseCode {
 	}
 
 	sh := parseShape(req.FolderShape)
-	var b strings.Builder
-	b.WriteString(`<m:Folders>`)
+	var folders strings.Builder
+	var failures strings.Builder
+	folders.WriteString(`<m:Folders>`)
 	for _, ref := range allFolderRefs(req.FolderIds) {
 		f, serr := e.resolveFolderRef(c, ref)
 		if serr != nil {
@@ -319,16 +320,16 @@ func (e *EWS) getFolder(c *call) responseCode {
 			// about several and gets an answer about the others. The per-item
 			// response message is how a failure is reported inside a batch, and
 			// a client that ignored it would be told nothing at all.
-			b.WriteString(faultResponseMessage(serr))
+			failures.WriteString(faultResponseMessage("GetFolderResponseMessage", serr))
 			continue
 		}
-		renderContainer(&b, f, sh)
+		renderContainer(&folders, f, sh)
 	}
-	b.WriteString(`</m:Folders>`)
+	folders.WriteString(`</m:Folders>`)
 
 	return responseCode{
 		element: "GetFolderResponse",
-		body:    responseMessageOne("GetFolder", b.String()),
+		body:    responseMessagesErrors("GetFolderResponseMessage", folders.String(), failures.String()),
 	}
 }
 

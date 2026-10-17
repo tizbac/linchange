@@ -14,6 +14,7 @@ import (
 	"github.com/linchange/linchange/internal/auth/policy"
 	"github.com/linchange/linchange/internal/calendar"
 	"github.com/linchange/linchange/internal/store"
+	"github.com/linchange/linchange/internal/webmail"
 )
 
 // An EWS service without a verifier refuses every request: credentials are the
@@ -301,6 +302,53 @@ func TestCalendarItemIdentityCarriesTheCalendarKind(t *testing.T) {
 	if kind != kindCalendar || container != 4 || item != 7 {
 		t.Errorf("identifier = kind %d container %d item %d, want %d %d %d",
 			kind, container, item, kindCalendar, 4, 7)
+	}
+}
+
+// IdOnly with additional properties is not identity only: the extras are the
+// exception that makes IdOnly usable, and a renderer that treats the base shape
+// as "identifiers only" whenever extras are named drops exactly the properties
+// the client asked for beyond the identifier.
+func TestIDOnlyShapeKeepsItsAdditionalProperties(t *testing.T) {
+	sh := parseShape(&shapeRequest{
+		Base: "IdOnly",
+		Additional: &shapeFields{Fields: []fieldURI{
+			{FieldURI: "item:subject"},
+			{PropertySet: "message", Property: "IsRead"},
+		}},
+	})
+	if sh.identity() {
+		t.Errorf("a shape that names additional properties is not identity-only")
+	}
+	if !sh.asked("item:subject", defaultItemFields) || !sh.asked("message:isread", defaultItemFields) {
+		t.Errorf("the named properties are not asked for: extra = %v", sh.extra)
+	}
+
+	msg := &webmail.Message{
+		ID:       3,
+		FolderID: 1,
+		UID:      9,
+		Subject:  "Quarterly report",
+		Size:     1234,
+		Date:     time.Date(2026, 10, 17, 9, 0, 0, 0, time.UTC),
+	}
+	v := &itemView{kind: "Message", container: 1, id: 3, message: msg, class: "IPM.Note"}
+
+	var b strings.Builder
+	renderMessageItem(&b, v, sh)
+	out := b.String()
+	if !strings.Contains(out, "<t:Subject>Quarterly report</t:Subject>") {
+		t.Errorf("the render dropped the requested Subject: %s", out)
+	}
+	if strings.Contains(out, "<t:Size>") {
+		t.Errorf("the render included a property nobody asked for: %s", out)
+	}
+
+	// A bare IdOnly still renders identity and nothing else.
+	b.Reset()
+	renderMessageItem(&b, v, parseShape(&shapeRequest{Base: "IdOnly"}))
+	if strings.Contains(b.String(), "<t:Subject>") {
+		t.Errorf("a bare IdOnly shape rendered more than identity: %s", b.String())
 	}
 }
 
