@@ -857,6 +857,190 @@ def step_move_items(s: Session) -> str:
     return f"moved {server_id} to Trash"
 
 
+def step_search(s: Session) -> str:
+    """Search finds the mail that is in the mailbox, in the folder named.
+
+    A client types a word into its search box and expects the messages that
+    contain it back, with their properties. The server used to answer every
+    Search with an empty list; this step proves it now reads the query and
+    returns what matches, and that a query that matches nothing says so.
+    """
+    if not s.injected_subjects:
+        raise Skip("no delivered messages to search for")
+    term = s.injected_subjects[0]
+
+    request = el("Search", "Search",
+                 el("Search", "Store",
+                    el("Search", "Name", "Mailbox"),
+                    el("Search", "Query",
+                       el("Search", "And",
+                          el("AirSync", "CollectionId", s.inbox()),
+                          el("Search", "FreeText", term))),
+                    el("Search", "Options",
+                       el("Search", "Range", "0-9"))))
+    reply = s.client.command("Search", request)
+    doc = reply.tree("Search")
+    status_in(doc, {1}, "Search")
+    store = doc.descendant("Store")
+    expect(store is not None, "the Search answer carries no Store (it is "
+                             "nested under Response)")
+    status_in(store, {1}, "Search Store")
+    matched = store.int_at("Total", -1)
+    expect(matched >= 1, f"the Search for {term!r} matched nothing (Total {matched})")
+    results = store.findall("Result")
+    expect(results, f"Total is {matched} but the answer carries no Result elements")
+    subject = results[0].text_at("Subject")
+    expect(subject == term,
+           f"the Search result carries Subject {subject!r}, expected {term!r}")
+
+    # A term nothing contains must be an honest zero, not an error and not a
+    # accidental hit.
+    request = el("Search", "Search",
+                 el("Search", "Store",
+                    el("Search", "Name", "Mailbox"),
+                    el("Search", "Query",
+                       el("Search", "And",
+                          el("AirSync", "CollectionId", s.inbox()),
+                          el("Search", "FreeText", f"no-such-term-{s.nonce}")))))
+    reply = s.client.command("Search", request)
+    doc = reply.tree("Search")
+    status_in(doc, {1}, "Search (no match)")
+    store = doc.descendant("Store")
+    status_in(store, {1}, "Search Store (no match)")
+    total = store.int_at("Total", 0)
+    expect(total == 0, f"a query that matched nothing reported Total {total}")
+    return f"found {term!r} (Total {matched}, {len(results)} result(s))"
+
+
+def _sync_command_collection(s: Session, key: str, collection_id: str,
+                             commands: list) -> Node:
+    collection = [
+        el("AirSync", "SyncKey", key),
+        el("AirSync", "CollectionId", collection_id),
+        el("AirSync", "GetChanges"),
+    ]
+    if commands:
+        collection.append(el("AirSync", "Commands", *commands))
+    return el("AirSync", "Sync",
+              el("AirSync", "Collections", el("AirSync", "Collection", *collection)))
+
+
+def step_sync_delete(s: Session) -> str:
+    """Sync Delete moves a message to Trash, and the next sync says so.
+
+    A client that deletes a message expects the server to put it in Trash;
+    the server used to ignore deletes outright, so the item came back on the
+    next sync. This step deletes an item, checks the sync reports it gone,
+    and finds it in the Trash folder.
+    """
+    if not s.injected_ids or not s.trash_id:
+        raise Skip("no synced item or no Trash folder")
+    subject = next(sub for sub, sid in s.injected_ids.items()
+                   if sid != s.moved_id)
+    server_id = s.injected_ids[subject]
+
+    request = _sync_command_collection(
+        s, s.sync_key, s.inbox(),
+        [el("AirSync", "Delete", el("AirSync", "ServerId", server_id))])
+    reply = s.client.command("Sync", request)
+    collection = _collection(reply, "Sync (delete)")
+    status_in(collection, {1}, "Sync (delete)")
+    key = collection.text_of("SyncKey").strip()
+    if key:
+        s.sync_key = key
+    commands = collection.find("Commands")
+    deletes = commands.findall("Delete") if commands else []
+    expect(any(d.text_of("ServerId") == server_id for d in deletes),
+           f"the Inbox sync does not report {server_id} deleted "
+           f"(deletes: {[d.text_of('ServerId') for d in deletes]})")
+
+    reply = s.client.command("Sync", _sync_request(s, "0", collection_id=s.trash_id))
+    collection = _collection(reply, "Sync (Trash)")
+    status_in(collection, {1}, "Sync (Trash)")
+    commands = collection.find("Commands")
+    adds = commands.findall("Add") if commands else []
+    expect(any(a.text_of("ServerId") == server_id for a in adds),
+           f"the deleted item {server_id} is not in Trash "
+           f"(Trash holds: {[a.text_of('ServerId') for a in adds]})")
+    del s.injected_ids[subject]
+    return f"deleted {server_id} ({subject!r}) from Inbox; Trash holds it"
+
+
+def step_calendar_meeting(s: Session) -> str:
+    """A Sync Add creates a real event, and MeetingResponse answers it.
+
+    A phone creates an appointment by adding it to a calendar collection,
+    and answers a meeting invitation with the UserResponse element
+    (MS-ASCMD 2.2.3.100): 1 accept, 2 decline, 3 tentative. The server used
+    to read the answer from a nested MeetingResponse element that real
+    clients do not send, so every response was silently dropped.
+    """
+    name = f"e2e-meeting-{s.nonce}"
+    created = el("FolderHierarchy", "FolderCreate",
+                 el("FolderHierarchy", "SyncKey", s.folder_key),
+                 el("FolderHierarchy", "DisplayName", name),
+                 el("FolderHierarchy", "Type", "13"),
+                 el("FolderHierarchy", "ParentId", "0"))
+    reply = s.client.command("FolderCreate", created)
+    doc = reply.tree("FolderCreate")
+    status_in(doc, {1}, "FolderCreate (meeting calendar)")
+    cal_id = doc.text_of("ServerId").strip()
+    key = doc.text_of("SyncKey").strip()
+    if key:
+        s.folder_key = key
+
+    reply = s.client.command("Sync", _sync_request(s, "0", collection_id=cal_id))
+    collection = _collection(reply, "Sync (meeting calendar)")
+    status_in(collection, {1}, "Sync (meeting calendar)")
+    cal_key = collection.text_of("SyncKey").strip()
+
+    subject = f"E2e kickoff {s.nonce}"
+    add = el("AirSync", "Add",
+             el("AirSync", "ApplicationData",
+                el("Calendar", "Subject", subject),
+                el("Calendar", "StartTime", "20261115T090000"),
+                el("Calendar", "EndTime", "20261115T100000"),
+                el("Calendar", "Location", "Room 3")))
+    request = _sync_command_collection(s, cal_key, cal_id, [add])
+    reply = s.client.command("Sync", request)
+    collection = _collection(reply, "Sync (calendar add)")
+    status_in(collection, {1}, "Sync (calendar add)")
+    commands = collection.find("Commands")
+    adds = commands.findall("Add") if commands else []
+    expect(adds, "the calendar Sync did not answer with the event it created")
+    event_id = adds[0].text_of("ServerId")
+    data = adds[0].find("ApplicationData")
+    expect(data is not None and data.text_of("Subject") == subject,
+           f"the created event carries Subject {data.text_of('Subject')!r}, "
+           f"expected {subject!r}")
+
+    response = el("MeetingResponse", "MeetingResponse",
+                  el("MeetingResponse", "Request",
+                     el("MeetingResponse", "CalendarId", event_id),
+                     el("MeetingResponse", "UserResponse", "1")))
+    reply = s.client.command("MeetingResponse", response)
+    doc = reply.tree("MeetingResponse")
+    status_in(doc, {1}, "MeetingResponse")
+    result = doc.find("Result")
+    expect(result is not None, "MeetingResponse carries no Result")
+    status_in(result, {1}, "MeetingResponse Result")
+    echoed = result.text_of("CalendarId").strip()
+    expect(echoed == event_id,
+           f"the MeetingResponse echoed CalendarId {echoed!r}, expected {event_id!r}")
+
+    removed = el("FolderHierarchy", "FolderDelete",
+                 el("FolderHierarchy", "SyncKey", s.folder_key),
+                 el("FolderHierarchy", "ServerId", cal_id))
+    reply = s.client.command("FolderDelete", removed)
+    doc = reply.tree("FolderDelete")
+    status_in(doc, {1}, "FolderDelete (meeting calendar)")
+    key = doc.text_of("SyncKey").strip()
+    if key:
+        s.folder_key = key
+    return (f"created event {event_id} on calendar {cal_id}, accepted it via "
+            f"UserResponse, deleted the calendar")
+
+
 def _autodiscover(user: str, url: str, timeout: float) -> dict:
     body = (
         '<?xml version="1.0" encoding="utf-8"?>'
@@ -924,6 +1108,7 @@ STEPS = [
     ("GetItemEstimate: inbox", step_item_estimate, True),
     ("Sync: initial mailbox contents", step_sync_initial, True),
     ("Sync: incremental", step_sync_incremental, True),
+    ("Search: find delivered mail", step_search, True),
     ("SendMail: MIME submission", step_sendmail, True),
     ("Sync: sent mail arrives back", step_sync_after_send, True),
     ("Sync: sent folder holds the sent copy", step_sync_sent_folder, True),
@@ -933,8 +1118,10 @@ STEPS = [
     ("Ping: heartbeat", step_ping, True),
     ("FolderCreate/FolderUpdate/FolderDelete", step_folder_crud, True),
     ("FolderCreate: calendar folder", step_calendar_folder_crud, True),
+    ("Sync: calendar add and MeetingResponse", step_calendar_meeting, True),
     ("ItemOperations: fetch an item", step_itemoperations_fetch, False),
     ("MoveItems: move to Trash", step_move_items, False),
+    ("Sync: delete moves mail to Trash", step_sync_delete, False),
 ]
 
 

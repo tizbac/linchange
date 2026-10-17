@@ -22,8 +22,10 @@ package eas
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -801,6 +803,15 @@ func (e *EAS) cmdSync(c *call, w *WBXMLWriter) *easErr {
 	if !ok || kind == kindRoot {
 		return &easErr{status: 6003, http: http.StatusOK, text: "the Sync names a folder it does not know"}
 	}
+	// A calendar ServerId is a bare row id, guessable by counting; mail reads
+	// are scoped to the owner by the query, so the calendar is the one place
+	// where the id itself has to be checked before anything is read or written.
+	if kind == kindCalendar {
+		cal, err := store.NewCalendars().Get(c.ctx, e.db, id)
+		if err != nil || cal.Owner == nil || *cal.Owner != c.owner() {
+			return &easErr{status: 6003, http: http.StatusOK, text: "the Sync names a folder it does not know"}
+		}
+	}
 
 	// The request may carry the client's own changes to apply before the
 	// answer is built. A phone marks a message read the moment its owner taps
@@ -966,22 +977,146 @@ func (e *EAS) cmdSync(c *call, w *WBXMLWriter) *easErr {
 }
 
 // applyClientChanges applies the changes a Sync request carries from the
-// client's side: a message marked read, unread, flagged or unflagged. Only the
-// flags are applied -- an item the client adds or deletes is a change this
-// server has no place to put yet -- and a change that cannot be applied is
+// client's side. Mail accepts the flags: a message marked read, unread, flagged
+// or unflagged. A mail Delete moves the message to Trash, and a Delete already
+// in Trash destroys it, which is what a client means by "delete" and "empty"
+// respectively. The calendar accepts Adds, Changes and Deletes outright, since
+// an event is entirely the client's to write. A change that cannot be applied is
 // logged and skipped, because one bad row must not fail the whole sync.
 func (e *EAS) applyClientChanges(c *call) {
 	commands := c.root.FindDescendant("Commands")
 	if commands == nil {
 		return
 	}
-	for _, change := range commands.FindChildren("Change") {
-		id, err := strconv.ParseInt(change.TextOf("ServerId"), 10, 64)
-		if err != nil || id <= 0 {
+	kind, folderID, ok := parseServerID(c.root.TextDescendant("CollectionId"))
+	if !ok {
+		return
+	}
+
+	for _, del := range commands.FindChildren("Delete") {
+		sid := del.TextOf("ServerId")
+		switch kind {
+		case kindMailbox:
+			id, err := strconv.ParseInt(sid, 10, 64)
+			if err != nil || id <= 0 {
+				continue
+			}
+			trashID, found := e.trashFolder(c.ctx, c.owner())
+			if !found {
+				e.log.WarnContext(c.ctx, "eas: Sync delete found no Trash folder", "id", id)
+				continue
+			}
+			if folderID == trashID {
+				if _, _, err := e.mail.Delete(c.ctx, c.owner(), []int64{id}); err != nil {
+					e.log.WarnContext(c.ctx, "eas: could not delete a message", "id", id, "error", err)
+				}
+			} else if _, err := e.mail.Move(c.ctx, c.owner(), []int64{id}, trashID); err != nil {
+				e.log.WarnContext(c.ctx, "eas: could not move a message to Trash", "id", id, "error", err)
+			}
+		case kindCalendar:
+			ev, _, ok := e.calendarItem(c.ctx, folderID, sid)
+			if !ok {
+				continue
+			}
+			if err := store.NewEvents().Delete(c.ctx, e.db, ev.ID); err != nil {
+				e.log.WarnContext(c.ctx, "eas: could not delete a calendar event", "server_id", sid, "error", err)
+			}
+		}
+	}
+
+	for _, add := range commands.FindChildren("Add") {
+		if kind != kindCalendar {
+			continue // mail a client "adds" to a folder is a draft the server
+			// was never asked to keep; SendMail is the way to create mail.
+		}
+		data := add.FindChild("ApplicationData")
+		if data == nil || strings.TrimSpace(data.TextOf("Subject")) == "" {
 			continue
 		}
+		start := parseEASDateTime(data.TextOf("StartTime"))
+		if start.IsZero() {
+			start = time.Now().UTC()
+		}
+		end := parseEASDateTime(data.TextOf("EndTime"))
+		if end.Before(start) {
+			end = start.Add(time.Hour)
+		}
+		uid := data.TextOf("UID")
+		if uid == "" {
+			uid = newEventUID()
+		}
+		summary := strings.TrimSpace(data.TextOf("Subject"))
+		location := data.TextOf("Location")
+		owner := c.owner()
+		_, err := store.NewEvents().Create(c.ctx, e.db, store.WriteEventRequest{
+			CalendarID:       folderID,
+			UID:              uid,
+			ICalBlob:         basicICal(uid, start, end, summary, location),
+			DTStart:          start,
+			DTEnd:            end,
+			AllDay:           asBool(data.FindChild("AllDayEvent"), false),
+			Summary:          summary,
+			Location:         location,
+			OrganizerAddress: owner,
+			DTStamp:          time.Now().UTC(),
+			// The client that creates a meeting is its organizer, and an
+			// organizer is an attendee for MeetingResponse purposes: the answer
+			// to a meeting has to land on somebody's partstat.
+			Attendees: []store.Attendee{
+				{Address: owner, Role: "ORG", PartStat: "NEEDS-ACTION", RSVP: true},
+			},
+		})
+		if err != nil {
+			e.log.WarnContext(c.ctx, "eas: could not create a calendar event", "error", err)
+		}
+	}
+
+	for _, change := range commands.FindChildren("Change") {
 		data := change.FindChild("ApplicationData")
 		if data == nil {
+			continue
+		}
+		if kind == kindCalendar {
+			ev, recID, ok := e.calendarItem(c.ctx, folderID, change.TextOf("ServerId"))
+			if !ok {
+				continue
+			}
+			start := parseEASDateTime(data.TextOf("StartTime"))
+			if start.IsZero() {
+				start = ev.DTStart
+			}
+			end := parseEASDateTime(data.TextOf("EndTime"))
+			if end.Before(start) {
+				end = ev.DTEnd
+			}
+			if end.Before(start) {
+				end = start
+			}
+			summary := strings.TrimSpace(data.TextOf("Subject"))
+			if summary == "" {
+				summary = ev.Summary
+			}
+			_, err := store.NewEvents().Upsert(c.ctx, e.db, store.WriteEventRequest{
+				CalendarID:   folderID,
+				UID:          ev.UID,
+				RecurrenceID: recID,
+				ICalBlob:     ev.ICalBlob,
+				DTStart:      start,
+				DTEnd:        end,
+				AllDay:       asBool(data.FindChild("AllDayEvent"), ev.AllDay),
+				RRULE:        ev.RRULE,
+				Summary:      summary,
+				Location:     data.TextOf("Location"),
+				DTStamp:      time.Now().UTC(),
+			})
+			if err != nil {
+				e.log.WarnContext(c.ctx, "eas: could not revise a calendar event", "error", err)
+			}
+			continue
+		}
+
+		id, err := strconv.ParseInt(change.TextOf("ServerId"), 10, 64)
+		if err != nil || id <= 0 {
 			continue
 		}
 		if read := data.FindChild("Read"); read != nil {
@@ -990,13 +1125,103 @@ func (e *EAS) applyClientChanges(c *call) {
 			}
 		}
 		if flag := data.FindChild("Flag"); flag != nil {
-			if kind := flag.TextOf("FlagType"); kind != "" {
-				if err := e.mail.SetFlag(c.ctx, c.owner(), id, `\Flagged`, true); err != nil {
-					e.log.WarnContext(c.ctx, "eas: could not apply a client's flag", "id", id, "error", err)
-				}
+			// Per MS-ASCMD FlagType is 1 for flagged and 2 for completed; both
+			// leave the message flagged, and an absent or zero type clears it.
+			set := asInt(flag.FindChild("FlagType"), 1) != 0
+			if err := e.mail.SetFlag(c.ctx, c.owner(), id, `\Flagged`, set); err != nil {
+				e.log.WarnContext(c.ctx, "eas: could not apply a client's flag", "id", id, "error", err)
 			}
 		}
 	}
+}
+
+// trashFolder returns the owner's Trash folder id.
+func (e *EAS) trashFolder(ctx context.Context, owner string) (int64, bool) {
+	folders, err := e.mail.Folders(ctx, owner)
+	if err != nil {
+		return 0, false
+	}
+	for _, f := range folders {
+		if strings.EqualFold(f.Name, "Trash") {
+			return f.ID, true
+		}
+	}
+	return 0, false
+}
+
+// calendarItem finds an event by its sync server id, "cal<calendar>:<uid>" and,
+// for one occurrence of a recurring series, the occurrence time after that.
+func (e *EAS) calendarItem(ctx context.Context, calendarID int64, serverID string) (store.Event, *time.Time, bool) {
+	if !strings.HasPrefix(serverID, "cal") {
+		return store.Event{}, nil, false
+	}
+	parts := strings.Split(serverID, ":")
+	if len(parts) < 2 || parts[1] == "" {
+		return store.Event{}, nil, false
+	}
+	var recID *time.Time
+	if len(parts) == 3 {
+		if nano, err := strconv.ParseInt(parts[2], 10, 64); err == nil {
+			t := time.Unix(0, nano)
+			recID = &t
+		}
+	}
+	ev, err := store.NewEvents().ByUID(ctx, e.db, calendarID, parts[1], recID)
+	if err != nil {
+		return store.Event{}, nil, false
+	}
+	return ev, recID, true
+}
+
+// parseEASDateTime reads the EAS datetime form, yyyymmddThhmmss with an
+// optional trailing Z, and falls back to anything RFC 3339 shaped.
+func parseEASDateTime(text string) time.Time {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return time.Time{}
+	}
+	for _, layout := range []string{"20060102T150405Z", "20060102T150405", time.RFC3339} {
+		if t, err := time.Parse(layout, text); err == nil {
+			return t.UTC()
+		}
+	}
+	return time.Time{}
+}
+
+// newEventUID mints an event UID for a client that sends none.
+func newEventUID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("eas-%d@linchange", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b) + "@linchange"
+}
+
+// basicICal builds the iCalendar document for an event a client created without
+// carrying one, so the stored row keeps a document another client can read.
+func basicICal(uid string, start, end time.Time, summary, location string) []byte {
+	var b strings.Builder
+	b.WriteString("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//linchange//EAS//EN\r\nBEGIN:VEVENT\r\n")
+	b.WriteString("UID:" + uid + "\r\n")
+	b.WriteString("DTSTART:" + start.UTC().Format("20060102T150405Z") + "\r\n")
+	b.WriteString("DTEND:" + end.UTC().Format("20060102T150405Z") + "\r\n")
+	b.WriteString("SUMMARY:" + escapeICal(summary) + "\r\n")
+	if location != "" {
+		b.WriteString("LOCATION:" + escapeICal(location) + "\r\n")
+	}
+	b.WriteString("END:VEVENT\r\nEND:VCALENDAR\r\n")
+	return []byte(b.String())
+}
+
+// escapeICal writes a text value the way RFC 5545 requires: commas, semicolons
+// and newlines escaped, so a meeting titled "Kickoff, phase 2" survives the round
+// trip.
+func escapeICal(text string) string {
+	out := strings.ReplaceAll(text, "\\", "\\\\")
+	out = strings.ReplaceAll(out, ",", "\\,")
+	out = strings.ReplaceAll(out, ";", "\\;")
+	out = strings.ReplaceAll(out, "\n", "\\n")
+	return out
 }
 
 // readItems reads a folder's items as render triples. A mail folder returns its
@@ -1567,7 +1792,21 @@ func (e *EAS) cmdMeetingResponse(c *call, w *WBXMLWriter) *easErr {
 		// the calendar row and the event's UID.
 		calendarID := request.TextOf("CalendarId")
 		uid := eventUIDFromServerID(calendarID)
-		partstat := meetingPartstat(asInt(request.FindChild("MeetingResponse"), -1))
+		// Per MS-ASCMD the answer arrives as UserResponse: 1 accept, 2 decline,
+		// 3 tentative. A client that names the answer by its element instead
+		// (Accept, Decline, Tentative) gets the same treatment.
+		code := asInt(request.FindChild("UserResponse"), -1)
+		if code < 0 {
+			switch {
+			case request.FindChild("Accept") != nil:
+				code = 1
+			case request.FindChild("Decline") != nil:
+				code = 2
+			case request.FindChild("Tentative") != nil:
+				code = 3
+			}
+		}
+		partstat := meetingPartstat(code)
 		if uid != "" && partstat != "" {
 			if _, err := store.NewEvents().SetPartStat(c.ctx, e.db, uid, c.owner(), partstat); err != nil {
 				e.log.WarnContext(c.ctx, "eas: MeetingResponse could not record the answer",
@@ -1626,25 +1865,160 @@ func eventUIDFromServerID(serverID string) string {
 
 // cmdSearch answers a Search.
 //
-// A client searches by naming a store and a query, and the answer is a list of
-// results or an empty one. This server exposes no directory to search yet, so
-// the answer is the empty list: a successful search that matched nothing. It is
-// an answer a client understands, rather than an error a client reports as a
-// broken account.
+// A client searches by naming a store and a query, and the answer is the list of
+// items the query matched. The query is read as the tree it is: And, Or and
+// FreeText nodes combine the way they mean, and a query that is bare text is a
+// free-text search for that text, which is what typing one word into a search
+// box means. A query that names a collection searches that folder; one that
+// names no collection searches every folder the owner has. The results are
+// rendered as items with the same properties a Sync carries, so a client that
+// finds a message here opens it the way it opens one it synced.
 func (e *EAS) cmdSearch(c *call, w *WBXMLWriter) *easErr {
-	if c.root.FindDescendant("Store") == nil {
+	storeEl := c.root.FindDescendant("Store")
+	if storeEl == nil {
 		return e.badRequest("a Search names no store")
 	}
-	w.Start(nsSearch, "Search")
+	query := storeEl.FindChild("Query")
+
+	var folderIDs []int64
+	if col := query.FindDescendant("CollectionId"); col != nil {
+		kind, id, ok := parseServerID(col.Text)
+		if !ok || kind != kindMailbox {
+			return &easErr{status: 6003, http: http.StatusOK, text: "the Search names a folder it does not know"}
+		}
+		folderIDs = []int64{id}
+	}
+
+	offset, limit := searchRange(storeEl.FindChild("Options"))
+	page, err := e.messages.Query(c.ctx, e.db, imapd.MailQuery{
+		Owner:     c.owner(),
+		FolderIDs: folderIDs,
+		Filter:    searchFilter(query),
+		Limit:     limit,
+		Skip:      offset,
+		Count:     true,
+	})
+	if err != nil {
+		return e.dbErr("Search", c.ctx, err)
+	}
+
+	matched := make([]webmail.Message, 0, len(page.Messages))
+	ids := make([]int64, 0, len(page.Messages))
+	for i := range page.Messages {
+		m := webmail.MessageFromRow(page.Messages[i])
+		matched = append(matched, m)
+		ids = append(ids, m.ID)
+	}
+	recips, err := e.mail.Recipients(c.ctx, c.owner(), ids)
+	if err != nil {
+		return e.dbErr("Search", c.ctx, err)
+	}
+
+	_ = w.Start(nsSearch, "Search")
 	_ = w.Leaf(nsSearch, "Status", "1")
 	w.Start(nsSearch, "Response")
 	w.Start(nsSearch, "Store")
 	_ = w.Leaf(nsSearch, "Status", "1")
-	_ = w.Leaf(nsSearch, "Total", "0")
+	for _, m := range matched {
+		ra := recips[m.ID]
+		w.Start(nsSearch, "Result")
+		_ = w.Leaf(nsAirSync, "Class", "Email")
+		_ = w.Leaf(nsSearch, "LongId", strconv.FormatInt(m.ID, 10))
+		_ = w.Leaf(nsAirSync, "CollectionId", strconv.FormatInt(m.FolderID, 10))
+		w.Start(nsSearch, "Properties")
+		e.writeMessageProperties(w, c, m, displayAddresses(ra.To), displayAddresses(ra.Cc))
+		w.End() // Properties
+		w.End() // Result
+	}
+	// The range is what the client asked for and got; with no results there is
+	// no range to report, and inventing one would read as a result at position 0.
+	if len(matched) > 0 {
+		_ = w.Leaf(nsSearch, "Range", fmt.Sprintf("%d-%d", offset, offset+len(matched)-1))
+	}
+	_ = w.Leaf(nsSearch, "Total", strconv.Itoa(page.Total))
 	w.End() // Store
 	w.End() // Response
 	w.End() // Search
 	return nil
+}
+
+// searchRange reads the Range option, "start-end" inclusive, and defaults to the
+// first hundred results, which is what a client that names no range wants. The
+// limit is clamped to the store's page size.
+func searchRange(options *WBXMLNode) (int, int) {
+	offset, end := 0, 99
+	if options != nil {
+		if r := options.TextOf("Range"); r != "" {
+			parts := strings.SplitN(r, "-", 2)
+			if n, err := strconv.Atoi(parts[0]); err == nil {
+				offset = n
+			}
+			if len(parts) > 1 {
+				if n, err := strconv.Atoi(parts[1]); err == nil {
+					end = n
+				}
+			}
+		}
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if end < offset {
+		end = offset
+	}
+	if end-offset+1 > imapd.MaxMailQueryLimit {
+		return offset, imapd.MaxMailQueryLimit
+	}
+	return offset, end - offset + 1
+}
+
+// searchFilter turns the query tree into the filter tree the message store
+// speaks. A node that is neither a conjunction nor FreeText is read as its text,
+// so a client that asks for a header is at least not answered with nothing.
+func searchFilter(node *WBXMLNode) *imapd.MailFilter {
+	if node == nil {
+		return imapd.All()
+	}
+	switch node.Name {
+	case "And":
+		var kids []*imapd.MailFilter
+		for _, kid := range node.Children {
+			if kid.Name == "CollectionId" {
+				continue // the folder is already part of the query
+			}
+			kids = append(kids, searchFilter(kid))
+		}
+		return imapd.And(kids...)
+	case "Or":
+		var kids []*imapd.MailFilter
+		for _, kid := range node.Children {
+			kids = append(kids, searchFilter(kid))
+		}
+		return imapd.Or(kids...)
+	case "Query":
+		// The Query element itself is a wrapper: some clients put the
+		// conjunction straight inside it, others put bare text.
+		if len(node.Children) == 0 {
+			if strings.TrimSpace(node.Text) != "" {
+				return imapd.Leaf(&imapd.MailTerms{Text: node.Text})
+			}
+			return imapd.All()
+		}
+		var kids []*imapd.MailFilter
+		for _, kid := range node.Children {
+			kids = append(kids, searchFilter(kid))
+		}
+		return imapd.And(kids...)
+	case "FreeText":
+		return imapd.Leaf(&imapd.MailTerms{Text: node.Text})
+	case "EqualTo":
+		return imapd.Leaf(&imapd.MailTerms{Text: node.TextOf("Value")})
+	default:
+		if strings.TrimSpace(node.Text) != "" {
+			return imapd.Leaf(&imapd.MailTerms{Text: node.Text})
+		}
+		return imapd.All()
+	}
 }
 
 // ---------------------------------------------------------------------------

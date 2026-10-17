@@ -1093,3 +1093,285 @@ func TestSyncAppliesAReadFlag(t *testing.T) {
 		t.Errorf("the message is not marked read: flags %v", flags)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+// searchRequest is a Search of one folder (or of the whole mailbox when no
+// folder is named) for a free-text term.
+func searchRequest(collectionID, query string) []byte {
+	w := NewWBXMLWriter()
+	_ = w.Start(nsSearch, "Search")
+	_ = w.Start(nsSearch, "Store")
+	_ = w.Leaf(nsSearch, "Name", "Mailbox")
+	_ = w.Start(nsSearch, "Query")
+	_ = w.Start(nsSearch, "And")
+	if collectionID != "" {
+		_ = w.Leaf(nsAirSync, "CollectionId", collectionID)
+	}
+	_ = w.Leaf(nsSearch, "FreeText", query)
+	w.End() // And
+	w.End() // Query
+	_ = w.Start(nsSearch, "Options")
+	_ = w.Leaf(nsSearch, "Range", "0-9")
+	w.End() // Options
+	w.End() // Store
+	w.End() // Search
+	return w.Bytes()
+}
+
+// A Search finds the messages the query matches, reports the total, and
+// renders each result with the properties a Sync item carries, so a client
+// that finds a message here opens it the way it opens one it synced.
+func TestSearchFindsMatchingMessages(t *testing.T) {
+	ts := newTestService(t)
+	inbox := strconv.FormatInt(ts.folderID(t, "INBOX"), 10)
+
+	ts.deliver(t, ts.folderID(t, "INBOX"), "Quarterly presentation deck", "figures for the quarter", "deck-1", nil)
+	ts.deliver(t, ts.folderID(t, "INBOX"), "Lunch in the kitchen", "sandwiches at noon", "lunch-1", nil)
+	ts.deliver(t, ts.folderID(t, "Archive"), "Presentation archive", "old slides", "arch-1", nil)
+
+	rr := ts.post(t, searchRequest(inbox, "presentation"))
+	root := decodeRoot(t, rr)
+	if root.Name != "Search" {
+		t.Fatalf("root = %s, want Search", root.Name)
+	}
+	if got := root.TextDescendant("Status"); got != "1" {
+		t.Fatalf("Status = %s, want 1", got)
+	}
+	if got := root.TextDescendant("Total"); got != "1" {
+		t.Fatalf("Total = %s, want 1: the Inbox holds one presentation", got)
+	}
+	results := root.FindDescendant("Store").FindChildren("Result")
+	if len(results) != 1 {
+		t.Fatalf("got %d Result elements, want 1", len(results))
+	}
+	if got := results[0].TextDescendant("Subject"); got != "Quarterly presentation deck" {
+		t.Errorf("result Subject = %q, want the deck", got)
+	}
+
+	// A query that names no folder searches every folder the owner has.
+	rr = ts.post(t, searchRequest("", "presentation"))
+	root = decodeRoot(t, rr)
+	if got := root.TextDescendant("Total"); got != "2" {
+		t.Fatalf("Total = %s, want 2: the archive holds the other presentation", got)
+	}
+
+	// A term nothing contains matches nothing, and says so rather than failing.
+	rr = ts.post(t, searchRequest(inbox, "zzzz-no-such-term"))
+	root = decodeRoot(t, rr)
+	if got := root.TextDescendant("Total"); got != "0" {
+		t.Fatalf("Total = %s, want 0", got)
+	}
+	if len(root.FindDescendant("Store").FindChildren("Result")) != 0 {
+		t.Error("a query that matched nothing must carry no Result elements")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Sync uploads: Delete, calendar Add, MeetingResponse
+// ---------------------------------------------------------------------------
+
+// syncDeleteRequest deletes one item from one folder.
+func syncDeleteRequest(folderID, syncKey, serverID string) []byte {
+	w := NewWBXMLWriter()
+	_ = w.Start(nsAirSync, "Sync")
+	_ = w.Leaf(nsAirSync, "ClientId", "test-client")
+	_ = w.Start(nsAirSync, "Collections")
+	_ = w.Start(nsAirSync, "Collection")
+	_ = w.Leaf(nsAirSync, "CollectionId", folderID)
+	_ = w.Leaf(nsAirSync, "SyncKey", syncKey)
+	_ = w.Start(nsAirSync, "Commands")
+	_ = w.Start(nsAirSync, "Delete")
+	_ = w.Leaf(nsAirSync, "ServerId", serverID)
+	w.End() // Delete
+	w.End() // Commands
+	w.End() // Collection
+	w.End() // Collections
+	w.End() // Sync
+	return w.Bytes()
+}
+
+// folderCreateRequest creates a folder of the given type.
+func folderCreateRequest(name, typ string) []byte {
+	w := NewWBXMLWriter()
+	_ = w.Start(nsFolderHierarchy, "FolderCreate")
+	_ = w.Leaf(nsFolderHierarchy, "DisplayName", name)
+	_ = w.Leaf(nsFolderHierarchy, "Type", typ)
+	w.End()
+	return w.Bytes()
+}
+
+// calendarAddRequest adds an appointment to a calendar folder.
+func calendarAddRequest(calendarID, syncKey, subject, start, end string) []byte {
+	w := NewWBXMLWriter()
+	_ = w.Start(nsAirSync, "Sync")
+	_ = w.Leaf(nsAirSync, "ClientId", "test-client")
+	_ = w.Start(nsAirSync, "Collections")
+	_ = w.Start(nsAirSync, "Collection")
+	_ = w.Leaf(nsAirSync, "CollectionId", calendarID)
+	_ = w.Leaf(nsAirSync, "SyncKey", syncKey)
+	_ = w.Start(nsAirSync, "Commands")
+	_ = w.Start(nsAirSync, "Add")
+	_ = w.Start(nsAirSync, "ApplicationData")
+	_ = w.Leaf(nsCalendar, "Subject", subject)
+	_ = w.Leaf(nsCalendar, "StartTime", start)
+	_ = w.Leaf(nsCalendar, "EndTime", end)
+	w.End() // ApplicationData
+	w.End() // Add
+	w.End() // Commands
+	w.End() // Collection
+	w.End() // Collections
+	w.End() // Sync
+	return w.Bytes()
+}
+
+// meetingResponseRequest answers one meeting with the UserResponse code the
+// spec defines: 1 accept, 2 decline, 3 tentative.
+func meetingResponseRequest(calendarID string, answer int) []byte {
+	w := NewWBXMLWriter()
+	_ = w.Start(nsMeetingResponse, "MeetingResponse")
+	_ = w.Start(nsMeetingResponse, "Request")
+	_ = w.Leaf(nsMeetingResponse, "CalendarId", calendarID)
+	_ = w.Leaf(nsMeetingResponse, "UserResponse", strconv.Itoa(answer))
+	w.End() // Request
+	w.End() // MeetingResponse
+	return w.Bytes()
+}
+
+// A Sync Delete moves a message to Trash, and a Delete of a message already in
+// Trash destroys it: that is what a client means by delete and by empty, and
+// the folder's next sync reports the item as gone either way.
+func TestSyncDeleteMovesMailToTrashAndPurgesFromTrash(t *testing.T) {
+	ts := newTestService(t)
+	inbox := ts.folderID(t, "INBOX")
+	trash := ts.folderID(t, "Trash")
+	ts.deliver(t, inbox, "A message to delete", "the body", "del-1", nil)
+
+	rr := ts.post(t, syncRequest(strconv.FormatInt(inbox, 10), ""))
+	coll := decodeRoot(t, rr).FindDescendant("Collection")
+	key := coll.TextOf("SyncKey")
+	serverID := serverIDOfSubject(t, syncAdds(coll), "A message to delete")
+
+	rr = ts.post(t, syncDeleteRequest(strconv.FormatInt(inbox, 10), key, serverID))
+	coll = decodeRoot(t, rr).FindDescendant("Collection")
+	if got := coll.TextOf("Status"); got != "1" {
+		t.Fatalf("the delete came back with Status %s, want 1", got)
+	}
+
+	var folderID int64
+	if err := ts.db.GetContext(context.Background(), &folderID,
+		`SELECT mailbox_id FROM messages WHERE id = $1`, serverID); err != nil {
+		t.Fatalf("finding the message after the delete: %v", err)
+	}
+	if folderID != trash {
+		t.Fatalf("the message is in folder %d, want Trash (%d)", folderID, trash)
+	}
+
+	// The Inbox's next sync reports the item as deleted.
+	rr = ts.post(t, syncRequest(strconv.FormatInt(inbox, 10), key))
+	coll = decodeRoot(t, rr).FindDescendant("Collection")
+	if _, ok := syncDeletes(coll)[serverID]; !ok {
+		t.Errorf("the Inbox sync does not report the deletion of %s", serverID)
+	}
+
+	// Deleting it again, from Trash, destroys the row.
+	rr = ts.post(t, syncRequest(strconv.FormatInt(trash, 10), ""))
+	trashKey := decodeRoot(t, rr).FindDescendant("Collection").TextOf("SyncKey")
+	rr = ts.post(t, syncDeleteRequest(strconv.FormatInt(trash, 10), trashKey, serverID))
+	decodeRoot(t, rr)
+
+	var count int
+	if err := ts.db.GetContext(context.Background(), &count,
+		`SELECT count(*) FROM messages WHERE id = $1`, serverID); err != nil {
+		t.Fatalf("counting the message after purging: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("the message still exists after a delete in Trash")
+	}
+}
+
+// A Sync Add on a calendar folder creates a real event, and a MeetingResponse
+// records the answer on it. The spec's answer field is UserResponse, so that
+// is what the server reads, and the answer echoes back with the meeting's id.
+func TestCalendarSyncAddCreatesAnEventAndMeetingResponseAnswersIt(t *testing.T) {
+	ts := newTestService(t)
+
+	rr := ts.post(t, folderCreateRequest("Team calendar", "13"))
+	root := decodeRoot(t, rr)
+	if root.TextOf("Status") != "1" {
+		t.Fatalf("FolderCreate Status = %s, want 1", root.TextOf("Status"))
+	}
+	calID := root.TextOf("ServerId")
+	if !strings.HasPrefix(calID, "cal") {
+		t.Fatalf("the calendar ServerId is %q, want it to start with cal", calID)
+	}
+
+	rr = ts.post(t, syncRequest(calID, ""))
+	coll := decodeRoot(t, rr).FindDescendant("Collection")
+	key := coll.TextOf("SyncKey")
+
+	rr = ts.post(t, calendarAddRequest(calID, key, "Kickoff, phase 2", "20260115T090000", "20260115T100000"))
+	coll = decodeRoot(t, rr).FindDescendant("Collection")
+	adds := syncAdds(coll)
+	if len(adds) != 1 {
+		t.Fatalf("the sync created %d events, want 1", len(adds))
+	}
+	eventID := serverIDOfSubject(t, adds, "Kickoff, phase 2")
+
+	rr = ts.post(t, meetingResponseRequest(eventID, 1))
+	root = decodeRoot(t, rr)
+	if root.Name != "MeetingResponse" {
+		t.Fatalf("root = %s, want MeetingResponse", root.Name)
+	}
+	result := root.FindChild("Result")
+	if result == nil {
+		t.Fatal("the MeetingResponse carries no Result")
+	}
+	if got := result.TextOf("Status"); got != "1" {
+		t.Errorf("Result Status = %s, want 1", got)
+	}
+	if got := result.TextOf("CalendarId"); got != eventID {
+		t.Errorf("Result CalendarId = %q, want %q", got, eventID)
+	}
+
+	var partstat string
+	if err := ts.db.GetContext(context.Background(), &partstat,
+		`SELECT a.partstat FROM attendees a JOIN events e ON e.id = a.event_id
+		 WHERE e.summary = $1 AND a.address = $2`, "Kickoff, phase 2", testOwner); err != nil {
+		t.Fatalf("reading the attendance: %v", err)
+	}
+	if partstat != "ACCEPTED" {
+		t.Errorf("the organizer's partstat is %q, want ACCEPTED", partstat)
+	}
+}
+
+// A calendar that belongs to somebody else is not synced: a ServerId is a
+// row id, and knowing it is not owning it.
+func TestSyncRefusesAnotherOwnersCalendar(t *testing.T) {
+	ts := newTestService(t)
+
+	ctx := context.Background()
+	other := "mallory@example.test"
+	if err := store.NewUsers().Create(ctx, ts.db, store.CreateUserRequest{Address: other, Source: "local"}); err != nil {
+		t.Fatalf("creating the other account: %v", err)
+	}
+	cal, err := store.NewCalendars().Create(ctx, ts.db, store.CreateCalendarRequest{Owner: &other, Name: "Mallory's calendar"})
+	if err != nil {
+		t.Fatalf("creating the other calendar: %v", err)
+	}
+
+	rr := ts.post(t, syncRequest("cal"+strconv.FormatInt(cal.ID, 10), ""))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 with a status in the body", rr.Code)
+	}
+	dec := NewWBXMLDecoder(rr.Body.Bytes())
+	root, err := dec.Decode()
+	if err != nil {
+		t.Fatalf("decoding the answer: %v", err)
+	}
+	if got := root.TextDescendant("Status"); got == "1" {
+		t.Error("a Sync of another owner's calendar succeeded; it must not")
+	}
+}
