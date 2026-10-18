@@ -199,6 +199,17 @@ func (s *Service) Folders(ctx context.Context, owner string) ([]Folder, error) {
 	return out, nil
 }
 
+// EnsureFolders creates the standard folder set for an owner when it does not
+// exist yet.
+//
+// Delivery does this for every message it files, but a shared mailbox can be
+// opened by a member before its first message arrives, and a member who is
+// shown a mailbox with no folders cannot file anything in it. The call is
+// idempotent, so asking on every read costs a no-op rather than a duplicate.
+func (s *Service) EnsureFolders(ctx context.Context, owner string) error {
+	return s.mailboxes.EnsureFolders(ctx, s.db, owner)
+}
+
 // CreateFolder makes a new folder for an owner.
 //
 // The name is checked against the folder that already exists rather than

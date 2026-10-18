@@ -59,7 +59,7 @@ type Store struct {
 	// mu guards the per-shard mkdir cache, so that a burst of concurrent
 	// writes to the same shard does not each perform a stat.
 	mu         sync.Mutex
-	madeShards map[byte]bool
+	madeShards map[uint16]bool
 }
 
 // Open prepares the store root, creating it if necessary.
@@ -80,7 +80,7 @@ func Open(opts Options) (*Store, error) {
 		root:       opts.Root,
 		fileMode:   opts.FileMode,
 		dirMode:    opts.DirMode,
-		madeShards: make(map[byte]bool, 256),
+		madeShards: make(map[uint16]bool, 1024),
 	}, nil
 }
 
@@ -130,8 +130,13 @@ func (s *Store) path(d Digest) string {
 }
 
 // ensureShard creates the directory for d's shard if it does not exist.
+//
+// The remembered shards are the two-byte prefixes, not the leading byte:
+// marking a whole leading byte as made after creating one of its 256
+// subdirectories would leave the other 255 missing and every later write to
+// them would fail.
 func (s *Store) ensureShard(d Digest) error {
-	shard := d[0]
+	shard := uint16(d[0])<<8 | uint16(d[1])
 	s.mu.Lock()
 	if s.madeShards[shard] {
 		s.mu.Unlock()
@@ -139,7 +144,7 @@ func (s *Store) ensureShard(d Digest) error {
 	}
 	s.mu.Unlock()
 
-	dir := filepath.Join(s.root, fmt.Sprintf("%02x", shard), fmt.Sprintf("%02x", d[1]))
+	dir := filepath.Join(s.root, fmt.Sprintf("%02x", d[0]), fmt.Sprintf("%02x", d[1]))
 	if err := os.MkdirAll(dir, s.dirMode); err != nil {
 		return fmt.Errorf("blobstore: creating shard %s: %w", dir, err)
 	}

@@ -66,13 +66,18 @@ const (
 // first element names the operation. Everything else is preserved as raw XML so
 // that each operation can decode the shape it needs without this type having to
 // know every argument of every operation.
+//
+// Header and Body are matched by local name rather than by namespace because
+// MS-OXECWS §2.2.1 permits both SOAP 1.1 and SOAP 1.2 envelopes: Outlook 2021
+// sends the 1.2 namespace for some operations, and a parser keyed to the 1.1
+// namespace alone reads that envelope as having no body at all.
 type SOAPEnvelope struct {
-	XMLName   xml.Name    `xml:"http://schemas.xmlsoap.org/soap/envelope/ Envelope"`
+	XMLName   xml.Name    `xml:"Envelope"`
 	XmlnsSoap string      `xml:"xmlns:soap,attr"`
 	XmlnsT    string      `xml:"xmlns:t,attr"`
 	XmlnsM    string      `xml:"xmlns:m,attr"`
-	Header    *SOAPHeader `xml:"http://schemas.xmlsoap.org/soap/envelope/ Header,omitempty"`
-	Body      *SOAPBody   `xml:"http://schemas.xmlsoap.org/soap/envelope/ Body"`
+	Header    *SOAPHeader `xml:"Header,omitempty"`
+	Body      *SOAPBody   `xml:"Body"`
 }
 
 type SOAPHeader struct {

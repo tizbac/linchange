@@ -72,6 +72,7 @@ func (e *EWS) collectFrom(c *call, folder container, q *aqsQuery, sh shape,
 			kind:      "Message",
 			container: summary.FolderID,
 			id:        summary.ID,
+			owner:     folder.mailOwner(c.owner()),
 			message:   &summary,
 			class:     itemClassOf(summary),
 		})
@@ -82,7 +83,7 @@ func (e *EWS) collectFrom(c *call, folder container, q *aqsQuery, sh shape,
 	// read a body; a GetItem that asked for the body reads exactly one.
 	if sh.wantsBody() && len(out) > 0 {
 		for _, v := range out {
-			detail, derr := e.mail.Message(c.ctx(), c.owner(), v.id)
+			detail, derr := e.mail.Message(c.ctx(), v.owner, v.id)
 			if derr != nil {
 				// One unreadable message is skipped rather than failing the
 				// page: the others are still readable, and a client that got a
@@ -105,7 +106,7 @@ func (e *EWS) mailQuery(c *call, folder container, q *aqsQuery, offset, limit in
 	fromEnd bool) *imapd.MailQuery {
 
 	out := &imapd.MailQuery{
-		Owner:     c.owner(),
+		Owner:     folder.mailOwner(c.owner()),
 		FolderIDs: []int64{folder.id},
 		Limit:     limit,
 		Count:     true,
@@ -285,11 +286,11 @@ func (e *EWS) calendarsFor(c *call) ([]store.Calendar, *soapError) {
 }
 
 // readRecipients reads the header addresses for a page of messages in one query.
-func (e *EWS) readRecipients(c *call, ids []int64) (map[int64]webmail.HeaderAddresses, *soapError) {
+func (e *EWS) readRecipients(c *call, owner string, ids []int64) (map[int64]webmail.HeaderAddresses, *soapError) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	out, err := e.mail.Recipients(c.ctx(), c.owner(), ids)
+	out, err := e.mail.Recipients(c.ctx(), owner, ids)
 	if err != nil {
 		return nil, e.internal("FindItem", err)
 	}
@@ -300,11 +301,11 @@ func (e *EWS) readRecipients(c *call, ids []int64) (map[int64]webmail.HeaderAddr
 //
 // It goes through the batch reader so that a GetItem and a FindItem take the same
 // path and cannot disagree about which addresses a message has.
-func (e *EWS) recipientsFor(c *call, ids []int64) webmail.HeaderAddresses {
+func (e *EWS) recipientsFor(c *call, owner string, ids []int64) webmail.HeaderAddresses {
 	if len(ids) == 0 {
 		return webmail.HeaderAddresses{}
 	}
-	out, err := e.mail.Recipients(c.ctx(), c.owner(), ids)
+	out, err := e.mail.Recipients(c.ctx(), owner, ids)
 	if err != nil || len(out) == 0 {
 		return webmail.HeaderAddresses{}
 	}

@@ -257,6 +257,9 @@ export class MailReaderComponent {
 
   readonly selection = input.required<MailSelection>();
   readonly folders = input.required<Folder[]>();
+  // owner names the shared mailbox the selection belongs to, when the message
+  // is not in the caller's own mail.
+  readonly owner = input<string | undefined>();
   readonly changed = output<void>();
   readonly closed = output<void>();
 
@@ -307,21 +310,22 @@ export class MailReaderComponent {
     this.loading.set(true);
     try {
       if (sel.kind === 'message') {
-        const d = await this.api.get(sel.id);
+        const d = await this.api.get(sel.id, this.owner());
         if (seq !== this.loadSeq) return;
         this.detail.set(d);
         this.thread.set([]);
         this.mode.set('message');
         this.loading.set(false);
         // Opening is what marks it read; the server does not, and the list
-        // learns about it through changed.
-        if (!hasFlag(d.flags, FLAG_SEEN)) {
+        // learns about it through changed. Shared mail is read-only here, so
+        // no read state is written under someone else's mailbox.
+        if (!this.owner() && !hasFlag(d.flags, FLAG_SEEN)) {
           await this.api.markRead(sel.id, true).catch(() => undefined);
           this.changed.emit();
         }
         void this.renderBody(d);
       } else if (sel.kind === 'thread') {
-        const res = await this.api.thread(sel.key);
+        const res = await this.api.thread(sel.key, this.owner());
         if (seq !== this.loadSeq) return;
         this.thread.set(res.messages);
         this.detail.set(null);
@@ -350,7 +354,7 @@ export class MailReaderComponent {
     await Promise.all(
       images.map(async (img) => {
         try {
-          const blob = await this.api.inlineImage(d.id, img.content_id);
+          const blob = await this.api.inlineImage(d.id, img.content_id, this.owner());
           swapped.push([img.content_id, await this.toDataUrl(blob)]);
         } catch {
           // A part that will not load degrades to a broken reference inside
@@ -467,6 +471,18 @@ export class MailReaderComponent {
 
   // --- message actions ---------------------------------------------------------
 
+  // Shared mail is read-only in this interface: the write routes check the
+  // caller's own ownership, so mutating someone else's mailbox is refused. The
+  // actions are guarded rather than attempted, so the reader says so plainly
+  // instead of surfacing a server refusal.
+  private refusesSharedWrites(): boolean {
+    if (this.owner()) {
+      this.error.set('Shared mail is read-only here.');
+      return true;
+    }
+    return false;
+  }
+
   protected onMoveSelect(event: Event): void {
     const value = (event.target as HTMLSelectElement).value;
     void this.moveTo(value);
@@ -476,6 +492,7 @@ export class MailReaderComponent {
     const d = this.detail();
     const id = Number(folderId);
     if (!d || !id) return;
+    if (this.refusesSharedWrites()) return;
     this.busy.set(true);
     this.error.set('');
     try {
@@ -492,6 +509,7 @@ export class MailReaderComponent {
   protected async trash(): Promise<void> {
     const d = this.detail();
     if (!d) return;
+    if (this.refusesSharedWrites()) return;
     this.busy.set(true);
     this.error.set('');
     try {
@@ -509,6 +527,7 @@ export class MailReaderComponent {
     const d = this.detail();
     if (!d) return;
     if (!confirm('Delete this message permanently? This cannot be undone.')) return;
+    if (this.refusesSharedWrites()) return;
     this.busy.set(true);
     this.error.set('');
     try {
@@ -525,6 +544,7 @@ export class MailReaderComponent {
   protected async toggleRead(): Promise<void> {
     const d = this.detail();
     if (!d) return;
+    if (this.refusesSharedWrites()) return;
     const read = !hasFlag(d.flags, FLAG_SEEN);
     this.busy.set(true);
     this.error.set('');
@@ -542,6 +562,7 @@ export class MailReaderComponent {
   protected async toggleFlag(): Promise<void> {
     const d = this.detail();
     if (!d) return;
+    if (this.refusesSharedWrites()) return;
     const set = !hasFlag(d.flags, FLAG_FLAGGED);
     this.busy.set(true);
     this.error.set('');
@@ -558,7 +579,7 @@ export class MailReaderComponent {
   private async reload(): Promise<void> {
     const d = this.detail();
     if (!d) return;
-    const fresh = await this.api.get(d.id);
+    const fresh = await this.api.get(d.id, this.owner());
     this.detail.set(fresh);
   }
 
@@ -568,7 +589,7 @@ export class MailReaderComponent {
     this.busy.set(true);
     this.error.set('');
     try {
-      await this.download(await this.api.raw(d.id), `${d.subject || String(d.id)}.eml`);
+      await this.download(await this.api.raw(d.id, this.owner()), `${d.subject || String(d.id)}.eml`);
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {
@@ -582,7 +603,7 @@ export class MailReaderComponent {
     this.busy.set(true);
     this.error.set('');
     try {
-      await this.download(await this.api.attachment(d.id, a.index), a.filename);
+      await this.download(await this.api.attachment(d.id, a.index, this.owner()), a.filename);
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {

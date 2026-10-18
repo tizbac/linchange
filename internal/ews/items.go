@@ -197,15 +197,25 @@ func (e *EWS) findItem(c *call) responseCode {
 	if sh.anyOf("message:to", "message:cc", "message:bcc", "message:displayto",
 		"message:displaycc", "message:displaybcc", "message:replyto",
 		"message:from", "message:sender") || sh.all() {
-		ids := make([]int64, 0, len(items))
+		// The page can span mailboxes -- a caller's own folder and a shared
+		// mailbox folder in one request -- and the address query is scoped to one
+		// owner, so ids are grouped by the mailbox that holds them rather than
+		// read as if one mailbox held the whole page.
+		byOwner := map[string][]int64{}
 		for _, v := range items {
 			if v.message != nil {
-				ids = append(ids, v.id)
+				byOwner[v.mailOwner(c.owner())] = append(byOwner[v.mailOwner(c.owner())], v.id)
 			}
 		}
-		recipients, serr := e.readRecipients(c, ids)
-		if serr != nil {
-			return c.faultResponse(serr)
+		recipients := map[int64]webmail.HeaderAddresses{}
+		for owner, ids := range byOwner {
+			out, serr := e.readRecipients(c, owner, ids)
+			if serr != nil {
+				return c.faultResponse(serr)
+			}
+			for id, a := range out {
+				recipients[id] = a
+			}
 		}
 		for _, v := range items {
 			if a, ok := recipients[v.id]; ok {
@@ -312,7 +322,7 @@ func (e *EWS) getItem(c *call) responseCode {
 		if view.message != nil && sh.anyOf("message:to", "message:cc", "message:bcc",
 			"message:replyto", "message:from", "message:sender",
 			"message:displayto", "message:displaycc", "message:displaybcc") {
-			view.addresses = e.recipientsFor(c, []int64{view.id})
+			view.addresses = e.recipientsFor(c, view.mailOwner(c.owner()), []int64{view.id})
 		}
 		renderItem(&items, view, sh)
 	}
@@ -342,14 +352,25 @@ func (e *EWS) resolveItem(c *call, encoded string, sh shape) (*itemView, *soapEr
 	if kind == kindCalendar {
 		return e.resolveCalendarItem(c, container, item, sh)
 	}
-	detail, ferr := e.mail.Message(c.ctx(), c.owner(), item)
+	owner := c.owner()
+	detail, ferr := e.mail.Message(c.ctx(), owner, item)
 	if ferr != nil {
-		return nil, itemFault(c.responseElement(), ferr)
+		// The item is not in the caller's own mail. Before saying so, the
+		// accessible shared mailboxes are checked: an identifier handed out by
+		// the hierarchy for a shared folder names real items, and refusing them
+		// here would make the shared tree a list of folders whose contents the
+		// client is then forbidden to read.
+		if found, addr, ok := e.sharedMessage(c, item); ok {
+			detail, owner = found, addr
+		} else {
+			return nil, itemFault(c.responseElement(), ferr)
+		}
 	}
 	view := &itemView{
 		kind:      "Message",
 		container: detail.FolderID,
 		id:        detail.ID,
+		owner:     owner,
 		message:   &detail.Message,
 		class:     itemClassOf(detail.Message),
 	}
@@ -648,7 +669,7 @@ func (e *EWS) updateItem(c *call) responseCode {
 		if view.message != nil && sh.anyOf("message:to", "message:cc", "message:bcc",
 			"message:replyto", "message:from", "message:sender",
 			"message:displayto", "message:displaycc", "message:displaybcc") {
-			view.addresses = e.recipientsFor(c, []int64{view.id})
+			view.addresses = e.recipientsFor(c, view.mailOwner(c.owner()), []int64{view.id})
 		}
 		renderItem(&updated, view, sh)
 	}
@@ -1049,6 +1070,17 @@ func composeFrom(inner, from string) (webmail.ComposeRequest, error) {
 	out.Bcc = toWebmailAll(addressList(innerElement(inner, "BccRecipients")))
 	out.ReplyTo = toWebmailAll(addressList(innerElement(inner, "ReplyTo")))
 	out.Subject = innerText(inner, "Subject")
+
+	// A client composing in a shared mailbox it does not own puts that mailbox's
+	// address in From. Honouring it is what makes send-as work; whether the
+	// caller is entitled to write under that address is decided by the composer,
+	// which checks the grant before the message is built. The address is read
+	// from the Mailbox child rather than the element's own text, because the
+	// From element carries no text of its own -- the address lives one level
+	// down, exactly like the recipient lists above.
+	if requested := strings.TrimSpace(innerText(innerElement(inner, "From"), "EmailAddress")); requested != "" {
+		out.From = requested
+	}
 
 	// The body arrives as <t:Body> or <t:Body BodyType="HTML">. Reading the
 	// element's own text gives either, and the BodyType attribute is what says

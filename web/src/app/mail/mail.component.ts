@@ -94,7 +94,7 @@ interface ListData {
                 @for (f of sharedFolders().get(s.address) || []; track f.id) {
                   <button
                     class="w-full flex items-center gap-2 ml-6 rounded-lg px-2 py-1.5 text-sm text-slate-600 hover:bg-slate-50 transition"
-                    (click)="selectFolder(f)"
+                    (click)="selectFolder(f, s.address)"
                     [class.bg-brand-50]="selectedFolderId() === f.id"
                     [class.text-brand-700]="selectedFolderId() === f.id"
                   >
@@ -343,6 +343,7 @@ interface ListData {
       <app-mail-reader
         [selection]="selection()"
         [folders]="folders()"
+        [owner]="listOwner()"
         (changed)="refreshAll()"
         (closed)="onReaderClosed()"
       />
@@ -448,7 +449,10 @@ export class MailComponent implements OnInit {
   protected listTitle(): string {
     const q = this.searchQuery();
     if (q) return `Search: “${q}”`;
-    const f = this.folders().find((x) => x.id === this.selectedFolderId());
+    const id = this.selectedFolderId();
+    const f =
+      this.folders().find((x) => x.id === id) ??
+      [...this.sharedFolders().values()].flatMap((folders) => folders).find((x) => x.id === id);
     return f ? f.name : 'Mail';
   }
 
@@ -461,9 +465,9 @@ export class MailComponent implements OnInit {
     }
   }
 
-  protected selectFolder(f: Folder): void {
+  protected selectFolder(f: Folder, shared?: string): void {
     this.selectedFolderId.set(f.id);
-    this.selectedShared.set(null);
+    this.selectedShared.set(shared ?? null);
     this.searchQuery.set(null);
     this.searchInput = '';
     this.unreadOnly.set(false);
@@ -475,28 +479,32 @@ export class MailComponent implements OnInit {
   }
 
   protected async selectShared(s: SharedMailbox): Promise<void> {
-    this.selectedShared.set(s.address);
-    this.selectedFolderId.set(null);
-    this.searchQuery.set(null);
-    this.searchInput = '';
-    this.unreadOnly.set(false);
-    this.flaggedOnly.set(false);
-    this.viewMode.set('messages');
-    this.selectedIds.set([]);
-    this.selection.set({ kind: 'none' });
-
-    const cached = this.sharedFolders().get(s.address);
-    if (cached) {
-      // Folders already loaded
-    } else {
+    let folders = this.sharedFolders().get(s.address);
+    if (!folders) {
       try {
         const res = await this.api.listFolders(s.address);
-        const folders = res.folders ?? [];
-        this.sharedFolders.update(m => new Map(m).set(s.address, folders));
+        const fresh = res.folders ?? [];
+        this.sharedFolders.update((m) => new Map(m).set(s.address, fresh));
+        folders = fresh;
       } catch (err) {
         this.error.set(errorMessage(err));
+        return;
       }
     }
+    const inbox = folders.find((f) => f.name.toUpperCase() === 'INBOX') ?? folders[0];
+    if (inbox) {
+      this.selectFolder(inbox, s.address);
+    } else {
+      this.selectedShared.set(s.address);
+      this.selectedFolderId.set(null);
+    }
+  }
+
+  // listOwner is the shared mailbox the current folder belongs to, or undefined
+  // when the list is the caller's own mail. Read endpoints accept it as an
+  // ?owner= parameter and check the caller's grant before handing out mail.
+  protected listOwner(): string | undefined {
+    return this.selectedShared() ?? undefined;
   }
 
   protected switchView(mode: 'messages' | 'threads'): void {
@@ -607,6 +615,7 @@ export class MailComponent implements OnInit {
     const seq = ++this.listSeq;
     const q = this.searchQuery();
     const folderId = this.selectedFolderId();
+    const owner = this.listOwner();
     const done = (fn: () => void): void => {
       if (seq === this.listSeq) fn();
     };
@@ -615,7 +624,7 @@ export class MailComponent implements OnInit {
       this.listLoading.set(true);
       this.error.set('');
       try {
-        const res = await this.api.search(q, folderId ?? 0);
+        const res = await this.api.search(q, folderId ?? 0, 50, owner);
         const messages = res.messages ?? [];
         done(() => this.listData.set({ messages, total: messages.length, hasMore: false }));
       } catch (err) {
@@ -636,7 +645,7 @@ export class MailComponent implements OnInit {
       this.listLoading.set(true);
       this.error.set('');
       try {
-        const res = await this.api.listThreads(folderId);
+        const res = await this.api.listThreads(folderId, 50, owner);
         done(() => this.threads.set(res.threads ?? []));
       } catch (err) {
         done(() => this.error.set(errorMessage(err)));
@@ -656,7 +665,7 @@ export class MailComponent implements OnInit {
       if (!cur.hasMore || !cur.cursor) return;
       this.moreLoading.set(true);
       try {
-        const res = await this.api.listMessages(folderId, { ...opts, cursor: cur.cursor });
+        const res = await this.api.listMessages(folderId, { ...opts, cursor: cur.cursor, owner });
         done(() =>
           this.listData.set({
             messages: [...cur.messages, ...(res.messages ?? [])],
@@ -676,7 +685,7 @@ export class MailComponent implements OnInit {
     this.listLoading.set(true);
     this.error.set('');
     try {
-      const res = await this.api.listMessages(folderId, opts);
+      const res = await this.api.listMessages(folderId, { ...opts, owner });
       done(() =>
         this.listData.set({
           messages: res.messages ?? [],
@@ -722,8 +731,21 @@ export class MailComponent implements OnInit {
     this.selectedIds.set(checked ? [...cur, m.id] : cur.filter((x) => x !== m.id));
   }
 
+  // Shared mail is read-only in this interface: the write routes are scoped to
+  // the caller's own mailbox, so mutating a shared message is refused by the
+  // server. The actions are guarded here so the list says so plainly instead of
+  // surfacing a server refusal.
+  private refusesSharedWrites(): boolean {
+    if (this.listOwner()) {
+      this.error.set('Shared mail is read-only here.');
+      return true;
+    }
+    return false;
+  }
+
   protected async quickFlag(m: MessageSummary, event: Event): Promise<void> {
     event.stopPropagation();
+    if (this.refusesSharedWrites()) return;
     const set = !hasFlag(m.flags, FLAG_FLAGGED);
     try {
       await this.api.setFlag(m.id, FLAG_FLAGGED, set);
@@ -751,6 +773,7 @@ export class MailComponent implements OnInit {
   private async moveSelected(folderId: number): Promise<void> {
     const ids = this.selectedIds();
     if (!ids.length || !folderId) return;
+    if (this.refusesSharedWrites()) return;
     this.batchBusy.set(true);
     this.error.set('');
     try {
@@ -767,6 +790,7 @@ export class MailComponent implements OnInit {
   protected async batch(kind: 'archive' | 'trash' | 'delete'): Promise<void> {
     const ids = this.selectedIds();
     if (!ids.length) return;
+    if (this.refusesSharedWrites()) return;
     if (
       kind === 'delete' &&
       !confirm(`Permanently delete ${ids.length} message(s)? This cannot be undone.`)
@@ -790,6 +814,7 @@ export class MailComponent implements OnInit {
 
   protected async batchRead(read: boolean): Promise<void> {
     const ids = this.selectedIds();
+    if (this.refusesSharedWrites()) return;
     this.batchBusy.set(true);
     this.error.set('');
     try {
@@ -804,6 +829,7 @@ export class MailComponent implements OnInit {
 
   protected async batchFlag(set: boolean): Promise<void> {
     const ids = this.selectedIds();
+    if (this.refusesSharedWrites()) return;
     this.batchBusy.set(true);
     this.error.set('');
     try {

@@ -130,6 +130,13 @@ class Session:
         self.injected: dict[str, str] = {}         # subject -> (Id, ChangeKey)
         self.sent_subject = ""
         self.calendar_id: str | None = None
+        self.shared_mailbox = args.shared_mailbox
+        self.other_user = args.other_user
+        self.shared_subject = ""
+        self.shared_root_id: str | None = None
+        self.shared_sent_id: str | None = None
+        self.shared_injected: dict[str, tuple[str, str]] = {}
+        self.sent_as_subject = ""
 
 
 def shape(fields: list[str]) -> str:
@@ -536,6 +543,231 @@ def step_delete_mail(s: Session) -> str:
     return f"SoftDelete reported as a Delete change ({len(deletes)} delete(s))"
 
 
+def step_shared_inject(s: Session) -> str:
+    """Mail delivered to the shared mailbox so the member's view of it is real."""
+    s.shared_subject = f"linchange ews shared {s.nonce}"
+    try:
+        with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=20) as smtp:
+            message = email.message.EmailMessage()
+            message["From"] = "probe@example.com"
+            message["To"] = s.shared_mailbox
+            message["Subject"] = s.shared_subject
+            message["Date"] = formatdate(localtime=True)
+            message["Message-ID"] = make_msgid(domain="example.com")
+            message.set_content(f"shared mailbox probe {s.nonce}\n")
+            smtp.sendmail("probe@example.com", [s.shared_mailbox], message.as_bytes())
+    except (OSError, smtplib.SMTPException) as err:
+        raise Fail(f"SMTP delivery to {s.shared_mailbox} failed: {err}") from err
+    return f"1 message delivered to {s.shared_mailbox} via {s.smtp_host}:{s.smtp_port}"
+
+
+def mailbox_ref(name: str, address: str) -> str:
+    """A distinguished folder id with the Mailbox child that names another mailbox."""
+    return (f'<t:DistinguishedFolderId Id="{name}">'
+            f'<t:Mailbox><t:EmailAddress>{address}</t:EmailAddress></t:Mailbox>'
+            f'</t:DistinguishedFolderId>')
+
+
+def step_shared_hierarchy(s: Session) -> str:
+    reply = s.client.call("SyncFolderHierarchy", """
+        <m:SyncFolderHierarchy Traversal="Deep">
+          <m:SyncFolderId><t:DistinguishedFolderId Id="rootfolder"/></m:SyncFolderId>
+          <m:FolderShape><t:BaseShape>IdOnly</t:BaseShape>
+            <t:AdditionalProperties>
+              <t:FieldURI FieldURI="folder:DisplayName"/>
+              <t:FieldURI FieldURI="folder:ChildCount"/>
+              <t:FieldURI FieldURI="folder:ParentFolderId"/>
+            </t:AdditionalProperties>
+          </m:FolderShape>
+          <m:MaxChangesReturned>500</m:MaxChangesReturned>
+        </m:SyncFolderHierarchy>""")
+    entries = []
+    for create in reply.findall(f"{q(M, 'RootFolder')}/{q(T, 'Changes')}/{q(T, 'Create')}"):
+        folder = create.find(q(T, "Folder"))
+        if folder is None:
+            continue
+        identity = folder.find(q(T, "FolderId"))
+        if identity is None or not identity.get("Id"):
+            continue
+        parent = folder.find(q(T, "ParentFolderId"))
+        entries.append((identity.get("Id"), text_of(folder, T, "DisplayName"),
+                        parent.get("Id") if parent is not None else None))
+    root = next((e for e in entries if e[1] == "Team Mailbox"), None)
+    expect(root is not None,
+           f"the folder tree does not list the shared mailbox {s.shared_mailbox} "
+           f"(got {sorted(n for _, n, _ in entries)})")
+    children = [e for e in entries if e[2] == root[0]]
+    expect(len(children) >= 3,
+           f"the shared mailbox root has {len(children)} folders beneath it, "
+           "expected its Inbox, Sent, Drafts and Trash")
+    s.shared_root_id = root[0]
+    sent = next((e for e in children if e[1].lower() == "sent"), None)
+    s.shared_sent_id = sent[0] if sent else None
+    return (f"'Team Mailbox' root {root[0][:20]}... with {len(children)} folders "
+           "beneath it")
+
+
+def step_shared_sync(s: Session) -> str:
+    expect(s.shared_root_id, "no shared mailbox root to sync")
+    # The root itself holds no items: a client that syncs Exchange's root gets an
+    # empty answer and then moves to the Inbox beneath it, and the same must hold
+    # here or the shared mailbox looks like one big pile of mail.
+    reply = s.client.call("SyncFolderItems", f"""
+        <m:SyncFolderItems>
+          <m:SyncFolderId><t:FolderId Id="{s.shared_root_id}"/></m:SyncFolderId>
+          <m:ItemShape><t:BaseShape>IdOnly</t:BaseShape></m:ItemShape>
+        </m:SyncFolderItems>""")
+    creates = reply.findall(f"{q(M, 'RootFolder')}/{q(T, 'Items')}/{q(T, 'Create')}")
+    expect(not creates,
+           f"the shared mailbox root handed out {len(creates)} items; the mail "
+           "belongs in its folders, not in the root")
+
+    reply = s.client.call("SyncFolderItems", f"""
+        <m:SyncFolderItems>
+          <m:SyncFolderId>{mailbox_ref("inbox", s.shared_mailbox)}</m:SyncFolderId>
+          {shape(["item:subject", "message:datetimereceived", "message:isread"])}
+          <m:MaxChangesReturned>100</m:MaxChangesReturned>
+        </m:SyncFolderItems>""")
+    count = 0
+    for create in reply.findall(f"{q(M, 'RootFolder')}/{q(T, 'Items')}/{q(T, 'Create')}"):
+        message = create.find(q(T, "Message"))
+        if message is None:
+            continue
+        identity = message.find(q(T, "ItemId"))
+        if identity is None or not identity.get("Id"):
+            continue
+        count += 1
+        subject = text_of(message, T, "Subject")
+        if subject == s.shared_subject:
+            s.shared_injected[subject] = (identity.get("Id"), identity.get("ChangeKey"))
+    expect(s.shared_injected,
+           f"the shared Inbox sync did not hand out the message delivered to "
+           f"{s.shared_mailbox} (got {count} items)")
+    return f"shared Inbox sync handed out {count} items, including the delivered mail"
+
+
+def step_shared_getitem(s: Session) -> str:
+    item_id, change_key = s.shared_injected[s.shared_subject]
+    key_attr = f' ChangeKey="{change_key}"' if change_key else ""
+    reply = s.client.call("GetItem", f"""
+        <m:GetItem>
+          {shape(["item:body", "item:subject"])}
+          <m:ItemIds><t:ItemId Id="{item_id}"{key_attr}/></m:ItemIds>
+        </m:GetItem>""")
+    message = reply.find(f"{q(M, 'Items')}/{q(T, 'Message')}")
+    expect(message is not None, "GetItem on a shared mailbox item returned no Message")
+    body = message.find(q(T, "Body"))
+    expect(body is not None and s.nonce in (body.text or ""),
+           f"the shared item body is missing ({body.text if body is not None else None!r})")
+    return f"shared item body fetched ({len(body.text or '')} chars) by item id from the shared Inbox"
+
+
+def step_shared_plain(s: Session) -> str:
+    if not s.shared_sent_id:
+        raise Skip("the hierarchy did not name the shared mailbox's Sent folder")
+    reply = s.client.call("FindItem", f"""
+        <m:FindItem Traversal="Flat">
+          {shape(["item:subject"])}
+          <m:ParentFolderIds><t:FolderId Id="{s.shared_sent_id}"/></m:ParentFolderIds>
+          <m:IndexedPageItemView MaxEntriesReturned="10" Offset="0" BasePosition="0"/>
+        </m:FindItem>""")
+    root = reply.find(q(M, "RootFolder"))
+    expect(root is not None, "FindItem on the shared Sent folder returned no RootFolder")
+    total = int(root.get("TotalItemsInView", "-1"))
+    expect(total >= 0, f"TotalItemsInView is {total}, which is not a count")
+    return (f"the shared Sent folder resolved by its plain identifier "
+            f"(TotalItemsInView {total})")
+
+
+def step_shared_send_as(s: Session) -> str:
+    """A member with a grant composes in the team mailbox: the From header stands."""
+    s.sent_as_subject = f"linchange ews send-as {s.nonce}"
+    reply = s.client.call("CreateItem", f"""
+        <m:CreateItem MessageDisposition="SendAndSaveCopy">
+          <m:SavedItemFolderId><t:DistinguishedFolderId Id="sentitems"/></m:SavedItemFolderId>
+          <m:Items>
+            <t:Message>
+              <t:From><t:Mailbox>
+                <t:Name>Team Mailbox</t:Name><t:EmailAddress>{s.shared_mailbox}</t:EmailAddress>
+              </t:Mailbox></t:From>
+              <t:ToRecipients><t:Mailbox>
+                <t:Name>{s.user}</t:Name><t:EmailAddress>{s.user}</t:EmailAddress>
+              </t:Mailbox></t:ToRecipients>
+              <t:Subject>{s.sent_as_subject}</t:Subject>
+              <t:Body BodyType="Text">composed as the team mailbox {s.nonce}</t:Body>
+            </t:Message>
+          </m:Items>
+        </m:CreateItem>""")
+    message = reply.find(f"{q(M, 'Items')}/{q(T, 'Message')}")
+    expect(message is not None, "the send-as CreateItem returned no saved copy")
+    identity = message.find(q(T, "ItemId"))
+    expect(identity is not None and identity.get("Id"), "the send-as copy carries no ItemId")
+    return f"SendAndSaveCopy accepted with From {s.shared_mailbox}; copy id {identity.get('Id')[:20]}..."
+
+
+def step_shared_send_as_delivers(s: Session) -> str:
+    """The send-as mail must really arrive, and under the mailbox's address."""
+    deadline = time.time() + 25
+    while time.time() < deadline:
+        reply = sync_inbox(s, s.inbox_state)
+        s.inbox_state = text_of(reply, M, "SyncState")
+        for create in reply.findall(f"{q(M, 'RootFolder')}/{q(T, 'Items')}/{q(T, 'Create')}"):
+            message = create.find(q(T, "Message"))
+            if message is None or text_of(message, T, "Subject") != s.sent_as_subject:
+                continue
+            identity = message.find(q(T, "ItemId"))
+            got = s.client.call("GetItem", f"""
+                <m:GetItem>
+                  {shape(["item:subject", "message:from"])}
+                  <m:ItemIds><t:ItemId Id="{identity.get('Id')}"/></m:ItemIds>
+                </m:GetItem>""")
+            item = got.find(f"{q(M, 'Items')}/{q(T, 'Message')}")
+            from_el = item.find(q(T, "From")) if item is not None else None
+            address = ""
+            if from_el is not None:
+                mailbox = from_el.find(q(T, "Mailbox"))
+                if mailbox is not None:
+                    address = text_of(mailbox, T, "EmailAddress")
+            expect(address.lower() == s.shared_mailbox,
+                   f"the delivered message carries From {address!r}, expected "
+                   f"{s.shared_mailbox!r}")
+            return (f"send-as mail arrived in the Inbox with From {address} within "
+                    f"{25 - (deadline - time.time()):.0f}s")
+        time.sleep(2)
+    raise Fail(f"the message sent as {s.shared_mailbox} never arrived in the Inbox within 25s")
+
+
+def step_shared_denied(s: Session) -> str:
+    """Somebody without a grant must not see the shared mailbox at all."""
+    other = Client(s.client.base, s.other_user, s.client.password, s.client.timeout)
+    reply = other.call("SyncFolderHierarchy", """
+        <m:SyncFolderHierarchy>
+          <m:SyncFolderId><t:DistinguishedFolderId Id="rootfolder"/></m:SyncFolderId>
+          <m:FolderShape><t:BaseShape>IdOnly</t:BaseShape>
+            <t:AdditionalProperties>
+              <t:FieldURI FieldURI="folder:DisplayName"/>
+            </t:AdditionalProperties>
+          </m:FolderShape>
+        </m:SyncFolderHierarchy>""")
+    names = [text_of(f, T, "DisplayName")
+             for f in reply.findall(f"{q(M, 'RootFolder')}/{q(T, 'Changes')}/{q(T, 'Create')}/{q(T, 'Folder')}")]
+    expect("Team Mailbox" not in names,
+           f"the ungranted user {s.other_user} was shown the shared mailbox in the "
+           f"tree ({sorted(names)})")
+    try:
+        other.call("FindItem", f"""
+            <m:FindItem Traversal="Flat">
+              {shape(["item:subject"])}
+              <m:ParentFolderIds>{mailbox_ref("inbox", s.shared_mailbox)}</m:ParentFolderIds>
+            </m:FindItem>""")
+    except Fail as err:
+        expect("AccessDenied" in str(err),
+               f"the ungranted user's request for the shared mailbox failed with "
+               f"{str(err)[:120]!r}, expected an access-denied response")
+        return f"ungranted {s.other_user}: no shared mailbox in the tree, FindItem refused"
+    raise Fail(f"the ungranted user {s.other_user} read the shared mailbox without a grant")
+
+
 def step_resolve_names(s: Session) -> str:
     reply = s.client.call("ResolveNames", f"""
         <m:ResolveNames ReturnFullContactData="false">
@@ -604,6 +836,14 @@ STEPS = [
     ("calendar: create, sync and fetch an appointment", step_calendar, False),
     ("calendar: delete an appointment", step_calendar_delete, False),
     ("DeleteItem: soft delete shows in sync", step_delete_mail, False),
+    ("SMTP: deliver mail to the shared mailbox", step_shared_inject, False),
+    ("SyncFolderHierarchy: shared mailbox in the tree", step_shared_hierarchy, False),
+    ("SyncFolderItems: shared root is empty, shared Inbox via Mailbox element", step_shared_sync, False),
+    ("GetItem: body of a shared mailbox message", step_shared_getitem, False),
+    ("FindItem: shared folder by plain identifier", step_shared_plain, False),
+    ("CreateItem: send as the shared mailbox", step_shared_send_as, False),
+    ("send-as mail arrives under the mailbox address", step_shared_send_as_delivers, False),
+    ("a non-member sees nothing and is refused", step_shared_denied, True),
     ("ResolveNames: autocomplete", step_resolve_names, True),
     ("GetUserAvailability: free/busy", step_availability, True),
     ("GetServerTimeZones", step_timezones, True),
@@ -617,6 +857,8 @@ def main() -> int:
     parser.add_argument("--password", default=os.environ.get("EWS_PASSWORD", "correct horse battery staple"))
     parser.add_argument("--smtp-host", default=os.environ.get("EWS_SMTP_HOST", "127.0.0.1"))
     parser.add_argument("--smtp-port", type=int, default=int(os.environ.get("EWS_SMTP_PORT", "1025")))
+    parser.add_argument("--shared-mailbox", default=os.environ.get("EWS_SHARED_MAILBOX", "team@example.com"))
+    parser.add_argument("--other-user", default=os.environ.get("EWS_OTHER_USER", "e2e-other@example.com"))
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args()
 

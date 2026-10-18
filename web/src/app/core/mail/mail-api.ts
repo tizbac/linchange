@@ -53,7 +53,7 @@ export class MailApi {
 
   listMessages(
     folderId: number,
-    opts: { limit?: number; unread?: boolean; flagged?: boolean; cursor?: Cursor } = {},
+    opts: { limit?: number; unread?: boolean; flagged?: boolean; cursor?: Cursor; owner?: string } = {},
   ): Promise<Page> {
     const q = new URLSearchParams();
     if (opts.limit) q.set('limit', String(opts.limit));
@@ -63,35 +63,43 @@ export class MailApi {
       q.set('before', opts.cursor.date);
       q.set('before_id', String(opts.cursor.id));
     }
+    if (opts.owner) q.set('owner', opts.owner);
     const s = q.toString();
     return this.fetch(`/folders/${folderId}/messages${s ? `?${s}` : ''}`);
   }
 
-  listThreads(folderId: number, limit = 50): Promise<{ threads: Thread[] }> {
-    return this.fetch(`/folders/${folderId}/threads?limit=${limit}`);
+  listThreads(folderId: number, limit = 50, owner?: string): Promise<{ threads: Thread[] }> {
+    const parts = [`limit=${limit}`];
+    if (owner) parts.push(`owner=${encodeURIComponent(owner)}`);
+    return this.fetch(`/folders/${folderId}/threads?${parts.join('&')}`);
   }
 
-  search(q: string, folderId = 0, limit = 50): Promise<{ messages: MessageSummary[] }> {
+  search(q: string, folderId = 0, limit = 50, owner?: string): Promise<{ messages: MessageSummary[] }> {
     const parts = [`q=${encodeURIComponent(q)}`];
     if (folderId) parts.push(`folder_id=${folderId}`);
     parts.push(`limit=${limit}`);
+    if (owner) parts.push(`owner=${encodeURIComponent(owner)}`);
     return this.fetch(`/messages/search?${parts.join('&')}`);
   }
 
-  get(id: number): Promise<MessageDetail> {
-    return this.fetch(`/messages/${id}`);
+  get(id: number, owner?: string): Promise<MessageDetail> {
+    return this.fetch(`/messages/${id}${owner ? `?owner=${encodeURIComponent(owner)}` : ''}`);
   }
 
-  raw(id: number): Promise<Blob> {
-    return this.blob(`/messages/${id}/raw`);
+  raw(id: number, owner?: string): Promise<Blob> {
+    return this.blob(`/messages/${id}/raw${owner ? `?owner=${encodeURIComponent(owner)}` : ''}`);
   }
 
-  attachment(id: number, index: number): Promise<Blob> {
-    return this.blob(`/messages/${id}/attachments/${index}`);
+  attachment(id: number, index: number, owner?: string): Promise<Blob> {
+    return this.blob(
+      `/messages/${id}/attachments/${index}${owner ? `?owner=${encodeURIComponent(owner)}` : ''}`,
+    );
   }
 
-  inlineImage(id: number, contentID: string): Promise<Blob> {
-    return this.blob(`/messages/${id}/inline/${encodeURIComponent(contentID)}`);
+  inlineImage(id: number, contentID: string, owner?: string): Promise<Blob> {
+    return this.blob(
+      `/messages/${id}/inline/${encodeURIComponent(contentID)}${owner ? `?owner=${encodeURIComponent(owner)}` : ''}`,
+    );
   }
 
   markRead(id: number, read: boolean): Promise<void> {
@@ -118,8 +126,10 @@ export class MailApi {
     return this.post('/messages/delete', { ids });
   }
 
-  thread(key: string): Promise<{ messages: MessageDetail[] }> {
-    return this.fetch(`/threads/${encodeURIComponent(key)}`);
+  thread(key: string, owner?: string): Promise<{ messages: MessageDetail[] }> {
+    return this.fetch(
+      `/threads/${encodeURIComponent(key)}${owner ? `?owner=${encodeURIComponent(owner)}` : ''}`,
+    );
   }
 
   // --- composing ---

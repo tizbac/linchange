@@ -261,6 +261,27 @@ func mailOwner(r *http.Request) string {
 	return Principal(r.Context()).Address
 }
 
+// readOwner resolves the mailbox a read request acts on.
+//
+// Reads default to the caller's own mail. A ?owner= parameter names a shared
+// mailbox instead, and the grant check decides whether the caller may look at
+// it: every query below is still scoped to the owner it is handed, so opening a
+// shared mailbox never loosens the scoping, it only redirects it to a mailbox
+// the caller has been shown to have access to.
+func (s *Server) readOwner(w http.ResponseWriter, r *http.Request) (string, bool) {
+	owner := strings.ToLower(strings.TrimSpace(mailOwner(r)))
+	v := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("owner")))
+	if v == "" || v == owner {
+		return owner, true
+	}
+	access, err := s.grants.Access(r.Context(), s.db, v, owner)
+	if err != nil || !access.AtLeast(policy.GrantRead) {
+		s.writeMailError(w, r, webmail.ErrDenied)
+		return "", false
+	}
+	return v, true
+}
+
 // writeMailError maps a service error onto a status.
 //
 // The mapping is one function so that every route answers the same way: not
@@ -449,7 +470,12 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page, err := s.mail.Messages(r.Context(), mailOwner(r), webmail.ListQuery{
+	owner, ok := s.readOwner(w, r)
+	if !ok {
+		return
+	}
+
+	page, err := s.mail.Messages(r.Context(), owner, webmail.ListQuery{
 		FolderID:   id,
 		Limit:      queryInt(r, "limit", 50, 1, 200),
 		CursorDate: queryTime(r, "before"),
@@ -470,7 +496,11 @@ func (s *Server) handleListThreads(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "malformed folder id")
 		return
 	}
-	threads, err := s.mail.Threads(r.Context(), mailOwner(r), id, queryInt(r, "limit", 50, 1, 200))
+	owner, ok := s.readOwner(w, r)
+	if !ok {
+		return
+	}
+	threads, err := s.mail.Threads(r.Context(), owner, id, queryInt(r, "limit", 50, 1, 200))
 	if err != nil {
 		s.writeMailError(w, r, err)
 		return
@@ -486,7 +516,11 @@ func (s *Server) handleSearchMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	folderID := int64(queryInt(r, "folder_id", 0, 0, 1<<62))
 
-	messages, err := s.mail.Search(r.Context(), mailOwner(r), q, folderID, queryInt(r, "limit", 50, 1, 200))
+	owner, ok := s.readOwner(w, r)
+	if !ok {
+		return
+	}
+	messages, err := s.mail.Search(r.Context(), owner, q, folderID, queryInt(r, "limit", 50, 1, 200))
 	if err != nil {
 		s.writeMailError(w, r, err)
 		return
@@ -500,7 +534,11 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "malformed message id")
 		return
 	}
-	msg, err := s.mail.Message(r.Context(), mailOwner(r), id)
+	owner, ok := s.readOwner(w, r)
+	if !ok {
+		return
+	}
+	msg, err := s.mail.Message(r.Context(), owner, id)
 	if err != nil {
 		s.writeMailError(w, r, err)
 		return
@@ -514,7 +552,11 @@ func (s *Server) handleRawMessage(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "malformed message id")
 		return
 	}
-	raw, err := s.mail.Raw(r.Context(), mailOwner(r), id)
+	owner, ok := s.readOwner(w, r)
+	if !ok {
+		return
+	}
+	raw, err := s.mail.Raw(r.Context(), owner, id)
 	if err != nil {
 		s.writeMailError(w, r, err)
 		return
@@ -539,7 +581,11 @@ func (s *Server) handleAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	att, content, err := s.mail.AttachmentContent(r.Context(), mailOwner(r), id, index)
+	owner, ok := s.readOwner(w, r)
+	if !ok {
+		return
+	}
+	att, content, err := s.mail.AttachmentContent(r.Context(), owner, id, index)
 	if err != nil {
 		s.writeMailError(w, r, err)
 		return
@@ -553,7 +599,11 @@ func (s *Server) handleInlineImage(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "malformed message id")
 		return
 	}
-	img, content, err := s.mail.InlineImageContent(r.Context(), mailOwner(r), id, chi.URLParam(r, "contentID"))
+	owner, ok := s.readOwner(w, r)
+	if !ok {
+		return
+	}
+	img, content, err := s.mail.InlineImageContent(r.Context(), owner, id, chi.URLParam(r, "contentID"))
 	if err != nil {
 		s.writeMailError(w, r, err)
 		return
@@ -737,7 +787,11 @@ func (s *Server) handleGetThread(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "a thread needs a key")
 		return
 	}
-	messages, err := s.mail.Thread(r.Context(), mailOwner(r), key)
+	owner, ok := s.readOwner(w, r)
+	if !ok {
+		return
+	}
+	messages, err := s.mail.Thread(r.Context(), owner, key)
 	if err != nil {
 		s.writeMailError(w, r, err)
 		return

@@ -21,6 +21,10 @@ export const routes: Routes = [
     component: DashboardComponent,
     canActivate: [requireAuth],
   },
+  // The signed-in landing page has a name of its own: sign-in, the second
+  // factor, and the admin guard all send the browser here, so the URL says
+  // where the user is instead of pretending to be the site root.
+  { path: 'dashboard', component: DashboardComponent, canActivate: [requireAuth] },
   {
     path: 'mail',
     canActivate: [requireAuth],

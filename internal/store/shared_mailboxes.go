@@ -96,6 +96,39 @@ func (s *SharedMailboxes) Get(ctx context.Context, q Querier, address string) (S
 	return row, nil
 }
 
+// OpenAccessFor returns the declared shared mailboxes whose open-access flag
+// covers the given domain.
+//
+// Open access means anyone with a mailbox in the domain may read the shared
+// mailbox without a grant, so the enumeration is scoped to that domain rather
+// than returning every open mailbox in the installation: a mailbox opened to
+// one domain is not opened to another.
+func (s *SharedMailboxes) OpenAccessFor(ctx context.Context, q Querier, domain string) ([]SharedMailbox, error) {
+	rows, err := q.QueryxContext(ctx, sharedSelect+`
+		WHERE open_access
+		  AND EXISTS (SELECT 1 FROM users u
+		              WHERE u.address = shared_mailboxes.address
+                AND lower(u.address_local) = lower($1))
+		ORDER BY address`, domain)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing open-access shared mailboxes: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]SharedMailbox, 0, 8)
+	for rows.Next() {
+		var row SharedMailbox
+		if err := rows.StructScan(&row); err != nil {
+			return nil, fmt.Errorf("store: scanning shared mailbox: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterating shared mailboxes: %w", err)
+	}
+	return out, nil
+}
+
 // List returns every declared shared mailbox, ordered by address.
 func (s *SharedMailboxes) List(ctx context.Context, q Querier) ([]SharedMailbox, error) {
 	rows, err := q.QueryxContext(ctx, sharedSelect+` ORDER BY address`)

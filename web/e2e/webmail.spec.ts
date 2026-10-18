@@ -27,9 +27,16 @@ async function sendCompose(page: Page, to: string, subject: string, body: string
   await page.goto('/mail/compose');
   await page.locator('#mc-to').fill(to);
   await page.locator('#mc-subject').fill(subject);
-  await page.locator('textarea[name="body"]').fill(body);
+  await fillPlainTextBody(page, body);
   await page.getByRole('button', { name: 'Send' }).click();
   await page.waitForURL(/\/mail$/);
+}
+
+// The composer opens in rich text; the plain-text mode has the simple textarea
+// the tests fill, so switch to it rather than driving the editor's iframe.
+async function fillPlainTextBody(page: Page, body: string): Promise<void> {
+  await page.getByRole('button', { name: 'Plain text', exact: true }).click();
+  await page.locator('textarea[name="body"]').fill(body);
 }
 
 test.describe('webmail', () => {
@@ -50,7 +57,7 @@ test.describe('webmail', () => {
     await page.goto('/mail/compose');
     await page.locator('#mc-to').fill(EXTERNAL);
     await page.locator('#mc-subject').fill(subject);
-    await page.locator('textarea[name="body"]').fill(body);
+    await fillPlainTextBody(page, body);
     await page
       .locator('input[type="file"]')
       .setInputFiles([{ name: 'note.txt', mimeType: 'text/plain', buffer: Buffer.from('hello from playwright') }]);
@@ -79,7 +86,7 @@ test.describe('webmail', () => {
     await page.getByRole('button', { name: 'Reply', exact: true }).click();
     await page.waitForURL(/\/mail\/compose$/);
     await expect(page.locator('#mc-subject')).toHaveValue(new RegExp(`^Re: `));
-    await page.locator('textarea[name="body"]').fill(`Reply body (${RUN}).`);
+    await fillPlainTextBody(page, `Reply body (${RUN}).`);
     await page.getByRole('button', { name: 'Send' }).click();
     await page.waitForURL(/\/mail$/);
 
@@ -140,5 +147,32 @@ test.describe('webmail', () => {
     page.once('dialog', (d) => void d.accept());
     await page.getByRole('button', { name: 'Delete', exact: true }).click();
     await expect(page.getByText(name)).toHaveCount(0);
+  });
+
+  test('opens a shared mailbox and reads it read-only', async ({ page }) => {
+    const subject = `E2E ${RUN} to the team`;
+
+    await signIn(page);
+    // Mail addressed to the shared mailbox lands in that mailbox's own inbox.
+    await sendCompose(page, 'team@example.com', subject, `Team copy (${RUN}).`);
+
+    await page.goto('/mail');
+    await expect(page.getByText('Shared with you')).toBeVisible();
+    // Delivery is asynchronous, and the list does not live-refresh, so reopen
+    // the shared inbox until the message has landed in it.
+    const message = page.getByText(subject).first();
+    for (let i = 0; i < 20 && !(await message.isVisible()); i++) {
+      await page.getByText('Team Mailbox').first().click();
+      await page.waitForTimeout(1000);
+    }
+    await expect(message).toBeVisible();
+    await message.click();
+    await expect(page.getByRole('heading', { name: subject })).toBeVisible();
+    await expect(page.locator('pre')).toContainText(`Team copy (${RUN}).`);
+
+    // Shared mail is read-only in this interface: the guard says so plainly
+    // rather than letting the server's refusal surface as a confusing error.
+    await page.locator('app-mail-reader').getByRole('button', { name: 'Trash' }).click();
+    await expect(page.getByText('Shared mail is read-only here.')).toBeVisible();
   });
 });
