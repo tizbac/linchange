@@ -77,105 +77,10 @@ CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 WantedBy=multi-user.target
 EOF
 
-# 5. Create default config (will be overwritten by user)
-cat > "${INSTALL_ROOT}/etc/linchange/linchange.yaml" <<EOF
-# linchange configuration
-# Copy this to /etc/linchange/linchange.yaml and edit
-
-# Database connection
-database:
-  host: localhost
-  port: 5432
-  name: linchange
-  user: linchange
-  password: changeme
-  sslmode: disable
-  max_open_conns: 25
-  max_idle_conns: 5
-
-# HTTP server
-http:
-  address: ":58080"
-  tls_address: ":58443"
-  tls_cert: "/etc/linchange/tls/cert.pem"
-  tls_key: "/etc/linchange/tls/key.pem"
-  static_dir: "/usr/share/linchange/web"
-
-# Mail protocols
-imap:
-  address: ":143"
-  tls_address: ":993"
-  tls_cert: "/etc/linchange/tls/cert.pem"
-  tls_key: "/etc/linchange/tls/key.pem"
-
-pop3:
-  address: ":110"
-  tls_address: ":995"
-
-smtp:
-  address: ":25"
-  tls_address: ":465"
-  submission_address: ":587"
-
-# MAPI/HTTP (Outlook)
-mapihttp:
-  enabled: true
-
-# CalDAV
-caldav:
-  enabled: true
-
-# Autodiscover
-autodiscover:
-  enabled: true
-
-# EWS (Exchange Web Services)
-ews:
-  enabled: true
-
-# ActiveSync
-eas:
-  enabled: true
-
-# Blob storage (message bodies)
-blobstore:
-  root: "/var/lib/linchange/blobs"
-
-# DKIM
-dkim:
-  private_key_path: "/etc/linchange/dkim"
-  selector: "default"
-
-# LDAP (optional)
-ldap:
-  enabled: false
-  host: "ldap.example.com"
-  port: 636
-  use_tls: true
-  bind_dn: "cn=admin,dc=example,dc=com"
-  bind_password: "changeme"
-  base_dn: "dc=example,dc=com"
-  user_filter: "(mail=%s)"
-  group_filter: "(member=%s)"
-
-# Outbound mail delivery
-outbound:
-  max_concurrent_deliveries: 20
-  retry_interval: "5m"
-  max_retries: 10
-  bounce_delay: "4h"
-
-# Logging
-log:
-  level: "info"
-  format: "json"
-  output: "/var/log/linchange/linchange.log"
-
-# Admin
-admin:
-  # Domain admin group DN for automatic admin grant
-  domain_admins_group_dn: ""
-EOF
+# 5. Default configuration is NOT shipped: /etc/linchange/linchange.yaml is
+#    created by "linchange setup" (or by hand from the example below), because
+#    a pre-filled file with a database password in it would be the same on
+#    every installation. The example ships alongside, documented.
 
 # 6. Create tmpfiles.d for directories
 mkdir -p "${INSTALL_ROOT}/usr/lib/tmpfiles.d"
@@ -234,79 +139,27 @@ Description: ${DESCRIPTION}
 Homepage: ${HOMEPAGE}
 License: ${LICENSE}
 Depends: systemd (>= 247), postgresql-client (>= 14), ca-certificates, tzdata
-Recommends: postgresql (>= 14), nginx, certbot
+Recommends: postgresql (>= 14)
 Conflicts: courier-imap, courier-pop, dovecot-imapd, dovecot-pop3d, postfix, exim4
 Provides: mail-transport-agent, imap-server, pop3-server
 Section: mail
 Priority: optional
 EOF
 
-# 10. Create DEBIAN/postinst
-cat > "${DEBIAN_DIR}/postinst" <<'EOF'
-#!/bin/bash
-set -e
+# 10. Maintainer scripts, shared with the Docker packaging path so the two
+#     cannot drift apart. They live in the repository where they can be read,
+#     linted and run before packaging.
+for script in postinst prerm postrm; do
+    cp "${SCRIPT_DIR}/packaging/debian/${script}" "${DEBIAN_DIR}/${script}"
+    chmod 755 "${DEBIAN_DIR}/${script}"
+done
 
-# Create user/group via sysusers
-if command -v systemd-sysusers >/dev/null; then
-    systemd-sysusers /usr/lib/sysusers.d/linchange.conf
-fi
-
-# Create directories via tmpfiles
-if command -v systemd-tmpfiles >/dev/null; then
-    systemd-tmpfiles --create /usr/lib/tmpfiles.d/linchange.conf
-fi
-
-# Set permissions on config directory
-chown root:linchange /etc/linchange
-chmod 750 /etc/linchange
-
-# Reload systemd
-systemctl daemon-reload
-
-# Enable service (but don't start - user must configure first)
-systemctl enable linchange >/dev/null 2>&1 || true
-
-echo "linchange installed. Configure /etc/linchange/linchange.yaml then run: systemctl start linchange"
-EOF
-chmod 755 "${DEBIAN_DIR}/postinst"
-
-# 11. Create DEBIAN/prerm
-cat > "${DEBIAN_DIR}/prerm" <<'EOF'
-#!/bin/bash
-set -e
-
-# Stop service on removal
-if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
-    systemctl stop linchange >/dev/null 2>&1 || true
-    systemctl disable linchange >/dev/null 2>&1 || true
-fi
-EOF
-chmod 755 "${DEBIAN_DIR}/prerm"
-
-# 12. Create DEBIAN/postrm
-cat > "${DEBIAN_DIR}/postrm" <<'EOF'
-#!/bin/bash
-set -e
-
-if [ "$1" = "purge" ]; then
-    # Remove user/group
-    if command -v systemd-sysusers >/dev/null; then
-        systemd-sysusers --purge /usr/lib/sysusers.d/linchange.conf 2>/dev/null || true
-    fi
-    # Remove directories
-    rm -rf /var/lib/linchange /var/log/linchange /etc/linchange
-    # Remove systemd unit
-    systemctl daemon-reload >/dev/null 2>&1 || true
-fi
-EOF
-chmod 755 "${DEBIAN_DIR}/postrm"
-
-# 13. Build the .deb
+# 12. Build the .deb
 echo "Building .deb package..."
 dpkg-deb --build --root-owner-group "${PKG_DIR}" "${OUTPUT_DIR}/${PROJECT_NAME}_${VERSION}_${ARCH}.deb"
 
 echo "Package created: ${OUTPUT_DIR}/${PROJECT_NAME}_${VERSION}_${ARCH}.deb"
 echo ""
 echo "Install with: sudo dpkg -i ${OUTPUT_DIR}/${PROJECT_NAME}_${VERSION}_${ARCH}.deb"
-echo "Then configure: sudo editor /etc/linchange/linchange.yaml"
+echo "Then configure: linchange setup --config /etc/linchange/linchange.yaml"
 echo "Start with: sudo systemctl start linchange"

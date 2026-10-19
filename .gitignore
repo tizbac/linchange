@@ -1,6 +1,8 @@
 # Build output
 /bin/
 /data/
+# Where package.sh and package-docker.sh leave the .deb
+/dist/
 
 # Local secrets and generated configuration
 .env
@@ -23,4 +25,7 @@ coverage.*
 
 # Test logs
 .test-integration.log
-linchange
+# The binary built by `go build ./cmd/linchange` into the repository root.
+# Anchored, because an unanchored `linchange` also matches the cmd/linchange
+# directory and hides every new file added to that package.
+/linchange

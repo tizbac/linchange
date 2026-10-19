@@ -1,0 +1,85 @@
+#!/bin/bash
+# linchange postinst.
+#
+# This file is shipped as-is by both packaging paths (package.sh and
+# package-docker.sh), so it is a real file rather than a printf escape in a
+# Dockerfile: it is the script that runs on a user's machine at the moment
+# they know the least about the software.
+set -e
+
+CONFIG=/etc/linchange/linchange.yaml
+EXAMPLE=/etc/linchange/linchange.example.yaml
+
+case "$1" in
+    configure)
+        # The system account and its directories are created with systemd's
+        # own mechanisms, so the package never has to agree with the
+        # distribution about how a system user is spelled.
+        if command -v systemd-sysusers >/dev/null 2>&1; then
+            systemd-sysusers /usr/lib/sysusers.d/linchange.conf
+        fi
+        if command -v systemd-tmpfiles >/dev/null 2>&1; then
+            systemd-tmpfiles --create /usr/lib/tmpfiles.d/linchange.conf
+        fi
+
+        # /etc/linchange holds the database password and the signing keys, so
+        # it is root's and not world-readable.
+        mkdir -p /etc/linchange
+        chown root:linchange /etc/linchange
+        chmod 750 /etc/linchange
+
+        if command -v systemctl >/dev/null 2>&1; then
+            # A reload that cannot happen - a container or a chroot, where
+            # systemd is installed but is not PID 1 - must not fail the
+            # install: the unit file is on disk and the next boot picks it up.
+            systemctl daemon-reload >/dev/null 2>&1 || true
+            # Enabled but not started: the service cannot start before the
+            # configuration and the database exist.
+            systemctl enable linchange >/dev/null 2>&1 || true
+        fi
+
+        # Offer the wizard, but only where somebody can answer it. An
+        # unattended install, a container build and a CI run all reach this
+        # script without a terminal, and none of them can answer a prompt.
+        if [ ! -e "$CONFIG" ] && [ -t 0 ] && [ -t 1 ] && command -v linchange >/dev/null 2>&1; then
+            echo ""
+            echo "linchange is installed but not configured yet. The wizard"
+            echo "asks for the database, your mail domain, which protocols to"
+            echo "enable, TLS, and the first administrator account."
+            printf 'Run the setup wizard now? [Y/n] '
+            read -r reply || reply=""
+            case "$reply" in
+                [Nn]*)
+                    echo "Run it later with:  linchange setup --config $CONFIG"
+                    ;;
+                *)
+                    if ! linchange setup --config "$CONFIG"; then
+                        echo "" >&2
+                        echo "The wizard did not finish. Run it again with:" >&2
+                        echo "    linchange setup --config $CONFIG" >&2
+                    fi
+                    ;;
+            esac
+        fi
+
+        if [ ! -e "$CONFIG" ]; then
+            echo ""
+            echo "linchange is installed but not configured."
+            echo "    Interactive:  linchange setup --config $CONFIG"
+            echo "    Example file: $EXAMPLE"
+            echo "    Then:         systemctl start linchange"
+        elif command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet linchange 2>/dev/null; then
+            # An upgrade of a running service: policy is to restart it with
+            # the new binary rather than leave the old one running.
+            systemctl restart linchange >/dev/null 2>&1 || true
+        fi
+        ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+    *)
+        echo "postinst called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

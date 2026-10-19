@@ -1,0 +1,31 @@
+#!/bin/bash
+# linchange postrm.
+set -e
+
+case "$1" in
+    purge)
+        # The user and group go, and so does everything they owned. Purge is
+        # explicit - a plain remove keeps all of this, so that reinstalling
+        # does not lose the database password or the mailboxes.
+        if command -v systemd-sysusers >/dev/null 2>&1; then
+            systemd-sysusers --purge /usr/lib/sysusers.d/linchange.conf 2>/dev/null || true
+        fi
+        rm -rf /var/lib/linchange /var/log/linchange /etc/linchange
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+        ;;
+    remove)
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+        ;;
+    upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        ;;
+    *)
+        echo "postrm called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

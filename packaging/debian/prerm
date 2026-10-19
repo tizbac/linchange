@@ -1,0 +1,28 @@
+#!/bin/bash
+# linchange prerm.
+set -e
+
+case "$1" in
+    remove|purge|upgrade|deconfigure)
+        # Stopping on upgrade as well as removal: the new version is started
+        # again from postinst, and a running service would hold its sockets
+        # across the unpack.
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl stop linchange >/dev/null 2>&1 || true
+        fi
+        ;;
+    failed-upgrade)
+        ;;
+    *)
+        echo "prerm called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+
+if [ "$1" != "upgrade" ]; then
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl disable linchange >/dev/null 2>&1 || true
+    fi
+fi
+
+exit 0

@@ -26,6 +26,12 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
 # Set working directory
 WORKDIR /build
 
+# Declared here as well as in the packager stage: an ARG only exists in the
+# stage that declares it, so the version has to be re-declared for the binary
+# build to see it (otherwise ${VERSION} expands to empty and the binary
+# reports dev).
+ARG VERSION=dev
+
 # Copy Go module files first for caching
 COPY go.mod go.sum ./
 RUN go mod download
@@ -67,10 +73,6 @@ COPY config/linchange.example.yaml /package/etc/linchange/linchange.example.yaml
 RUN mkdir -p /package/usr/lib/systemd/system
 RUN printf '[Unit]\nDescription=linchange mail server\nAfter=network.target postgresql.service\nWants=postgresql.service\n\n[Service]\nType=simple\nUser=linchange\nGroup=linchange\nExecStart=/usr/bin/linchange --config /etc/linchange/linchange.yaml --web-dir /usr/share/linchange/web\nRestart=on-failure\nRestartSec=5\nLimitNOFILE=65536\nNoNewPrivileges=true\nAmbientCapabilities=CAP_NET_BIND_SERVICE\nPrivateTmp=true\nProtectSystem=strict\nProtectHome=true\nReadWritePaths=/var/lib/linchange /var/log/linchange\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE\n\n[Install]\nWantedBy=multi-user.target\n' > /package/usr/lib/systemd/system/linchange.service
 
-# Create default config
-RUN mkdir -p /package/etc/linchange
-COPY config/linchange.example.yaml /package/etc/linchange/linchange.example.yaml
-
 # Create tmpfiles.d
 RUN mkdir -p /package/usr/lib/tmpfiles.d
 RUN printf 'd /var/lib/linchange 0750 linchange linchange -\nd /var/lib/linchange/blobs 0750 linchange linchange -\nd /var/log/linchange 0750 linchange linchange -\nd /etc/linchange 0750 root linchange -\n' > /package/usr/lib/tmpfiles.d/linchange.conf
@@ -89,14 +91,10 @@ ARG ARCH=amd64
 RUN mkdir -p /package/DEBIAN
 RUN printf 'Package: linchange\nVersion: %s\nArchitecture: %s\nMaintainer: linchange <admin@linchange.example>\nDescription: Self-hosted mail server with webmail, calendar, and admin panel\n A complete self-hosted mail server with:\n  - SMTP/IMAP/POP3\n  - MAPI/HTTP (Outlook native)\n  - CalDAV/CardDAV\n  - ActiveSync (EAS)\n  - EWS (Exchange Web Services)\n  - Autodiscover\n  - Webmail with rich text editor\n  - Calendar with scheduling assistant\n  - Admin panel for domains, users, aliases, shared mailboxes\n  - DKIM signing\n  - LDAP authentication\n  - Full-text search\nHomepage: https://github.com/linchange/linchange\nLicense: GPL-3.0-or-later\nDepends: systemd (>= 247), postgresql-client (>= 14), ca-certificates, tzdata\nRecommends: postgresql (>= 14)\nConflicts: courier-imap, courier-pop, dovecot-imapd, dovecot-pop3d, postfix, exim4\nProvides: mail-transport-agent, imap-server, pop3-server\nSection: mail\nPriority: optional\n' "${VERSION}" "${ARCH}" > /package/DEBIAN/control
 
-# Create maintainer scripts
-RUN printf '#!/bin/bash\nset -e\n\nif command -v systemd-sysusers >/dev/null; then\n    systemd-sysusers /usr/lib/sysusers.d/linchange.conf\nfi\n\nif command -v systemd-tmpfiles >/dev/null; then\n    systemd-tmpfiles --create /usr/lib/tmpfiles.d/linchange.conf\nfi\n\nchown root:linchange /etc/linchange\nchmod 750 /etc/linchange\n\nsystemctl daemon-reload\nsystemctl enable linchange >/dev/null 2>&1 || true\n\necho \"linchange installed. Configure /etc/linchange/linchange.yaml, create the first administrator with: linchange create-admin --config /etc/linchange/linchange.yaml --email admin@example.com, then run: systemctl start linchange\"\n' > /package/DEBIAN/postinst
-
-RUN printf '#!/bin/bash\nset -e\n\nif [ "$1" = "remove" ] || [ "$1" = "purge" ]; then\n    systemctl stop linchange >/dev/null 2>&1 || true\n    systemctl disable linchange >/dev/null 2>&1 || true\nfi\n' > /package/DEBIAN/prerm
-
-RUN printf '#!/bin/bash\nset -e\n\nif [ "$1" = "purge" ]; then\n    if command -v systemd-sysusers >/dev/null; then\n        systemd-sysusers --purge /usr/lib/sysusers.d/linchange.conf 2>/dev/null || true\n    fi\n    rm -rf /var/lib/linchange /var/log/linchange /etc/linchange\n    systemctl daemon-reload >/dev/null 2>&1 || true\nfi\n' > /package/DEBIAN/postrm
-
-# Make scripts executable
+# Maintainer scripts live in packaging/debian and are shared with package.sh.
+# They are copied rather than printed here: a printf-escaped shell script
+# cannot be reviewed, linted, or run locally before packaging.
+COPY packaging/debian/postinst packaging/debian/prerm packaging/debian/postrm /package/DEBIAN/
 RUN chmod 755 /package/DEBIAN/postinst /package/DEBIAN/prerm /package/DEBIAN/postrm
 
 # Build the .deb package
