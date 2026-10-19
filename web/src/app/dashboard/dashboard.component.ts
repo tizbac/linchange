@@ -20,6 +20,10 @@ import { RouterLink } from '@angular/router';
           <h2 class="text-lg font-semibold text-slate-900">Calendar</h2>
           <p class="mt-2 text-sm text-slate-500">Manage events, free/busy, and scheduling.</p>
         </a>
+        <a routerLink="/meetings" class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 hover:ring-blue-400 transition-colors">
+          <h2 class="text-lg font-semibold text-slate-900">Meetings</h2>
+          <p class="mt-2 text-sm text-slate-500">Invite people by email and chat in the meeting room.</p>
+        </a>
       </div>
     </main>
   `,

@@ -50,6 +50,7 @@ func (c *Config) Validate() error {
 	v.validateLDAP()
 	v.validateMail()
 	v.validateExchange()
+	v.validateMeetings()
 	v.validateLog()
 
 	if len(v.problems) > 0 {
@@ -467,6 +468,39 @@ func (v *validator) validateExchange() {
 	}
 	if c.Listener.HTTPS.Enabled() && !c.TLSEnabled() {
 		v.addf("listeners.https is set but no TLS certificate is configured")
+	}
+}
+
+// validateMeetings checks the meeting integration. Everything is optional: a
+// deployment that says nothing about meetings simply has no meeting UI, and
+// one that enables OpenIM without pointing at a server is refused at startup
+// rather than at the first invitation.
+func (v *validator) validateMeetings() {
+	c := v.server()
+	m := c.Meetings
+	if m.PublicURL != "" {
+		if !strings.HasPrefix(m.PublicURL, "http://") && !strings.HasPrefix(m.PublicURL, "https://") {
+			v.addf("meetings.public_url %q must start with http:// or https://", m.PublicURL)
+		}
+		if strings.HasSuffix(m.PublicURL, "/") {
+			v.addf("meetings.public_url %q must not end with /", m.PublicURL)
+		}
+	}
+	o := m.OpenIM
+	if !o.Enabled {
+		return
+	}
+	if o.APIAddr == "" {
+		v.addf("meetings.openim.api_addr is required when OpenIM is enabled")
+	}
+	if o.WSAddr == "" {
+		v.addf("meetings.openim.ws_addr is required when OpenIM is enabled; it is the address the browser SDK connects to")
+	}
+	if o.AdminSecret == "" {
+		v.addf("meetings.openim.admin_secret is required when OpenIM is enabled")
+	}
+	if !c.Listener.HTTP.Enabled() && !c.Listener.HTTPS.Enabled() {
+		v.addf("meetings are enabled but neither listeners.http nor listeners.https is set")
 	}
 }
 

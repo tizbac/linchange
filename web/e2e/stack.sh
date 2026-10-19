@@ -34,6 +34,7 @@ sed -E \
   -e "s|^  http: .*|  http: { addr: \":${PORT}\" }|" \
   -e "/greylisting:/,/delay:/ s|^      enabled: .*|      enabled: false|" \
   -e "/^    dsn:/,/delay:/ s|^      delay: .*|      delay: 5s|" \
+  -e "s|^  public_url: .*|  public_url: http://127.0.0.1:${PORT}|" \
   linchange.dev.yaml > .e2e-linchange.yaml
 
 # Autodiscover answers with the advertised ports, and the tests insist every

@@ -50,8 +50,13 @@ type Builder struct {
 type attachment struct {
 	filename    string
 	contentType string
-	contentID   string
-	data        []byte
+	// params are Content-Type parameters beyond the filename. Almost no
+	// attachment has any, but the one that does needs them: RFC 6047 puts the
+	// iTIP method on the calendar part, and a client deciding whether to show
+	// an Accept button reads it from there.
+	params    map[string]string
+	contentID string
+	data      []byte
 }
 
 // NewBuilder returns an empty composer.
@@ -136,11 +141,22 @@ func (b *Builder) HTML(body string) *Builder {
 // rather than base64, which is roughly a third smaller and stays legible in a
 // raw view; binary content is base64, which has no line-length limit.
 func (b *Builder) Attach(filename, contentType string, data []byte) *Builder {
-	b.attachments = append(b.attachments, attachment{
+	media := normaliseContentType(contentType, filename)
+	a := attachment{
 		filename:    sanitiseFilename(filename),
-		contentType: normaliseContentType(contentType, filename),
+		contentType: media,
 		data:        data,
-	})
+	}
+	// RFC 6047 §3.1: a calendar part's Content-Type carries the iTIP method,
+	// and the value is the METHOD written in the part's own body. Deriving it
+	// from the body keeps the two from ever disagreeing - a part that says
+	// method=REQUEST while its body says CANCEL is a message no client should
+	// have to guess about - and it does so for every caller that attaches an
+	// invitation, rather than only for the ones that remembered to pass it.
+	if method := calendarMethod(media, string(data)); method != "" {
+		a.params = map[string]string{"charset": "UTF-8", "method": method}
+	}
+	b.attachments = append(b.attachments, a)
 	return b
 }
 
@@ -427,7 +443,11 @@ func writeTextPart(w *gomessage.Writer, contentType, body, contentID string) err
 // download rather than something the body refers to.
 func writeAttachment(w *gomessage.Writer, a attachment, contentID string) error {
 	header := gomessage.Header{}
-	header.SetContentType(a.contentType, map[string]string{"name": a.filename})
+	params := map[string]string{"name": a.filename}
+	for k, v := range a.params {
+		params[k] = v
+	}
+	header.SetContentType(a.contentType, params)
 	disposition := "attachment"
 	if contentID != "" {
 		disposition = "inline"

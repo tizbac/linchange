@@ -8,7 +8,8 @@
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
     "e2e": "playwright test --config e2e/playwright.config.ts",
-    "e2e:report": "playwright show-report e2e/playwright-report"
+    "e2e:report": "playwright show-report e2e/playwright-report",
+    "postinstall": "node scripts/openim-protocol-shim.mjs"
   },
   "private": true,
   "packageManager": "npm@12.0.2",
@@ -26,6 +27,7 @@
     "@fullcalendar/list": "^6.1.21",
     "@fullcalendar/rrule": "^6.1.21",
     "@fullcalendar/timegrid": "^6.1.21",
+    "@openim/client-sdk": "^3.8.3-hotfix.0",
     "@tinymce/tinymce-angular": "^8.0.1",
     "rrule": "^2.8.1",
     "rxjs": "~7.8.0",

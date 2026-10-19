@@ -15,8 +15,10 @@ async function signIn(page: Page): Promise<void> {
   await page.waitForURL(/\/dashboard$/);
 }
 
+// The inbox button carries an unread count when mail has arrived, so the
+// folder buttons are matched as prefixes rather than exact names.
 function folderButton(page: Page, name: string) {
-  return page.locator('aside').getByRole('button', { name, exact: true });
+  return page.locator('aside').getByRole('button', { name });
 }
 
 async function openSent(page: Page): Promise<void> {

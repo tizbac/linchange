@@ -183,6 +183,25 @@ func calendarMethod(contentType, body string) string {
 	return strings.TrimSpace(rest)
 }
 
+// ScheduleDocument returns the iCalendar payload of a scheduling message, or
+// nil when this is not one.
+//
+// The distinction is the METHOD in the body, per RFC 5546 §3.1: a part that
+// calls itself text/calendar but declares no method is a forwardee's pasted
+// appointment, and acting on it would put an answer on mail that asked no
+// question. The document returned is the part's bytes as delivered, because
+// that is what the calendar layer has to parse - the header's method
+// parameter is a copy of the METHOD inside it, never the source of truth.
+func (p *Parsed) ScheduleDocument() []byte {
+	for _, part := range p.Parts {
+		if calendarMethod(part.ContentType, string(part.Content)) == "" {
+			continue
+		}
+		return part.Content
+	}
+	return nil
+}
+
 // primarySender returns the From address and display name.
 //
 // A message can carry several From headers or an empty one; the first

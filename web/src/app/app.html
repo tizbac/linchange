@@ -30,6 +30,13 @@
             >
               Calendar
             </a>
+            <a
+              routerLink="/meetings"
+              routerLinkActive="text-brand-700"
+              class="text-sm font-medium text-slate-600 transition hover:text-brand-700"
+            >
+              Meetings
+            </a>
             @if (auth.isDomainAdmin()) {
               <a
                 routerLink="/admin/domains"

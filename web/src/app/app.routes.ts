@@ -57,6 +57,20 @@ export const routes: Routes = [
     canActivate: [requireAuth],
     loadComponent: () => import('./calendar/calendar.component').then((m) => m.CalendarComponent),
   },
+  {
+    path: 'meetings',
+    canActivate: [requireAuth],
+    loadComponent: () => import('./meetings/meetings.component').then((m) => m.MeetingsComponent),
+  },
+  // The room page is deliberately unguarded: an invitee answers from the link
+  // in their invitation with no account here. The page works out which visitor
+  // it has from the token in the query, and a signed-out visitor without one
+  // is pointed at the login page from inside it.
+  {
+    path: 'meetings/:uid',
+    loadComponent: () =>
+      import('./meetings/meeting-room.component').then((m) => m.MeetingRoomComponent),
+  },
   { path: 'login', component: LoginComponent, canActivate: [onlyGuests] },
   { path: 'second-factor', component: SecondFactorComponent, canActivate: [onlyGuests] },
   { path: 'forgot-password', component: ForgotPasswordComponent, canActivate: [onlyGuests] },

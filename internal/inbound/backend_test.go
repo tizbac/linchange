@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,6 +40,9 @@ type inboundFixture struct {
 	dns   *fixtureResolver
 	blobs *blobstore.Store
 	addr  string
+	// backend is exposed so a test can wire the optional hooks the
+	// application wires in production - scheduling, today.
+	backend *Backend
 }
 
 // setupInbound starts a listener on a random port and seeds the directory with
@@ -156,7 +160,7 @@ func setupInbound(t *testing.T, tune func(*config.Config)) *inboundFixture {
 		ln.Close()
 	})
 
-	return &inboundFixture{db: db, cfg: cfg, dns: dns, blobs: blobs, addr: ln.Addr().String()}
+	return &inboundFixture{db: db, cfg: cfg, dns: dns, blobs: blobs, addr: ln.Addr().String(), backend: backend}
 }
 
 // storedMessage is one row of the messages table joined to its mailbox.
@@ -1102,5 +1106,150 @@ func TestInboundDisabledDoesNotListen(t *testing.T) {
 	}
 	if err := srv.Start(context.Background()); err != nil {
 		t.Errorf("Start on a disabled server = %v, want nil", err)
+	}
+}
+
+// schedulingMessage builds an invitation as it arrives from another server:
+// a part a human reads and a calendar part a client answers from. The METHOD
+// travels in the part's body - its copy in the Content-Type is the decoration
+// clients read first, never the source of truth.
+func schedulingMessage(method string) string {
+	ics := strings.Join([]string{
+		"BEGIN:VCALENDAR",
+		"VERSION:2.0",
+		"PRODID:-//other//EN",
+		"METHOD:" + method,
+		"BEGIN:VEVENT",
+		"UID:abc123@other",
+		"SEQUENCE:0",
+		"DTSTAMP:20261021T120000Z",
+		"DTSTART:20261022T140000Z",
+		"DTEND:20261022T150000Z",
+		"SUMMARY:Design review",
+		"ORGANIZER:mailto:organizer@example.com",
+		"ATTENDEE;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:alice@example.com",
+		"END:VEVENT",
+		"END:VCALENDAR",
+		"",
+	}, "\r\n")
+	return strings.Join([]string{
+		"From: Organizer <organizer@example.com>",
+		"To: alice@example.com",
+		"Subject: Invitation: Design review",
+		"Date: Mon, 02 Jan 2006 15:04:05 +0000",
+		"MIME-Version: 1.0",
+		`Content-Type: multipart/mixed; boundary="calboundary"`,
+		"",
+		"--calboundary",
+		"Content-Type: text/plain; charset=utf-8",
+		"",
+		"You are invited.",
+		"",
+		"--calboundary",
+		"Content-Type: text/calendar; method=" + method + "; charset=utf-8",
+		"Content-Disposition: attachment; filename=invitation.ics",
+		"",
+		ics,
+		"--calboundary--",
+		"",
+	}, "\r\n")
+}
+
+// pastedCalendarMessage carries a calendar file with no METHOD at all: what a
+// forward of somebody's appointment looks like. No question is asked by it,
+// so nothing should be handed to the calendar layer to answer.
+func pastedCalendarMessage() string {
+	return strings.Join([]string{
+		"From: Forwarder <sender@example.com>",
+		"To: alice@example.com",
+		"Subject: FW: the thing",
+		"Date: Mon, 02 Jan 2006 15:04:05 +0000",
+		"MIME-Version: 1.0",
+		`Content-Type: multipart/mixed; boundary="calboundary"`,
+		"",
+		"--calboundary",
+		"Content-Type: text/plain; charset=utf-8",
+		"",
+		"as promised",
+		"",
+		"--calboundary",
+		"Content-Type: text/calendar; charset=utf-8",
+		"Content-Disposition: attachment; filename=appointment.ics",
+		"",
+		"BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:pasted@other\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+		"--calboundary--",
+		"",
+	}, "\r\n")
+}
+
+// A scheduling message in the inbound mail is handed to the calendar layer
+// once, for the recipient whose copy was stored - which is the path an
+// external mail client's Accept travels when its user answers an invitation
+// from this server. Ordinary mail and a pasted calendar file are not handed
+// to anything, and every message is stored either way.
+func TestInboundHandsSchedulingMessagesToTheCalendar(t *testing.T) {
+	f := setupInbound(t, nil)
+
+	type handed struct {
+		owner    string
+		document string
+	}
+	var (
+		mu    sync.Mutex
+		hands []handed
+	)
+	f.backend.Scheduling = func(_ context.Context, owner string, document []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		hands = append(hands, handed{owner: owner, document: string(document)})
+	}
+	handedTo := func() []handed {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]handed(nil), hands...)
+	}
+
+	send := func(msg string) {
+		t.Helper()
+		c := dialSMTP(t, f.addr)
+		if code, reply := c.cmd("MAIL FROM:<organizer@example.com>"); code != 250 {
+			t.Fatalf("MAIL FROM = %d %s", code, reply)
+		}
+		if code, reply := c.cmd("RCPT TO:<alice@example.com>"); code != 250 {
+			t.Fatalf("RCPT TO = %d %s", code, reply)
+		}
+		if code, reply := c.data(msg); code != 250 {
+			t.Fatalf("DATA = %d %s", code, reply)
+		}
+	}
+
+	send(schedulingMessage("REQUEST"))
+	got := handedTo()
+	if len(got) != 1 {
+		t.Fatalf("scheduling calls = %d, want 1: %+v", len(got), got)
+	}
+	if got[0].owner != "alice@example.com" {
+		t.Errorf("owner = %q, want the recipient whose copy was stored", got[0].owner)
+	}
+	if !strings.Contains(got[0].document, "METHOD:REQUEST") {
+		t.Errorf("handed document is not the iTIP document:\n%s", got[0].document)
+	}
+
+	// Ordinary mail costs one scan of its parts and no call at all.
+	send(inboundMessage("Sender <sender@example.com>", "alice@example.com", "Hello", "plain body"))
+	if n := len(handedTo()); n != 1 {
+		t.Errorf("scheduling calls after a plain message = %d, want 1", n)
+	}
+
+	// A calendar file that asks nothing is not a scheduling message: the
+	// method lives in the body, and a forward carries none.
+	send(pastedCalendarMessage())
+	if n := len(handedTo()); n != 1 {
+		t.Errorf("scheduling calls after a pasted calendar file = %d, want 1", n)
+	}
+
+	// The hand-off replaced nothing: all three are mail.
+	if msgs := f.messages(t, "alice@example.com"); len(msgs) != 3 {
+		t.Errorf("alice has %d messages, want 3", len(msgs))
 	}
 }
