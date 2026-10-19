@@ -23,7 +23,11 @@ import (
 	"github.com/linchange/linchange/internal/logging"
 )
 
-const version = "0.1.0"
+// version is the build's version. It is a variable, not a constant, so that
+// the packaging scripts can set it at link time with
+// -ldflags "-X main.version=<version>"; a constant is not writable by the
+// linker and the flag would be ignored in silence.
+var version = "0.1.0"
 
 func main() {
 	// Subcommands are recognised before flag parsing: the server itself takes
@@ -31,6 +35,12 @@ func main() {
 	// subcommand name.
 	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
 		switch os.Args[1] {
+		case "setup":
+			if err := runSetup(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "linchange setup: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "create-admin":
 			if err := runCreateAdmin(os.Args[2:]); err != nil {
 				fmt.Fprintf(os.Stderr, "linchange create-admin: %v\n", err)
@@ -55,6 +65,7 @@ func run(args []string) error {
 
 Usage:
   linchange --config <path.yaml>
+  linchange setup --config <path.yaml>
   linchange create-admin --config <path.yaml> --email <address>
 
 Flags:

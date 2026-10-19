@@ -136,13 +136,9 @@ func applyMigration(ctx context.Context, db *sqlx.DB, m migrations.Migration) er
 	// transaction. A future migration needing that must be marked, so this
 	// stays strict here rather than quietly running outside a transaction.
 	started := time.Now()
-	fmt.Printf("DEBUG: Applying migration %04d_%s\n", m.Version, m.Name)
-	fmt.Printf("DEBUG: SQL: %s\n", m.SQL)
 	if _, err := tx.ExecContext(ctx, m.SQL); err != nil {
-		fmt.Printf("DEBUG: Migration failed: %v\n", err)
 		return fmt.Errorf("executing: %w", err)
 	}
-	fmt.Printf("DEBUG: Migration executed successfully\n")
 
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO schema_migrations (version, name, checksum, duration)
