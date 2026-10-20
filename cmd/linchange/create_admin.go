@@ -15,6 +15,7 @@ import (
 	"github.com/linchange/linchange/config"
 	"github.com/linchange/linchange/internal/admin"
 	"github.com/linchange/linchange/internal/auth/policy"
+	"github.com/linchange/linchange/internal/imapd"
 	"github.com/linchange/linchange/internal/logging"
 	"github.com/linchange/linchange/internal/store"
 )
@@ -157,6 +158,13 @@ Flags:
 	})
 	if err != nil {
 		return err
+	}
+
+	// The standard folders are part of a usable mailbox: IMAP, EWS and EAS all
+	// address them by name, so an account created here without them cannot
+	// sync, which reads as a broken server rather than as a missing step.
+	if err := imapd.NewMailboxRepo().EnsureFolders(ctx, db, user.Address); err != nil {
+		return fmt.Errorf("create-admin: creating the standard folders: %w", err)
 	}
 
 	fmt.Printf("Created administrator %s\n", user.Address)

@@ -43,6 +43,7 @@ import (
 	"github.com/linchange/linchange/internal/imapd"
 	"github.com/linchange/linchange/internal/imapimport"
 	"github.com/linchange/linchange/internal/mapihttp"
+	"github.com/linchange/linchange/internal/meetings"
 	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/webmail"
 )
@@ -105,6 +106,9 @@ type Server struct {
 	// did not build one (tests that never touch it); the routes are then
 	// simply not mounted.
 	imports *imapimport.Service
+	// meetings creates meetings: the invitation emails with their reply
+	// links, the answers, and the OpenIM room behind the chat panel.
+	meetings *meetings.Service
 }
 
 // Options are the inputs to New.
@@ -321,6 +325,32 @@ func New(opts Options) (*Server, error) {
 	// iOS/macOS Calendar, Evolution, etc.). It uses the same calendar service.
 	caldavServer := caldav.NewServer("/caldav", calService, opts.DB, mailVerifier)
 
+	// The meetings service turns a calendar event into an invitation: one
+	// email per guest with their own reply link, and a chat room in OpenIM
+	// when the deployment runs one. The OpenIM client is built only when
+	// configured - no config means no chat, which is a state the service
+	// answers honestly rather than failing to construct over.
+	var openIM *meetings.OpenIMClient
+	if cfg.Meetings.OpenIM.Enabled {
+		openIM = meetings.NewOpenIMClient(meetings.OpenIMConfig{
+			APIAddr:     cfg.Meetings.OpenIM.APIAddr,
+			WSAddr:      cfg.Meetings.OpenIM.WSAddr,
+			AdminUserID: cfg.Meetings.OpenIM.AdminUserID,
+			Secret:      cfg.Meetings.OpenIM.AdminSecret,
+		})
+	}
+	meetingsService, err := meetings.New(meetings.Options{
+		DB:        opts.DB,
+		Mail:      mailService,
+		Calendar:  calService,
+		OpenIM:    openIM,
+		PublicURL: cfg.MeetingsPublicURL(),
+		Logger:    log,
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	// The Autodiscover service for Outlook automatic configuration.
 	autodiscoverService := autodiscover.New(cfg, opts.DB)
 
@@ -389,6 +419,7 @@ func New(opts Options) (*Server, error) {
 		workgroups:   store.NewWorkgroups(),
 		staticDir:    opts.StaticDir,
 		imports:      opts.Imports,
+		meetings:     meetingsService,
 	}, nil
 }
 
@@ -437,6 +468,12 @@ func (s *Server) Handler() http.Handler {
 		// The organization routes answer "who is in my organization", which the
 		// header, the address book and the invite picker all need.
 		s.mountOrganization(r)
+
+		// Meetings sit on top of the calendar and the mailbox: creating one
+		// writes an event and queues an invitation. The invitee-facing routes
+		// are mounted in the same group but outside requireAuth, because the
+		// person following an invitation link has no session to present.
+		s.mountMeetings(r)
 	})
 
 	// CalDAV is not part of the REST surface: a calendar client is handed
@@ -646,6 +683,15 @@ func mapErrorCode(err error) int {
 	}
 	if errors.Is(err, calendar.ErrBadRequest) {
 		return http.StatusBadRequest
+	}
+	if errors.Is(err, meetings.ErrInvalid) {
+		return http.StatusBadRequest
+	}
+	if errors.Is(err, meetings.ErrDenied) {
+		return http.StatusForbidden
+	}
+	if errors.Is(err, meetings.ErrChatUnavailable) {
+		return http.StatusServiceUnavailable
 	}
 	if errors.Is(err, ErrInvalid) {
 		return http.StatusBadRequest

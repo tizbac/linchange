@@ -23,6 +23,7 @@ import (
 	ldapauth "github.com/linchange/linchange/internal/auth/ldap"
 	"github.com/linchange/linchange/internal/auth/mailauth"
 	"github.com/linchange/linchange/internal/blobstore"
+	"github.com/linchange/linchange/internal/calendar"
 	"github.com/linchange/linchange/internal/delivery"
 	"github.com/linchange/linchange/internal/dkim"
 	"github.com/linchange/linchange/internal/httpapi"
@@ -189,6 +190,38 @@ func New(ctx context.Context, opts Options) (*App, error) {
 	// before submission: everything it accepts lands in a local mailbox.
 	{
 		backend := inbound.NewBackend(db, *cfg, log, blobs)
+
+		// An iTIP message in the inbound mail is acted on once it has been
+		// stored for its recipient: the REPLY an external mail client sends
+		// when its user clicks Accept, the REQUEST that files a meeting this
+		// server was invited to, the CANCEL that withdraws one. The calendar
+		// service is built here the way httpapi builds its own - the
+		// repositories behind it are stateless - so an answer arriving by
+		// mail lands through the same code as an answer given in the web
+		// client, and one of the two paths is not a second implementation of
+		// the rules.
+		schedCal := calendar.NewService(store.NewCalendars(), store.NewEvents(), store.NewWorkgroups())
+		backend.Scheduling = func(ctx context.Context, owner string, document []byte) {
+			who, err := store.LoadPrincipal(ctx, db, owner)
+			if err != nil {
+				// Recipient existence was checked on RCPT, so this is the
+				// account disabled while its mail was in flight. Doing
+				// nothing is the right answer, and the mail is still stored.
+				return
+			}
+			applied, err := schedCal.Apply(ctx, db, who, calendar.Incoming{Document: document})
+			if err != nil {
+				log.Warn("inbound scheduling message refused",
+					"owner", owner, "error", err)
+				return
+			}
+			log.Info("inbound scheduling message applied",
+				"owner", owner, "uid", applied.UID,
+				"method", string(applied.Method),
+				"action", string(applied.Action),
+				"note", applied.Note)
+		}
+
 		inboundSrv, err := inbound.New(*cfg, backend, log, a.ACMEManager)
 		if err != nil {
 			a.Close(context.Background())

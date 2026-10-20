@@ -60,21 +60,28 @@ func (c *call) faultResponse(err *soapError) responseCode {
 	if err.element == "" {
 		err.element = c.responseElement()
 	}
-	return responseCode{element: err.element, body: faultResponseMessage(err)}
+	return responseCode{
+		element: err.element,
+		body:    faultResponseMessage(c.name+"ResponseMessage", err),
+	}
 }
 
-// faultResponseMessage renders a single failure inside a response message.
+// faultResponseMessage renders a single failure inside a response message named
+// after the operation that answers it.
 //
-// This is the per-item form of a fault: <m:ResponseMessage ResponseClass="Error">
-// with the response code inside it. It is what makes a batch usable, because one
-// item's failure is reported next to the others rather than instead of them.
-func faultResponseMessage(err *soapError) string {
+// This is the per-item form of a fault: the operation's own response message with
+// ResponseClass="Error" and the response code inside it. It is what makes a batch
+// usable, because one item's failure is reported next to the others rather than
+// instead of them. The element carries the operation's name because a client
+// dispatches on it: a message named for no operation in particular is one it has
+// no way to route.
+func faultResponseMessage(messageElement string, err *soapError) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, `<m:ResponseMessage ResponseClass="Error"><m:MessageText>`)
+	fmt.Fprintf(&b, `<m:%s ResponseClass="Error"><m:MessageText>`, messageElement)
 	b.WriteString(escape(err.text))
 	b.WriteString(`</m:MessageText><m:ResponseCode>`)
 	b.WriteString(escape(err.code))
-	b.WriteString(`</m:ResponseCode><m:Items></m:Items></m:ResponseMessage>`)
+	fmt.Fprintf(&b, `</m:ResponseCode></m:%s>`, messageElement)
 	return b.String()
 }
 

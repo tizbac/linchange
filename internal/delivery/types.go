@@ -16,7 +16,6 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/mail"
-	"sort"
 	"strings"
 	"time"
 
@@ -194,8 +193,6 @@ func (c BackoffConfig) CalculateBackoff(attempts int, createdAt time.Time) (time
 // ---------------------------------------------------------------------------
 
 // SMTPConfig holds the connection parameters for the SMTP client.
-// If Host is empty, the client will perform direct MX delivery to the
-// recipient domains (looking up MX records and connecting directly).
 type SMTPConfig struct {
 	Host               string
 	Port               int
@@ -218,20 +215,7 @@ func NewSMTPClient(cfg SMTPConfig) SMTPClient {
 }
 
 // Send delivers a message using go-smtp.
-// If cfg.Host is set, it connects to that smart host.
-// If cfg.Host is empty, it performs direct MX delivery to each recipient domain.
 func (c *smtpClient) Send(ctx context.Context, from string, to []string, data []byte) error {
-	if c.cfg.Host != "" {
-		// Smart host mode - connect to the configured host
-		return c.sendViaSmartHost(ctx, from, to, data)
-	}
-
-	// Direct MX delivery mode
-	return c.sendViaMX(ctx, from, to, data)
-}
-
-// sendViaSmartHost connects to the configured smart host and delivers the message.
-func (c *smtpClient) sendViaSmartHost(ctx context.Context, from string, to []string, data []byte) error {
 	dialer := &net.Dialer{
 		Timeout: c.cfg.ConnectTimeout,
 	}
@@ -345,210 +329,110 @@ func (c *smtpClient) sendViaSmartHost(ctx context.Context, from string, to []str
 	return nil
 }
 
-// sendViaMX performs direct MX delivery to each recipient's domain.
-// It groups recipients by domain, looks up MX records, and tries each MX host in priority order.
-func (c *smtpClient) sendViaMX(ctx context.Context, from string, to []string, data []byte) error {
-	// Group recipients by domain
-	recipientsByDomain := make(map[string][]string)
-	for _, addr := range to {
-		domain := extractDomain(addr)
-		if domain != "" {
-			recipientsByDomain[domain] = append(recipientsByDomain[domain], addr)
-		}
-	}
-
-	// If we couldn't parse any domains, fall back to treating all as transient
-	if len(recipientsByDomain) == 0 {
-		return &ErrTransient{Err: fmt.Errorf("no valid recipient domains")}
-	}
-
-	// Try each domain independently - a failure for one domain doesn't affect others
-	var (
-		allDelivered []string
-		allPermanent []string
-		allTransient []string
-	)
-
-	for domain, recipients := range recipientsByDomain {
-		// Look up MX records for this domain
-		mxRecords, err := c.lookupMX(ctx, domain)
-		if err != nil {
-			// MX lookup failed - mark all recipients for this domain as transient
-			allTransient = append(allTransient, recipients...)
-			continue
-		}
-
-		// Try each MX host in priority order
-		delivered, permanent, transient := c.tryMXHosts(ctx, mxRecords, from, recipients, data)
-		allDelivered = append(allDelivered, delivered...)
-		allPermanent = append(allPermanent, permanent...)
-		allTransient = append(allTransient, transient...)
-	}
-
-	// If all recipients permanently rejected, fail immediately
-	if len(allPermanent) > 0 && len(allDelivered) == 0 && len(allTransient) == 0 {
-		return &ErrPermanent{Err: fmt.Errorf("all recipients rejected: %v", allPermanent)}
-	}
-
-	// If some recipients delivered, consider it a partial success
-	// The worker will handle retry for transient/permanent ones
-	if len(allTransient) > 0 || len(allPermanent) > 0 {
-		var failed []string
-		failed = append(failed, allTransient...)
-		failed = append(failed, allPermanent...)
-		return &ErrTransient{Err: fmt.Errorf("some recipients failed: %v", failed)}
-	}
-
-	return nil
+// RecipientOutcome is what became of each recipient of one SendEach call:
+// the three groups are disjoint, and everybody is in exactly one of them.
+type RecipientOutcome struct {
+	Delivered []string
+	Permanent []string
+	Transient []string
+	// Reasons explains the failures above, keyed by recipient address (or by
+	// "*" when a connection-level failure hit every recipient). Without it a
+	// deferred message says only that something did not work, which is not
+	// enough to find out what.
+	Reasons map[string]string
 }
 
-// tryMXHosts tries to deliver to each MX host in priority order.
-// Returns delivered, permanent failures, and transient failures.
-func (c *smtpClient) tryMXHosts(ctx context.Context, mxRecords []*net.MX, from string, recipients []string, data []byte) ([]string, []string, []string) {
-	var (
-		delivered []string
-		permanent []string
-		transient []string
-	)
-
-	for _, mx := range mxRecords {
-		host := strings.TrimSuffix(mx.Host, ".")
-		addr := net.JoinHostPort(host, "25") // MX delivery always uses port 25
-
-		dialer := &net.Dialer{
-			Timeout: c.cfg.ConnectTimeout,
-		}
-
-		var s *smtp.Client
-
-		// Try plain connection first (MX delivery typically uses port 25 with opportunistic STARTTLS)
-		conn, dialErr := dialer.DialContext(ctx, "tcp", addr)
-		if dialErr != nil {
-			// This MX host unreachable - try next one
-			continue
-		}
-		s = smtp.NewClient(conn)
-
-		if err := s.Hello("linchange"); err != nil {
-			s.Close()
-			continue
-		}
-
-		// The go-smtp library does not expose a public StartTLS method.
-		// For MX delivery on port 25, we proceed without TLS (opportunistic).
-		// A production deployment should use a smart host with TLS for security.
-
-		if err := s.Mail(from, nil); err != nil {
-			if smtpIsPermanent(err) {
-				s.Close()
-				permanent = append(permanent, recipients...)
-				return delivered, permanent, transient
-			}
-			s.Close()
-			continue
-		}
-
-		// Attempt each recipient
-		var (
-			thisDelivered []string
-			thisPermanent []string
-			thisTransient []string
-		)
-
-		for _, toAddr := range recipients {
-			if err := s.Rcpt(toAddr, nil); err != nil {
-				if smtpIsPermanent(err) {
-					thisPermanent = append(thisPermanent, toAddr)
-				} else {
-					thisTransient = append(thisTransient, toAddr)
-				}
-				continue
-			}
-			thisDelivered = append(thisDelivered, toAddr)
-		}
-
-		// If all recipients permanently rejected on this MX, try next MX
-		if len(thisPermanent) > 0 && len(thisDelivered) == 0 && len(thisTransient) == 0 {
-			s.Close()
-			continue
-		}
-
-		// Send DATA for delivered recipients
-		if len(thisDelivered) > 0 {
-			if err := sendMailData(s, data); err != nil {
-				s.Close()
-				continue
-			}
-		}
-
-		// Try transient recipients
-		for _, addr := range thisTransient {
-			if err := s.Rcpt(addr, nil); err != nil {
-				thisPermanent = append(thisPermanent, addr)
-				continue
-			}
-			if err := sendMailData(s, data); err != nil {
-				thisPermanent = append(thisPermanent, addr)
-				continue
-			}
-			thisDelivered = append(thisDelivered, addr)
-		}
-
-		s.Close()
-
-		delivered = append(delivered, thisDelivered...)
-		permanent = append(permanent, thisPermanent...)
-		transient = append(transient, thisTransient...)
-
-		// If we delivered at least some recipients, consider this MX successful
-		// (don't try lower-priority MX hosts)
-		if len(delivered) > 0 {
-			return delivered, permanent, transient
-		}
-
-		// If all were transient/permanent on this MX, try next MX
+func (o *RecipientOutcome) failTransient(rcpts []string, reason string) {
+	if o.Reasons == nil {
+		o.Reasons = map[string]string{}
 	}
-
-	// All MX hosts failed - mark all as transient for retry
-	return delivered, permanent, append(transient, recipients...)
+	for _, r := range rcpts {
+		o.Reasons[r] = reason
+	}
+	o.Transient = append(o.Transient, rcpts...)
 }
 
-// lookupMX looks up MX records for a domain.
-// Returns them sorted by priority (lowest first).
-func (c *smtpClient) lookupMX(ctx context.Context, domain string) ([]*net.MX, error) {
-	// Use the system resolver with a timeout
-	type result struct {
-		mx  []*net.MX
-		err error
+func (o *RecipientOutcome) failPermanent(rcpt, reason string) {
+	if o.Reasons == nil {
+		o.Reasons = map[string]string{}
 	}
-	resCh := make(chan result, 1)
-	go func() {
-		mx, err := net.LookupMX(domain)
-		resCh <- result{mx: mx, err: err}
-	}()
+	o.Reasons[rcpt] = reason
+	o.Permanent = append(o.Permanent, rcpt)
+}
 
-	select {
-	case res := <-resCh:
-		if res.err != nil {
-			return nil, res.err
-		}
-		// Sort by priority (lower = higher preference)
-		sort.Slice(res.mx, func(i, j int) bool {
-			return res.mx[i].Pref < res.mx[j].Pref
+// SendEach delivers the message to each recipient in its own SMTP transaction
+// and reports what became of that recipient, so a caller can settle one
+// recipient's fate without guessing at the batch's. A failure to connect at
+// all is transient for everybody: nothing was accepted and a retry is worth
+// making.
+func (c *smtpClient) SendEach(ctx context.Context, from string, to []string, data []byte) RecipientOutcome {
+	var out RecipientOutcome
+	if len(to) == 0 {
+		return out
+	}
+
+	dialer := &net.Dialer{Timeout: c.cfg.ConnectTimeout}
+	addr := net.JoinHostPort(c.cfg.Host, fmt.Sprintf("%d", c.cfg.Port))
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		out.failTransient(to, fmt.Sprintf("connect %s: %v", addr, err))
+		return out
+	}
+
+	var s *smtp.Client
+	if c.cfg.TLS {
+		s, err = smtp.NewClientStartTLS(conn, &tls.Config{
+			ServerName:         c.cfg.Host,
+			InsecureSkipVerify: c.cfg.InsecureSkipVerify,
 		})
-		return res.mx, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	} else {
+		s = smtp.NewClient(conn)
+		if err = s.Hello("linchange"); err != nil {
+			s.Close()
+			out.failTransient(to, fmt.Sprintf("EHLO: %v", err))
+			return out
+		}
 	}
-}
+	if err != nil {
+		out.failTransient(to, fmt.Sprintf("STARTTLS: %v", err))
+		return out
+	}
+	defer s.Close()
+	s.CommandTimeout = c.cfg.CommandTimeout
 
-// extractDomain extracts the domain part from an email address.
-func extractDomain(addr string) string {
-	at := strings.LastIndex(addr, "@")
-	if at < 0 || at == len(addr)-1 {
-		return ""
+	if c.cfg.Username != "" && c.cfg.Password != "" {
+		auth := sasl.NewPlainClient("", c.cfg.Username, c.cfg.Password)
+		if err := s.Auth(auth); err != nil {
+			out.failTransient(to, fmt.Sprintf("AUTH: %v", err))
+			return out
+		}
 	}
-	return strings.ToLower(addr[at+1:])
+
+	for _, rcpt := range to {
+		// Every recipient is its own transaction: MAIL FROM, RCPT, DATA. An
+		// SMTP transaction covers one delivery, and reusing the envelope
+		// across deliveries would make one recipient's failure the next
+		// recipient's mail.
+		if err := s.Mail(from, nil); err != nil {
+			out.failTransient([]string{rcpt}, fmt.Sprintf("MAIL FROM: %v", err))
+			continue
+		}
+		if err := s.Rcpt(rcpt, nil); err != nil {
+			reason := fmt.Sprintf("RCPT TO: %v", err)
+			if smtpIsPermanent(err) {
+				out.failPermanent(rcpt, reason)
+			} else {
+				out.failTransient([]string{rcpt}, reason)
+			}
+			continue
+		}
+		if err := sendMailData(s, data); err != nil {
+			out.failTransient([]string{rcpt}, fmt.Sprintf("DATA: %v", err))
+			continue
+		}
+		out.Delivered = append(out.Delivered, rcpt)
+	}
+	return out
 }
 
 // smtpIsPermanent checks if an SMTP error indicates a permanent failure
@@ -590,10 +474,16 @@ type DSNConfig struct {
 	Delay       time.Duration
 }
 
-// GenerateDSN creates a DSN bounce message for a failed outbox message.
-// The message is sent back to the original sender (SubmittedBy) explaining
-// which recipients failed.
-func GenerateDSN(cfg DSNConfig, msg OutboxMessage, failedRecipients []OutboxRecipient) ([]byte, error) {
+// GenerateDSN creates a DSN bounce message for a failed outbox message. The
+// report goes back to the original sender and names every recipient that did
+// not get the message, with the reason the destination gave for refusing it.
+//
+// The shape follows RFC 3464: an auto-submitted plain-text message whose body
+// lists the failed recipients, one block each, so a client that shows the body
+// as a delivery report has something to show rather than a bare "failed".
+// original is the headers of the message that failed, when they can be read;
+// it is only used to quote the subject the sender sent.
+func GenerateDSN(cfg DSNConfig, msg OutboxMessage, failedRecipients []OutboxRecipient, original *mail.Message) ([]byte, error) {
 	if !cfg.Enabled {
 		return nil, nil
 	}
@@ -607,39 +497,44 @@ func GenerateDSN(cfg DSNConfig, msg OutboxMessage, failedRecipients []OutboxReci
 		return nil, fmt.Errorf("DSN: parse from_address %q: %w", cfg.FromAddress, err)
 	}
 
-	// Build the list of failed recipients for the DSN body.
-	var failedList strings.Builder
-	for i, r := range failedRecipients {
-		if i > 0 {
-			failedList.WriteString("\n")
-		}
-		fmt.Fprintf(&failedList, "  - %s: %s", r.Address, r.LastError)
-	}
-
-	// Construct a simple RFC 5322 message.
 	var b strings.Builder
 	fmt.Fprintf(&b, "From: %s\r\n", sender.String())
 	fmt.Fprintf(&b, "To: %s\r\n", msg.SubmittedBy)
+	fmt.Fprintf(&b, "Date: %s\r\n", time.Now().UTC().Format(time.RFC1123))
 	fmt.Fprintf(&b, "Subject: Delivery Status Notification (Failure)\r\n")
+	fmt.Fprintf(&b, "Auto-Submitted: auto-replied\r\n")
 	fmt.Fprintf(&b, "MIME-Version: 1.0\r\n")
 	fmt.Fprintf(&b, "Content-Type: text/plain; charset=utf-8\r\n")
 	fmt.Fprintf(&b, "Content-Transfer-Encoding: 7bit\r\n")
-	fmt.Fprintf(&b, "\r\n")
-	fmt.Fprintf(&b, "Your message was not delivered to the following recipients:\r\n")
-	fmt.Fprintf(&b, "\r\n")
-	fmt.Fprintf(&b, "Envelope from: %s\r\n", msg.EnvelopeFrom)
-	fmt.Fprintf(&b, "\r\n")
-	fmt.Fprintf(&b, "Failed recipients:\r\n")
-	if failedList.Len() > 0 {
-		failedList.WriteString("\r\n")
+	b.WriteString("\r\n")
+	fmt.Fprintf(&b, "Your message was not delivered.\r\n")
+	b.WriteString("\r\n")
+
+	for _, r := range failedRecipients {
+		reason := r.LastError
+		if reason == "" {
+			reason = msg.LastError
+		}
+		if reason == "" {
+			reason = "delivery failed"
+		}
+		fmt.Fprintf(&b, "Recipient: %s\r\n", r.Address)
+		fmt.Fprintf(&b, "  action: failed\r\n")
+		fmt.Fprintf(&b, "  reason: %s\r\n", reason)
+		b.WriteString("\r\n")
 	}
-	fmt.Fprint(&b, failedList.String())
-	fmt.Fprintf(&b, "\r\n")
-	fmt.Fprintf(&b, "Total attempts: %d\r\n", msg.Attempts)
+
+	if original != nil {
+		if subject := original.Header.Get("Subject"); subject != "" {
+			fmt.Fprintf(&b, "Original message: %s\r\n", subject)
+		}
+		fmt.Fprintf(&b, "Sent from: %s\r\n", msg.EnvelopeFrom)
+	}
+
+	fmt.Fprintf(&b, "Attempts: %d\r\n", msg.Attempts)
 	if msg.LastError != "" {
 		fmt.Fprintf(&b, "Last error: %s\r\n", msg.LastError)
 	}
-	fmt.Fprintf(&b, "\r\n")
 
 	return []byte(b.String()), nil
 }

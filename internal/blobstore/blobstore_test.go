@@ -41,6 +41,52 @@ func TestPutGetRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPutCoversEverySecondByte(t *testing.T) {
+	s := newTestStore(t)
+
+	// The shards fan out on two bytes, so a store can hold many digests that
+	// share a leading byte but live in different second-byte directories. The
+	// cache of created shards has to remember the whole two-byte prefix, or the
+	// first write into a leading byte would make every sibling directory of
+	// that byte look created and later writes there would fail.
+	var pair [2][]byte
+	found := false
+	seen := map[byte][]byte{}
+	for i := 0; i < 50000 && !found; i++ {
+		payload := []byte(fmt.Sprintf("payload %d", i))
+		d := DigestOf(payload)
+		if prev, ok := seen[d[0]]; ok && prev[1] != d[1] {
+			pair = [2][]byte{prev, payload}
+			found = true
+			break
+		}
+		if _, ok := seen[d[0]]; !ok {
+			seen[d[0]] = payload
+		}
+	}
+	if !found {
+		t.Skip("no two payloads in range share a leading byte but differ in the second")
+	}
+
+	digests := make([]Digest, 2)
+	for i, payload := range pair {
+		d, _, err := s.Put(payload)
+		if err != nil {
+			t.Fatalf("put %d: %v", i, err)
+		}
+		digests[i] = d
+	}
+	for i, payload := range pair {
+		got, err := s.Get(digests[i])
+		if err != nil {
+			t.Fatalf("get %d: %v", i, err)
+		}
+		if !bytes.Equal(got, payload) {
+			t.Errorf("get %d returned %q, want %q", i, got, payload)
+		}
+	}
+}
+
 func TestPutIsDeduplicating(t *testing.T) {
 	s := newTestStore(t)
 	body := []byte("identical message delivered to twenty people")

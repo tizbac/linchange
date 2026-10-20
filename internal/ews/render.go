@@ -30,6 +30,10 @@ type itemView struct {
 	container int64
 	// id is the item's row id within its container.
 	id int64
+	// owner is the mailbox address the item's message lives in: the shared
+	// mailbox that holds it when the folder belongs to one, otherwise the
+	// caller. Empty means the caller.
+	owner string
 	// message is the stored row. It is nil for a calendar item.
 	message *webmail.Message
 	// detail is the parsed message, present only when the shape asked for
@@ -47,6 +51,15 @@ type itemView struct {
 	event *store.Event
 	// class is the MS-OXPROPS item class.
 	class string
+}
+
+// mailOwner is the mailbox address the item's message lives in: the shared
+// mailbox that holds it when the folder belongs to one, otherwise the caller.
+func (v *itemView) mailOwner(caller string) string {
+	if v.owner != "" {
+		return v.owner
+	}
+	return caller
 }
 
 // changeKeyOf returns the item's change key.

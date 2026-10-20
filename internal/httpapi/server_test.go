@@ -56,6 +56,10 @@ func testConfig() *config.Config {
 			Reset:         config.ResetAuth{Enabled: true, TokenTTL: 5 * time.Minute},
 			Impersonation: config.Impersonation{Allowed: true},
 		},
+		// Join and reply links in invitations are built from this, and an
+		// empty host would produce a URL no assertion about a link could be
+		// written against.
+		Meetings: config.Meetings{PublicURL: "http://mail.test.invalid"},
 	}
 }
 

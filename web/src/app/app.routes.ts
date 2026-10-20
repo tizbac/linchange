@@ -21,6 +21,10 @@ export const routes: Routes = [
     component: DashboardComponent,
     canActivate: [requireAuth],
   },
+  // The signed-in landing page has a name of its own: sign-in, the second
+  // factor, and the admin guard all send the browser here, so the URL says
+  // where the user is instead of pretending to be the site root.
+  { path: 'dashboard', component: DashboardComponent, canActivate: [requireAuth] },
   {
     path: 'mail',
     canActivate: [requireAuth],
@@ -52,6 +56,20 @@ export const routes: Routes = [
     path: 'calendar',
     canActivate: [requireAuth],
     loadComponent: () => import('./calendar/calendar.component').then((m) => m.CalendarComponent),
+  },
+  {
+    path: 'meetings',
+    canActivate: [requireAuth],
+    loadComponent: () => import('./meetings/meetings.component').then((m) => m.MeetingsComponent),
+  },
+  // The room page is deliberately unguarded: an invitee answers from the link
+  // in their invitation with no account here. The page works out which visitor
+  // it has from the token in the query, and a signed-out visitor without one
+  // is pointed at the login page from inside it.
+  {
+    path: 'meetings/:uid',
+    loadComponent: () =>
+      import('./meetings/meeting-room.component').then((m) => m.MeetingRoomComponent),
   },
   { path: 'login', component: LoginComponent, canActivate: [onlyGuests] },
   { path: 'second-factor', component: SecondFactorComponent, canActivate: [onlyGuests] },

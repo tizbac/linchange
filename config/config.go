@@ -19,6 +19,7 @@ type Config struct {
 	LDAP     LDAP      `yaml:"ldap"`
 	Mail     Mail      `yaml:"mail"`
 	Exchange Exchange  `yaml:"exchange"`
+	Meetings Meetings `yaml:"meetings"`
 	Log      Log       `yaml:"logging"`
 }
 
@@ -477,6 +478,52 @@ type EAS struct {
 	MaxPingInterval int `yaml:"max_ping_interval"`
 	// MaxSyncItems caps the number of changes returned by one Sync command.
 	MaxSyncItems int `yaml:"max_sync_items"`
+}
+
+// Meetings configures scheduled meetings: the invitation emails, the join and
+// RSVP links they carry, and the OpenIM deployment that provides each
+// meeting's chat room.
+type Meetings struct {
+	// PublicURL is the base address join and RSVP links point at, for example
+	// https://mail.example.com. It is what an invitee outside this network
+	// types into a browser, so it has to be the address they can actually
+	// reach, not the bind address. Empty derives it from server.hostname with
+	// https.
+	PublicURL string `yaml:"public_url"`
+	// OpenIM is the chat backend. A meeting is still a meeting without it:
+	// invitations go out and RSVPs come back either way, and only the chat
+	// room is missing.
+	OpenIM OpenIM `yaml:"openim"`
+}
+
+// OpenIM is an OpenIM server deployment (github.com/openimsdk/open-im-server).
+//
+// linchange is the identity source: every OpenIM user is a linchange account,
+// provisioned on first use and given SDK tokens here, so nobody maintains
+// users in two places and the administrator token never leaves this process.
+type OpenIM struct {
+	Enabled bool `yaml:"enabled"`
+	// APIAddr is the OpenIM Platform API base, e.g. http://127.0.0.1:10002.
+	APIAddr string `yaml:"api_addr"`
+	// WSAddr is the WebSocket gateway the SDK logs in through, e.g.
+	// ws://127.0.0.1:10001.
+	WSAddr string `yaml:"ws_addr"`
+	// AdminUserID and AdminSecret identify linchange to the OpenIM admin API.
+	AdminUserID string `yaml:"admin_user_id"`
+	AdminSecret string `yaml:"admin_secret"`
+}
+
+// MeetingsPublicURL is the base address join and RSVP links are built from.
+//
+// A deployment that states one gets it verbatim. One that does not gets
+// https://<server.hostname>, which is the address an invitee on the public
+// internet would use; a server reached over plain HTTP has to say so, because
+// there is no way to derive a scheme from a hostname.
+func (c *Config) MeetingsPublicURL() string {
+	if c.Meetings.PublicURL != "" {
+		return c.Meetings.PublicURL
+	}
+	return "https://" + c.Server.Hostname
 }
 
 // Log configures logging and audit.

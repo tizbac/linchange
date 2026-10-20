@@ -216,7 +216,7 @@ func (e *EWS) syncFolderItems(c *call) responseCode {
 		return e.syncCalendarItems(c, req, folder, sh)
 	}
 
-	messages, serr := e.allFolderMessages(c, folder.id)
+	messages, serr := e.allFolderMessages(c, folder)
 	if serr != nil {
 		return c.faultResponse(serr)
 	}
@@ -250,6 +250,7 @@ func (e *EWS) syncFolderItems(c *call) responseCode {
 			kind:      "Message",
 			container: folder.id,
 			id:        summary.ID,
+			owner:     folder.mailOwner(c.owner()),
 			message:   &summary,
 			class:     itemClassOf(summary),
 		})
@@ -260,7 +261,7 @@ func (e *EWS) syncFolderItems(c *call) responseCode {
 	// does not turn a read of a thousand messages into a thousand reads.
 	if sh.wantsBody() {
 		for _, v := range views {
-			if detail, derr := e.mail.Message(c.ctx(), c.owner(), v.id); derr == nil {
+			if detail, derr := e.mail.Message(c.ctx(), v.owner, v.id); derr == nil {
 				v.detail = &detail
 			}
 		}
@@ -271,7 +272,11 @@ func (e *EWS) syncFolderItems(c *call) responseCode {
 		for _, v := range views {
 			ids = append(ids, v.id)
 		}
-		recipients, serr := e.readRecipients(c, ids)
+		owner := c.owner()
+		if len(views) > 0 {
+			owner = views[0].owner
+		}
+		recipients, serr := e.readRecipients(c, owner, ids)
 		if serr != nil {
 			return c.faultResponse(serr)
 		}
@@ -584,14 +589,25 @@ func (e *EWS) renderCalendarSyncItem(b *strings.Builder, c *call, calendarID int
 // is read as a walk: each page's last row becomes the next page's cursor until
 // the walk reports no more pages. The walk is newest-first, which is the store's
 // one ordering, and the caller turns it into whatever order it needs.
-func (e *EWS) allFolderMessages(c *call, folderID int64) ([]webmail.Message, *soapError) {
+//
+// The owner is the mailbox the folder belongs to, which for a shared mailbox is
+// not the caller: the same query machinery that reads a caller's folder reads a
+// mailbox the caller has been granted, because access was already decided when
+// the folder was resolved.
+func (e *EWS) allFolderMessages(c *call, folder container) ([]webmail.Message, *soapError) {
+	if folder.kind == kindSharedRoot {
+		// The root of a shared mailbox holds no items of its own: the mail is in
+		// the folders beneath it. A client syncing Exchange's root folder gets
+		// the same empty answer and then syncs the Inbox under it.
+		return nil, nil
+	}
 	var out []webmail.Message
 	var cursorDate time.Time
 	var cursorID int64
 	for {
 		q := &imapd.MailQuery{
-			Owner:     c.owner(),
-			FolderIDs: []int64{folderID},
+			Owner:     folder.mailOwner(c.owner()),
+			FolderIDs: []int64{folder.id},
 			Limit:     imapd.MaxListLimit,
 			Count:     false,
 		}

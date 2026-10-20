@@ -26,6 +26,7 @@ import (
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/calendar"
 	"github.com/linchange/linchange/internal/imapd"
+	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/webmail"
 )
 
@@ -78,6 +79,12 @@ type EWS struct {
 	auth     Authenticator
 	policy   policy.Policy
 	log      *slog.Logger
+	// shared and grants answer shared-mailbox access: which declared mailboxes a
+	// member may open, and what the member holds in each. They are read through
+	// the same store the web API uses, so a grant made in one protocol is visible
+	// in the other rather than agreed between two copies of the rule.
+	shared *store.SharedMailboxes
+	grants *store.SharedMailboxGrants
 	// version is the ServerVersion this build reports, so that a client that
 	// asks and a test that checks are reading the same number.
 	version string
@@ -109,6 +116,8 @@ func New(opts Options) *EWS {
 		messages: opts.Messages,
 		auth:     opts.Auth,
 		policy:   opts.Policy,
+		shared:   store.NewSharedMailboxes(),
+		grants:   store.NewSharedMailboxGrants(),
 		log:      log,
 		version:  serverVersionMajor + "." + serverVersionMinor,
 	}
@@ -362,6 +371,13 @@ type call struct {
 	name string
 	// element is the raw XML of the <m:Operation> element.
 	element []byte
+	// shared and sharedErr cache the caller's accessible shared mailboxes for
+	// the duration of one request. A single request can touch the list several
+	// times -- a hierarchy walk, an id resolution, an item read -- and each of
+	// them asking the database again would multiply queries for one answer.
+	shared       []sharedMailbox
+	sharedErr    *soapError
+	sharedLoaded bool
 }
 
 // decode reads the operation element into a typed request.

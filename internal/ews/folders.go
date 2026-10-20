@@ -48,9 +48,19 @@ type folderIDElement struct {
 }
 
 // distinguishedFolderID is a t:DistinguishedFolderId.
+//
+// The Mailbox child, when present, names the mailbox that holds the folder
+// (MS-OXWSFOLD §2.1.2.2): the spelling a client uses for a folder of a shared
+// mailbox it does not own. Without it the folder is the caller's own.
 type distinguishedFolderID struct {
-	ID           string `xml:"Id,attr"`
-	PublicFolder string `xml:"PublicFolder,attr,omitempty"`
+	ID           string      `xml:"Id,attr"`
+	PublicFolder string      `xml:"PublicFolder,attr,omitempty"`
+	Mailbox      *mailboxRef `xml:"Mailbox,omitempty"`
+}
+
+// mailboxRef is the t:Mailbox element of a distinguished folder id.
+type mailboxRef struct {
+	EmailAddress string `xml:"EmailAddress"`
 }
 
 // folderRef is one folder named one of the two ways.
@@ -60,6 +70,9 @@ type folderRef struct {
 	plain string
 	// distinguished is the EWS name of a standard folder.
 	distinguished string
+	// mailbox is the address given by a Mailbox child of a distinguished id: the
+	// mailbox holding the named folder when it is not the caller's own.
+	mailbox string
 }
 
 // allFolderRefs flattens the two spellings of a folder reference list.
@@ -74,7 +87,11 @@ func allFolderRefs(ids *folderIDs) []folderRef {
 	}
 	out := make([]folderRef, 0, len(ids.Plain)+len(ids.Distinguished))
 	for _, d := range ids.Distinguished {
-		out = append(out, folderRef{distinguished: d.ID})
+		mailbox := ""
+		if d.Mailbox != nil {
+			mailbox = strings.ToLower(strings.TrimSpace(d.Mailbox.EmailAddress))
+		}
+		out = append(out, folderRef{distinguished: d.ID, mailbox: mailbox})
 	}
 	for _, p := range ids.Plain {
 		out = append(out, folderRef{plain: p.ID})
@@ -131,7 +148,7 @@ func (e *EWS) resolveFolderRefs(c *call, ids *folderIDs) ([]container, *soapErro
 // the check that the folder belongs to a container this principal can reach.
 func (e *EWS) resolveFolderRef(c *call, ref folderRef) (container, *soapError) {
 	if ref.distinguished != "" {
-		return e.resolveDistinguished(c, ref.distinguished)
+		return e.resolveDistinguished(c, ref.distinguished, ref.mailbox)
 	}
 
 	kind, id, err := decodeFolderID(ref.plain)
@@ -141,8 +158,19 @@ func (e *EWS) resolveFolderRef(c *call, ref folderRef) (container, *soapError) {
 	if kind == kindCalendar {
 		return e.resolveCalendar(c, id)
 	}
+	if kind == kindSharedRoot {
+		return e.resolveSharedRoot(c, id)
+	}
 	folder, ferr := e.mail.Folder(c.ctx(), c.owner(), id)
 	if ferr != nil {
+		// The id is not one of the caller's folders. Before reporting it as
+		// absent it is checked against the shared mailboxes the caller may open:
+		// a shared folder's identifier is an ordinary row id handed out by the
+		// hierarchy, and refusing it here would make the hierarchy a tree of
+		// folders the client is then forbidden to enter.
+		if view, serr := e.sharedFolderByID(c, id); serr == nil {
+			return view, nil
+		}
 		return container{}, folderWriteFault(c.name+"Response", ferr)
 	}
 	return mailFolderView(folder), nil
@@ -155,7 +183,10 @@ func (e *EWS) resolveFolderRef(c *call, ref folderRef) (container, *soapError) {
 // word for, while "inbox" is a mail folder, and a client that asks for a calendar
 // and gets mail is worse off than one that gets a fault, because it would file
 // appointments as messages.
-func (e *EWS) resolveDistinguished(c *call, name string) (container, *soapError) {
+func (e *EWS) resolveDistinguished(c *call, name string, mailbox string) (container, *soapError) {
+	if mailbox != "" && !strings.EqualFold(strings.TrimSpace(mailbox), c.owner()) {
+		return e.resolveSharedDistinguished(c, name, mailbox)
+	}
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case distCalendar, distTasks, distContacts:
 		if strings.EqualFold(strings.TrimSpace(name), distCalendar) {
@@ -310,8 +341,9 @@ func (e *EWS) getFolder(c *call) responseCode {
 	}
 
 	sh := parseShape(req.FolderShape)
-	var b strings.Builder
-	b.WriteString(`<m:Folders>`)
+	var folders strings.Builder
+	var failures strings.Builder
+	folders.WriteString(`<m:Folders>`)
 	for _, ref := range allFolderRefs(req.FolderIds) {
 		f, serr := e.resolveFolderRef(c, ref)
 		if serr != nil {
@@ -319,16 +351,16 @@ func (e *EWS) getFolder(c *call) responseCode {
 			// about several and gets an answer about the others. The per-item
 			// response message is how a failure is reported inside a batch, and
 			// a client that ignored it would be told nothing at all.
-			b.WriteString(faultResponseMessage(serr))
+			failures.WriteString(faultResponseMessage("GetFolderResponseMessage", serr))
 			continue
 		}
-		renderContainer(&b, f, sh)
+		renderContainer(&folders, f, sh)
 	}
-	b.WriteString(`</m:Folders>`)
+	folders.WriteString(`</m:Folders>`)
 
 	return responseCode{
 		element: "GetFolderResponse",
-		body:    responseMessageOne("GetFolder", b.String()),
+		body:    responseMessagesErrors("GetFolderResponseMessage", folders.String(), failures.String()),
 	}
 }
 
@@ -557,6 +589,11 @@ func (e *EWS) collectContainers(c *call, roots []container, traversal string, fr
 		return nil, serr
 	}
 
+	shared, serr := e.sharedMailboxes(c)
+	if serr != nil {
+		return nil, serr
+	}
+
 	deep := strings.EqualFold(traversal, "deep")
 	seen := map[string]bool{}
 	var out []container
@@ -592,12 +629,75 @@ func (e *EWS) collectContainers(c *call, roots []container, traversal string, fr
 		}
 	}
 
+	// A shared mailbox's tree has to be synthesized: its folders are stored flat,
+	// and the mailbox itself is not a row. The root stands for the mailbox, and
+	// every folder of the mailbox hangs under it -- except one that has a stored
+	// parent of its own, which keeps its own place in the tree.
+	sharedKids := func(sm sharedMailbox) map[int64][]webmail.Folder {
+		m := map[int64][]webmail.Folder{}
+		for _, f := range sm.folders {
+			if f.ParentID == nil {
+				continue
+			}
+			m[*f.ParentID] = append(m[*f.ParentID], f)
+		}
+		return m
+	}
+	var walkSharedFolder func(sm sharedMailbox, f webmail.Folder, kids map[int64][]webmail.Folder, depth int)
+	walkSharedFolder = func(sm sharedMailbox, f webmail.Folder, kids map[int64][]webmail.Folder, depth int) {
+		view := sharedFolderView(sm, f)
+		key := fmt.Sprintf("%d/%d", view.kind, view.id)
+		if seen[key] || depth > 8 {
+			return
+		}
+		seen[key] = true
+		view.children = len(kids[f.ID])
+		out = append(out, view)
+		if !deep {
+			return
+		}
+		for _, k := range kids[f.ID] {
+			walkSharedFolder(sm, k, kids, depth+1)
+		}
+	}
+	var walkSharedRoot func(sm sharedMailbox, depth int)
+	walkSharedRoot = func(sm sharedMailbox, depth int) {
+		root := sharedRootView(sm)
+		key := fmt.Sprintf("%d/%d", root.kind, root.id)
+		if seen[key] || depth > 8 {
+			return
+		}
+		seen[key] = true
+		out = append(out, root)
+		if !deep {
+			return
+		}
+		kids := sharedKids(sm)
+		for _, f := range sm.folders {
+			if f.ParentID != nil {
+				continue
+			}
+			walkSharedFolder(sm, f, kids, depth+1)
+		}
+	}
+
 	// The folder list of this server is flat: every standard folder sits at the
 	// top, with INBOX first among them, and a tree a client asked for by naming
 	// the root is that whole list. Walking only the resolved root would answer
 	// with the one folder named; the root of this server's tree is the set, so
 	// the walk starts at each top-level folder.
 	for _, root := range roots {
+		if root.kind == kindSharedRoot {
+			// The caller named a shared mailbox's root by identifier: the answer
+			// is that mailbox's tree, not the caller's own folder list.
+			for _, sm := range shared {
+				if sm.inboxID == root.id {
+					walkSharedRoot(sm, 0)
+					break
+				}
+			}
+			continue
+		}
 		if fromRoot {
 			for _, f := range folders {
 				if f.ParentID != nil {
@@ -623,6 +723,13 @@ func (e *EWS) collectContainers(c *call, roots []container, traversal string, fr
 			}
 			seenCalendars[view.id] = true
 			walk(view, 0)
+		}
+
+		// Shared mailboxes the caller may open sit at the top level beside the
+		// caller's own folders and calendars, the way Exchange lists a shared
+		// mailbox in the folder tree.
+		for _, sm := range shared {
+			walkSharedRoot(sm, 0)
 		}
 	}
 

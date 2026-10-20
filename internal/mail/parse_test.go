@@ -344,3 +344,64 @@ func TestRecipientsAcrossLineEndings(t *testing.T) {
 		})
 	}
 }
+
+// TestScheduleDocumentFindsTheITIPPayload pins what makes a message a
+// scheduling message: a calendar part that declares a METHOD in its body.
+// A calendar file without one - the forward of somebody's appointment - asks
+// nothing, and a message with no calendar part at all is ordinary mail.
+func TestScheduleDocumentFindsTheITIPPayload(t *testing.T) {
+	multipart := func(contentType, body string) string {
+		return "From: organizer@example.com\r\n" +
+			"To: alice@example.com\r\n" +
+			"Subject: Invitation: Design review\r\n" +
+			"MIME-Version: 1.0\r\n" +
+			"Content-Type: multipart/mixed; boundary=\"cal\"\r\n\r\n" +
+			"--cal\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" +
+			"You are invited.\r\n" +
+			"--cal\r\nContent-Type: " + contentType + "\r\n\r\n" +
+			body +
+			"\r\n--cal--\r\n"
+	}
+
+	request := "BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nEND:VCALENDAR\r\n"
+	p, err := mail.Parse([]byte(multipart("text/calendar; method=REQUEST; charset=utf-8", request)))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	doc := p.ScheduleDocument()
+	if string(doc) != request {
+		t.Errorf("ScheduleDocument = %q, want the calendar part's bytes", doc)
+	}
+
+	// The method parameter is decoration: the body decides. A part that says
+	// method=REQUEST while its body carries none is a pasted file.
+	pasted := "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:x\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	p, err = mail.Parse([]byte(multipart("text/calendar; method=REQUEST; charset=utf-8", pasted)))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if doc := p.ScheduleDocument(); doc != nil {
+		t.Errorf("ScheduleDocument = %q, want nil for a calendar file with no METHOD", doc)
+	}
+
+	// A top-level calendar message with no multipart wrapper is still one:
+	// the leaf of a single-part message is the message itself.
+	topLevel := "From: organizer@example.com\r\nTo: alice@example.com\r\n" +
+		"Content-Type: text/calendar; method=CANCEL\r\n\r\n" +
+		"BEGIN:VCALENDAR\r\nMETHOD:CANCEL\r\nEND:VCALENDAR\r\n"
+	p, err = mail.Parse([]byte(topLevel))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if doc := p.ScheduleDocument(); !strings.Contains(string(doc), "METHOD:CANCEL") {
+		t.Errorf("ScheduleDocument = %q, want the top-level calendar document", doc)
+	}
+
+	p, err = mail.Parse([]byte(simpleMessage))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if doc := p.ScheduleDocument(); doc != nil {
+		t.Errorf("ScheduleDocument = %q, want nil for ordinary mail", doc)
+	}
+}

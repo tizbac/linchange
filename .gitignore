@@ -25,7 +25,11 @@ coverage.*
 
 # Test logs
 .test-integration.log
-# The binary built by `go build ./cmd/linchange` into the repository root.
-# Anchored, because an unanchored `linchange` also matches the cmd/linchange
-# directory and hides every new file added to that package.
+
+# Python bytecode from the e2e suite
+__pycache__/
+
+# The binary `go build` drops at the repository root. Anchored, because an
+# unanchored name would also swallow the cmd/linchange/ package directory, so
+# every new file added to that package would vanish from `git status`.
 /linchange

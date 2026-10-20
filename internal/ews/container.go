@@ -21,7 +21,7 @@ import (
 // wrong: a calendar read as a mailbox returns an empty folder, which looks like a
 // folder that has no messages in it and never becomes an error anybody reports.
 type container struct {
-	// kind is kindMailbox or kindCalendar.
+	// kind is kindMailbox, kindCalendar or kindSharedRoot.
 	kind byte
 	// id is the row id within the kind.
 	id int64
@@ -30,6 +30,10 @@ type container struct {
 	// parent is nil at the root, because this server's mail folders are a flat
 	// list with INBOX at the top and calendars are addressed by their owner.
 	parent *int64
+	// parentKind is the kind of the parent container. It is kindMailbox except
+	// for the children of a shared mailbox, whose parent is the shared mailbox's
+	// root rather than another mail folder.
+	parentKind byte
 	// class is the MS-OXPROPS folder class.
 	class string
 	// total, unread and children are the counts a client draws next to the name.
@@ -38,6 +42,9 @@ type container struct {
 	children int
 	// deletable is false for the folders this server will not remove.
 	deletable bool
+	// owner is the mailbox address that holds this folder when it belongs to a
+	// shared mailbox rather than to the caller. Empty means the caller's own.
+	owner string
 	// mail is the mail folder, when kind is kindMailbox.
 	mail *webmail.Folder
 	// calendar is the calendar, when kind is kindCalendar.
@@ -59,7 +66,7 @@ func (c container) identifier() string {
 	if c.isCalendar() {
 		return calendarID(c.id)
 	}
-	return folderID(c.id)
+	return encodeFolderID(c.kind, c.id)
 }
 
 // mailFolderView reads a mail folder into a container.
@@ -106,10 +113,28 @@ func calendarView(cal store.Calendar) container {
 	}
 }
 
-// parentIdentifier renders the parent, which is always a mail folder here.
+// parentIdentifier renders the parent.
+//
+// A mail folder's parent is another mail folder, and the children of a shared
+// mailbox hang under the shared mailbox's root, so the parent's kind travels with
+// its id: the same row id rendered with the wrong kind is an identifier for a
+// folder that does not exist.
 func (c container) parentIdentifier() string {
 	if c.parent == nil {
 		return ""
 	}
-	return folderID(*c.parent)
+	kind := c.parentKind
+	if kind == 0 {
+		kind = kindMailbox
+	}
+	return encodeFolderID(kind, *c.parent)
+}
+
+// mailOwner is the mailbox address the folder's messages live in: the shared
+// mailbox that owns the folder when there is one, otherwise the caller.
+func (c container) mailOwner(caller string) string {
+	if c.owner != "" {
+		return c.owner
+	}
+	return caller
 }

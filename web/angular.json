@@ -31,6 +31,12 @@
             ],
             "styles": [
               "src/styles.css"
+            ],
+            "allowedCommonJsDependencies": [
+              "loglevel",
+              "spark-md5",
+              "base64-arraybuffer",
+              "@openim/protocol"
             ]
           },
           "configurations": {

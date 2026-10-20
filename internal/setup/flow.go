@@ -17,6 +17,7 @@ import (
 	"github.com/linchange/linchange/config"
 	"github.com/linchange/linchange/internal/admin"
 	"github.com/linchange/linchange/internal/auth/policy"
+	"github.com/linchange/linchange/internal/imapd"
 	"github.com/linchange/linchange/internal/logging"
 	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/tui"
@@ -883,6 +884,13 @@ func Provision(ctx context.Context, ui UI, db *sqlx.DB, cfg *config.Config, a An
 	default:
 		createUser(nil)
 		result.AdminCreated = true
+		// The standard folders are part of a usable mailbox: IMAP, EWS and EAS
+		// all address them by name, so an account without them cannot sync,
+		// which the operator would read as a broken install rather than as a
+		// step that happens on first use.
+		if err := imapd.NewMailboxRepo().EnsureFolders(ctx, db, strings.ToLower(a.AdminEmail)); err != nil {
+			return fmt.Errorf("creating the standard folders: %w", err)
+		}
 	}
 	return nil
 }

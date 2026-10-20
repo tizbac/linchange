@@ -43,6 +43,11 @@ const (
 	kindMailbox byte = 1
 	// kindCalendar is a calendar.
 	kindCalendar byte = 2
+	// kindSharedRoot is the root of a shared mailbox: the container that stands
+	// for a mailbox the caller does not own but has been granted access to. Its
+	// children are that mailbox's folders, and it holds no items itself, the way
+	// Exchange's root folder does.
+	kindSharedRoot byte = 3
 )
 
 // Distinguished folder identifiers (MS-OXECWS §2.2.1.3).
@@ -173,7 +178,7 @@ func decodeFolderID(encoded string) (byte, int64, error) {
 		return 0, 0, err
 	}
 	kind := raw[0]
-	if kind != kindMailbox && kind != kindCalendar {
+	if kind != kindMailbox && kind != kindCalendar && kind != kindSharedRoot {
 		return 0, 0, fmt.Errorf("%w: unknown folder kind %d", errMalformedID, kind)
 	}
 	id := int64(binary.LittleEndian.Uint32(raw[1:5]))

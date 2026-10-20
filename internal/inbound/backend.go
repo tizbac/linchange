@@ -56,6 +56,20 @@ type Backend struct {
 	messages  *imapd.MessageRepo
 	rules     *store.MailRules
 	outbox    *delivery.OutboxRepository
+
+	// Scheduling applies an iTIP message to the owner's calendar once the
+	// message is stored: the REPLY an external mail client sends when its
+	// user clicks Accept, the REQUEST that files a meeting they were invited
+	// to, the CANCEL that withdraws one. It is nil when nothing wires it,
+	// and a nil hook leaves inbound mail exactly as it was - mail.
+	//
+	// It runs once per stored recipient, because the answer belongs to
+	// whoever the message was addressed to, and it is called only after that
+	// recipient's copy is in the mailbox. It must never fail the delivery:
+	// a calendar that refuses a scheduling message is not a reason for the
+	// sender's client to retry the whole delivery, and the message itself is
+	// already stored and readable.
+	Scheduling func(ctx context.Context, owner string, document []byte)
 }
 
 // NewBackend builds the inbound backend.
@@ -224,15 +238,22 @@ func (s *session) Mail(from string, opts *smtp.MailOptions) error {
 		}
 	}
 
-	action, err := s.backend.greylist.Check(ctx, s.backend.db, s.ip, s.envFrom, time.Now().UTC())
-	if err != nil {
-		s.backend.log.Warn("greylist check failed; accepting", "error", err)
-	}
-	if action == GreyDefer {
-		return &smtp.SMTPError{
-			Code:         450,
-			EnhancedCode: smtp.EnhancedCode{4, 7, 0},
-			Message:      "greylisted, please retry later",
+	// A message arriving from this machine's own loopback interface is the
+	// submission path handing local mail back for local delivery, not a
+	// stranger's first attempt: greylisting exists to make strangers retry,
+	// and would only delay a user's own mail to their own server by the full
+	// deferral window.
+	if !s.ip.IsLoopback() {
+		action, err := s.backend.greylist.Check(ctx, s.backend.db, s.ip, s.envFrom, time.Now().UTC())
+		if err != nil {
+			s.backend.log.Warn("greylist check failed; accepting", "error", err)
+		}
+		if action == GreyDefer {
+			return &smtp.SMTPError{
+				Code:         450,
+				EnhancedCode: smtp.EnhancedCode{4, 7, 0},
+				Message:      "greylisted, please retry later",
+			}
 		}
 	}
 	return nil
@@ -347,7 +368,7 @@ func (s *session) Data(r io.Reader) error {
 		flags = []string{"\\Junk"}
 	}
 
-	if err := s.deliver(ctx, digest, size, flags, meta, internalDate, facts); err != nil {
+	if err := s.deliver(ctx, digest, size, flags, meta, internalDate, facts, parsed); err != nil {
 		return err
 	}
 
@@ -376,8 +397,14 @@ func (s *session) Data(r io.Reader) error {
 // folder it is filed in, which flags it carries, and whether a copy goes out to
 // another address. A rule that cannot be read degrades to plain delivery
 // rather than to refusing the message.
+//
+// The parsed message travels alongside its digest because a scheduling
+// message is handed to the calendar layer once it is stored for an owner -
+// the bytes are already in hand, and re-reading them from the blob store for
+// every delivery of every message would buy nothing.
 func (s *session) deliver(ctx context.Context, digest blobstore.Digest, size int64,
 	flags []string, meta mail.Metadata, internalDate time.Time, facts webmail.MatchContext,
+	parsed *mail.Parsed,
 ) error {
 	owners := make([]string, 0, len(s.owners))
 	seen := map[string]bool{}
@@ -452,6 +479,10 @@ func (s *session) deliver(ctx context.Context, digest blobstore.Digest, size int
 				Message:      "unable to update quota",
 			}
 		}
+		// The scheduling answer is given after the recipient's copy exists,
+		// so an answer the calendar layer refuses is still mail the recipient
+		// can read and answer again from their client.
+		s.backend.applyScheduling(ctx, owner, parsed)
 		if ok {
 			if len(outcome.Matched) > 0 {
 				s.backend.log.Info("rules applied to inbound message",
@@ -463,6 +494,25 @@ func (s *session) deliver(ctx context.Context, digest blobstore.Digest, size int
 		}
 	}
 	return nil
+}
+
+// applyScheduling hands a delivered message to the iTIP processor, when this
+// deployment wired one.
+//
+// Everything about it is best effort: no hook means no scheduling and nothing
+// else changes; a message that is not a scheduling message costs one scan of
+// its parts; and any failure inside the calendar layer is logged rather than
+// returned, because the message is already stored and the sender's client must
+// not be told to retry a delivery that succeeded.
+func (b *Backend) applyScheduling(ctx context.Context, owner string, parsed *mail.Parsed) {
+	if b.Scheduling == nil || parsed == nil {
+		return
+	}
+	document := parsed.ScheduleDocument()
+	if len(document) == 0 {
+		return
+	}
+	b.Scheduling(ctx, owner, document)
 }
 
 // ownerOutcome runs the owner's enabled rules against the message facts.

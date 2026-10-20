@@ -66,13 +66,18 @@ const (
 // first element names the operation. Everything else is preserved as raw XML so
 // that each operation can decode the shape it needs without this type having to
 // know every argument of every operation.
+//
+// Header and Body are matched by local name rather than by namespace because
+// MS-OXECWS §2.2.1 permits both SOAP 1.1 and SOAP 1.2 envelopes: Outlook 2021
+// sends the 1.2 namespace for some operations, and a parser keyed to the 1.1
+// namespace alone reads that envelope as having no body at all.
 type SOAPEnvelope struct {
-	XMLName   xml.Name    `xml:"http://schemas.xmlsoap.org/soap/envelope/ Envelope"`
+	XMLName   xml.Name    `xml:"Envelope"`
 	XmlnsSoap string      `xml:"xmlns:soap,attr"`
 	XmlnsT    string      `xml:"xmlns:t,attr"`
 	XmlnsM    string      `xml:"xmlns:m,attr"`
-	Header    *SOAPHeader `xml:"http://schemas.xmlsoap.org/soap/envelope/ Header,omitempty"`
-	Body      *SOAPBody   `xml:"http://schemas.xmlsoap.org/soap/envelope/ Body"`
+	Header    *SOAPHeader `xml:"Header,omitempty"`
+	Body      *SOAPBody   `xml:"Body"`
 }
 
 type SOAPHeader struct {
@@ -383,6 +388,19 @@ func responseMessages(messageElement, body string) string {
 // element the operation's own name gives.
 func responseMessageOne(operation, body string) string {
 	return responseMessages(operation+"ResponseMessage", body)
+}
+
+// responseMessagesErrors wraps a batch answer whose failures are reported as
+// additional response messages beside the successful one.
+//
+// A batch that is partly successful is answered in full: the items that resolved
+// ride in the success message and each failure gets its own error message, which
+// is how the schema carries "three of the four you asked for, and here is why the
+// fourth is not there".
+func responseMessagesErrors(messageElement, body, failures string) string {
+	return `<m:ResponseMessages><m:` + messageElement + ` ResponseClass="Success">` +
+		`<m:ResponseCode>` + codeNoError + `</m:ResponseCode>` + body +
+		`</m:` + messageElement + `>` + failures + `</m:ResponseMessages>`
 }
 
 // fault renders a failure.

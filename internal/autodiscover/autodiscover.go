@@ -72,7 +72,7 @@ func (a *Autodiscover) handlePOX(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Normalize email
-	email := strings.TrimSpace(req.Email)
+	email := strings.TrimSpace(req.Address())
 	if email == "" {
 		a.writeError(w, "Email required", http.StatusBadRequest)
 		return
@@ -203,12 +203,17 @@ func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Proto
 
 	// Add EWS if enabled
 	if a.cfg.Exchange.Enabled {
+		ssl := "Off"
+		if a.servesTLS() {
+			ssl = "On"
+		}
 		protocols = append(protocols, Protocol{
 			Type:        "EXCH",
 			Server:      hostname,
 			ASUrl:       a.exchangeURL(hostname, "/ews/exchange.asmx"),
+			EwsUrl:      a.exchangeURL(hostname, "/ews/exchange.asmx"),
 			OABUrl:      a.exchangeURL(hostname, "/oab"),
-			SSL:         "On",
+			SSL:         ssl,
 			AuthPackage: "Basic",
 			LoginName:   "{{EmailAddress}}",
 		})
@@ -218,7 +223,7 @@ func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Proto
 			Type:        "EXPR",
 			Server:      hostname,
 			ASUrl:       a.exchangeURL(hostname, "/eas"),
-			SSL:         "On",
+			SSL:         ssl,
 			AuthPackage: "Basic",
 			LoginName:   "{{EmailAddress}}",
 		})
@@ -227,22 +232,34 @@ func (a *Autodiscover) buildProtocols(hostname, internalHostname string) []Proto
 	return protocols
 }
 
-// exchangeURL builds the URL of an Exchange endpoint, using TLS unless the
-// deployment says otherwise.
+// exchangeURL builds the URL of an Exchange endpoint.
+//
+// The scheme follows whether this server is answering with TLS itself, because
+// that is what decides whether a client can complete the handshake there. The
+// advertised HTTPS port alone says nothing about it: a deployment that runs
+// the HTTP listener only, and advertises a published port besides, used to be
+// described as https://host:58443/eas, and a client sent to a port where no
+// TLS handshake can complete reports exactly what the Outlook setup screen
+// showed: "server not found". A deployment terminated at a TLS-terminating
+// proxy serves TLS through the HTTPS listener configured with the same
+// certificates, and states its ports in the advertised set.
 func (a *Autodiscover) exchangeURL(hostname, path string) string {
-	scheme := "https"
-	port := a.cfg.Exchange.Advertised.Or(a.cfg.Exchange.Advertised.HTTPS, 443)
-	if port == 80 {
-		scheme = "http"
+	adv := a.cfg.Exchange.Advertised
+	scheme, standard := "http", 80
+	port := adv.Or(adv.HTTP, 80)
+	if a.servesTLS() {
+		scheme, standard, port = "https", 443, adv.Or(adv.HTTPS, 443)
 	}
-	if isDefaultPort(scheme, port) {
+	if port == standard {
 		return fmt.Sprintf("%s://%s%s", scheme, hostname, path)
 	}
 	return fmt.Sprintf("%s://%s:%d%s", scheme, hostname, port, path)
 }
 
-func isDefaultPort(scheme string, port int) bool {
-	return (scheme == "http" && port == 80) || (scheme == "https" && port == 443)
+// servesTLS reports whether this process answers with TLS. Only an HTTPS
+// listener does; a certificate on its own is never reached.
+func (a *Autodiscover) servesTLS() bool {
+	return strings.TrimSpace(a.cfg.Listener.HTTPS.Addr) != ""
 }
 
 // writeError writes an error response.
@@ -264,9 +281,22 @@ func (a *Autodiscover) writeError(w http.ResponseWriter, message string, code in
 // ---------------------------------------------------------------------------
 
 type POXRequest struct {
-	XMLName     xml.Name `xml:"Autodiscover"`
-	Email       string   `xml:"Request>EmailAddress"`
-	RequestType string   `xml:"Request>AcceptableResponseSchema,omitempty"`
+	XMLName xml.Name `xml:"Autodiscover"`
+	// The address is read under both spellings: MS-OXDISCO names the element
+	// EMailAddress, and a client that learned it from an older example spells
+	// it EmailAddress. Getting this wrong makes every request arrive with no
+	// address and be refused as incomplete.
+	Email       string `xml:"Request>EMailAddress"`
+	EmailPlain  string `xml:"Request>EmailAddress"`
+	RequestType string `xml:"Request>AcceptableResponseSchema,omitempty"`
+}
+
+// Address is the request's email address, whichever spelling carried it.
+func (p POXRequest) Address() string {
+	if p.Email != "" {
+		return p.Email
+	}
+	return p.EmailPlain
 }
 
 type POXResponse struct {

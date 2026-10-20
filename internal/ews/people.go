@@ -256,9 +256,17 @@ func (e *EWS) getUserAvailability(c *call) responseCode {
 			b.WriteString(`<m:ResponseMessage><m:ResponseCode>NoError</m:ResponseCode></m:ResponseMessage>`)
 		}
 		b.WriteString(`<m:FreeBusyView>`)
+		viewType := "None"
+		if !av.Hidden {
+			if merged {
+				viewType = "Merged"
+			} else {
+				viewType = "Detailed"
+			}
+		}
 		b.WriteString(`<m:FreeBusyViewType>`)
-		b.WriteString(escape(req.FreeBusyViewOptions.RequestedView))
-		b.WriteString(`</m:FreeBusyView>`)
+		b.WriteString(escape(viewType))
+		b.WriteString(`</m:FreeBusyViewType>`)
 		if merged && !av.Hidden {
 			b.WriteString(`<m:MergedFreeBusy>`)
 			b.WriteString(escape(mergedFreeBusy(av.Busy, start, end, interval)))

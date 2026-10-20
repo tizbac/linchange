@@ -332,3 +332,59 @@ func TestBuilderBodyRoundTripsNonASCII(t *testing.T) {
 		t.Errorf("Snippet = %q, want the body decoded to UTF-8", meta.Snippet)
 	}
 }
+
+// TestBuilderCalendarAttachmentCarriesTheMethod pins RFC 6047 §3.1: a
+// calendar part's Content-Type carries the iTIP method, and its value is the
+// METHOD written in the part's body. A receiving client reads the parameter
+// to decide whether this message gets an Accept button - Outlook in
+// particular - while the body is what the calendar client parses. Deriving
+// one from the other is what keeps them from ever disagreeing.
+func TestBuilderCalendarAttachmentCarriesTheMethod(t *testing.T) {
+	ics := "BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nPRODID:-//linchange//EN\r\n" +
+		"BEGIN:VEVENT\r\nUID:abc@linchange\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+
+	raw, err := mail.NewBuilder().
+		From(mail.Address{Address: "alice@example.com"}).
+		To(mail.Address{Address: "bob@example.com"}).
+		Subject("Invitation: Design review").
+		Text("you are invited").
+		Attach("invite.ics", "text/calendar", []byte(ics)).
+		Bytes()
+	if err != nil {
+		t.Fatalf("Bytes: %v", err)
+	}
+
+	if !strings.Contains(string(raw), "method=REQUEST") {
+		t.Errorf("the calendar part does not declare its method:\n%s", raw)
+	}
+	parsed, err := mail.Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(parsed.Attachments) != 1 {
+		t.Fatalf("Attachments = %d, want 1", len(parsed.Attachments))
+	}
+	if got := parsed.Attachments[0]; got.Filename != "invite.ics" ||
+		got.ContentType != "text/calendar" || !strings.Contains(string(got.Content), "METHOD:REQUEST") {
+		t.Errorf("attachment = %+v, want the invitation file intact", got)
+	}
+
+	// A calendar file that carries no METHOD gains no parameter: it is
+	// somebody's pasted appointment, not a message with an answer to give,
+	// and declaring a method it does not contain would be the same lie in
+	// the other direction.
+	pasted := "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:x\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	raw, err = mail.NewBuilder().
+		From(mail.Address{Address: "alice@example.com"}).
+		To(mail.Address{Address: "bob@example.com"}).
+		Subject("FW: the thing on Tuesday").
+		Text("as promised").
+		Attach("appointment.ics", "text/calendar", []byte(pasted)).
+		Bytes()
+	if err != nil {
+		t.Fatalf("Bytes: %v", err)
+	}
+	if strings.Contains(string(raw), "method=") {
+		t.Errorf("a METHOD-less calendar file gained a method parameter:\n%s", raw)
+	}
+}
