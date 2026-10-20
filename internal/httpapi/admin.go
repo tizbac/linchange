@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -132,6 +133,20 @@ func mountAdminRoutes(r chi.Router, s *Server) {
 		})
 	})
 
+	// --- workgroups (organizations) ---
+	r.Route("/workgroups", func(r chi.Router) {
+		r.Get("/", s.listWorkgroups)
+		r.Post("/", s.createWorkgroup)
+		r.Route("/{id}", func(r chi.Router) {
+			r.Get("/", s.getWorkgroup)
+			r.Patch("/", s.updateWorkgroup)
+			r.Delete("/", s.deleteWorkgroup)
+			r.Get("/members", s.listWorkgroupMembers)
+			r.Post("/members", s.addWorkgroupMember)
+			r.Delete("/members/{address}", s.removeWorkgroupMember)
+		})
+	})
+
 	r.Get("/audit", s.listAudit)
 }
 
@@ -158,6 +173,8 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request) {
 		DefaultQuotaBytes *int64  `json:"default_quota_bytes"`
 		DailySendLimit    *int    `json:"daily_send_limit"`
 		DKIMSelector      *string `json:"dkim_selector"`
+		ContactGroupID    *int64  `json:"contact_group_id"`
+		WorkgroupID       *int64  `json:"workgroup_id"`
 	}
 	if err := decodeAdmin(w, r, &in); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
@@ -170,6 +187,8 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request) {
 		DefaultQuotaBytes: in.DefaultQuotaBytes,
 		DailySendLimit:    in.DailySendLimit,
 		DKIMSelector:      in.DKIMSelector,
+		ContactGroupID:    in.ContactGroupID,
+		WorkgroupID:       in.WorkgroupID,
 	})
 	if err != nil {
 		adminErrors(w, s, err)
@@ -189,10 +208,12 @@ func (s *Server) getDomain(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateDomain(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Description       *string `json:"description"`
-		DefaultQuotaBytes *int64  `json:"default_quota_bytes"`
-		DailySendLimit    *int    `json:"daily_send_limit"`
-		DKIMSelector      *string `json:"dkim_selector"`
+		Description       *string       `json:"description"`
+		DefaultQuotaBytes *int64        `json:"default_quota_bytes"`
+		DailySendLimit    *int          `json:"daily_send_limit"`
+		DKIMSelector      *string       `json:"dkim_selector"`
+		ContactGroupID    optionalInt64 `json:"contact_group_id"`
+		WorkgroupID       optionalInt64 `json:"workgroup_id"`
 	}
 	if err := decodeAdmin(w, r, &in); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
@@ -216,6 +237,12 @@ func (s *Server) updateDomain(w http.ResponseWriter, r *http.Request) {
 			DefaultQuotaBytes: int64Or(in.DefaultQuotaBytes, current.DefaultQuotaBytes),
 			DailySendLimit:    in.DailySendLimit,
 			DKIMSelector:      in.DKIMSelector,
+			// The organization of a domain is carried over when the request does
+			// not mention it, and cleared when it says null. Both are real
+			// intentions: editing a domain's quota must not silently detach it
+			// from its organization, and taking a domain out of one must work.
+			ContactGroupID: in.ContactGroupID.or(current.ContactGroupID),
+			WorkgroupID:    in.WorkgroupID.or(current.WorkgroupID),
 		})
 	if err != nil {
 		adminErrors(w, s, err)
@@ -407,10 +434,10 @@ func (s *Server) listAliases(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createAlias(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Address     string                    `json:"address"`
-		Targets     []aliasTargetInput        `json:"targets"`
-		DisplayName string                    `json:"display_name"`
-		Description string                    `json:"description"`
+		Address     string             `json:"address"`
+		Targets     []aliasTargetInput `json:"targets"`
+		DisplayName string             `json:"display_name"`
+		Description string             `json:"description"`
 	}
 	if err := decodeAdmin(w, r, &in); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
@@ -874,6 +901,42 @@ func int64Or(p *int64, fallback int64) int64 {
 	return *p
 }
 
+// optionalInt64 tells a PATCH field that was left out apart from one set to
+// null.
+//
+// A *int64 cannot: both arrive as nil, so "leave the column as it is" and
+// "clear the column" would be indistinguishable and one of them would quietly
+// happen instead of the other. For a domain's organization both are real
+// requests — a domain that belongs to one is not a domain whose organization was
+// never sent — so the distinction is worth a type.
+type optionalInt64 struct {
+	set bool
+	v   *int64
+}
+
+func (o *optionalInt64) UnmarshalJSON(data []byte) error {
+	o.set = true
+	if string(data) == "null" {
+		o.v = nil
+		return nil
+	}
+	var v int64
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	o.v = &v
+	return nil
+}
+
+// or keeps the current value when the client did not mention the field, and
+// takes what it said otherwise, null included.
+func (o optionalInt64) or(current *int64) *int64 {
+	if !o.set {
+		return current
+	}
+	return o.v
+}
+
 func addrOrNil(address string) *string {
 	if address == "" {
 		return nil
@@ -905,6 +968,8 @@ type domainView struct {
 	DefaultQuotaBytes int64   `json:"default_quota_bytes"`
 	DailySendLimit    *int    `json:"daily_send_limit,omitempty"`
 	DKIMSelector      *string `json:"dkim_selector,omitempty"`
+	ContactGroupID    *int64  `json:"contact_group_id,omitempty"`
+	WorkgroupID       *int64  `json:"workgroup_id,omitempty"`
 }
 
 func viewDomain(d store.Domain) domainView {
@@ -916,6 +981,8 @@ func viewDomain(d store.Domain) domainView {
 		DefaultQuotaBytes: d.DefaultQuotaBytes,
 		DailySendLimit:    d.DailySendLimit,
 		DKIMSelector:      d.DKIMSelector,
+		ContactGroupID:    d.ContactGroupID,
+		WorkgroupID:       d.WorkgroupID,
 	}
 }
 
@@ -1090,6 +1157,246 @@ func viewAudit(e store.AuditEntry) auditView {
 		out.IP = &ip
 	}
 	return out
+}
+
+// --- workgroups (organizations) ---
+
+func (s *Server) listWorkgroups(w http.ResponseWriter, r *http.Request) {
+	workgroups, err := s.admin.ListWorkgroups(r.Context(), Principal(r.Context()))
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	out := make([]workgroupView, 0, len(workgroups))
+	for _, w := range workgroups {
+		out = append(out, s.workgroupViewOf(r.Context(), Principal(r.Context()), w))
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"workgroups": out})
+}
+
+func (s *Server) createWorkgroup(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name        string `json:"name"`
+		Domain      string `json:"domain"`
+		DisplayName string `json:"display_name"`
+		Description string `json:"description"`
+		OpenBooking *bool  `json:"open_booking"`
+		Members     []struct {
+			Address string `json:"address"`
+			Role    string `json:"role"`
+		} `json:"members"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if strings.TrimSpace(in.Name) == "" {
+		s.writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if strings.TrimSpace(in.Domain) == "" {
+		s.writeError(w, http.StatusBadRequest, "domain is required")
+		return
+	}
+	members := make([]store.WorkgroupMember, len(in.Members))
+	for i, m := range in.Members {
+		members[i] = store.WorkgroupMember{
+			Address: m.Address,
+			Role:    m.Role,
+		}
+	}
+	wg, err := s.admin.CreateWorkgroup(r.Context(), Principal(r.Context()), admin.CreateWorkgroupRequest{
+		Name:        in.Name,
+		Domain:      in.Domain,
+		DisplayName: in.DisplayName,
+		Description: in.Description,
+		OpenBooking: in.OpenBooking,
+		Members:     members,
+	})
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusCreated, s.workgroupViewOf(r.Context(), Principal(r.Context()), wg))
+}
+
+func (s *Server) getWorkgroup(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	wg, err := s.admin.GetWorkgroup(r.Context(), Principal(r.Context()), id)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, s.workgroupViewOf(r.Context(), Principal(r.Context()), wg))
+}
+
+func (s *Server) updateWorkgroup(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	var in struct {
+		Name        string `json:"name"`
+		DisplayName string `json:"display_name"`
+		Description string `json:"description"`
+		OpenBooking *bool  `json:"open_booking"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	wg, err := s.admin.UpdateWorkgroup(r.Context(), Principal(r.Context()), id, in.Name, in.DisplayName, in.Description, in.OpenBooking)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, s.workgroupViewOf(r.Context(), Principal(r.Context()), wg))
+}
+
+func (s *Server) deleteWorkgroup(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	if err := s.admin.DeleteWorkgroup(r.Context(), Principal(r.Context()), id); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listWorkgroupMembers(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	members, err := s.admin.ListWorkgroupMembers(r.Context(), Principal(r.Context()), id)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	out := make([]workgroupMemberView, 0, len(members))
+	for _, m := range members {
+		out = append(out, viewWorkgroupMember(m))
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"members": out})
+}
+
+func (s *Server) addWorkgroupMember(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	var in struct {
+		Address string `json:"address"`
+		Role    string `json:"role"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if strings.TrimSpace(in.Address) == "" {
+		s.writeError(w, http.StatusBadRequest, "address is required")
+		return
+	}
+	role := in.Role
+	if role == "" {
+		role = "member"
+	}
+	if err := s.admin.AddWorkgroupMember(r.Context(), Principal(r.Context()), id, in.Address, role); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) removeWorkgroupMember(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	address := chi.URLParam(r, "address")
+	if err := s.admin.RemoveWorkgroupMember(r.Context(), Principal(r.Context()), id, address); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- view helpers for workgroups ---
+
+type workgroupView struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Domain      string `json:"domain"`
+	DisplayName string `json:"display_name"`
+	Description string `json:"description"`
+	OpenBooking bool   `json:"open_booking"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+	// Members ride along with the group. Every screen that shows an organization
+	// also shows who belongs to it, so making the client fetch them one group at
+	// a time is a request per row for no benefit.
+	Members []workgroupMemberView `json:"members"`
+}
+
+func viewWorkgroup(w store.Workgroup) workgroupView {
+	return workgroupView{
+		ID:          w.ID,
+		Name:        w.Name,
+		Domain:      w.Domain,
+		DisplayName: w.DisplayName,
+		Description: w.Description,
+		OpenBooking: w.OpenBooking,
+		CreatedAt:   w.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:   w.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+type workgroupMemberView struct {
+	WorkgroupID int64  `json:"workgroup_id"`
+	Address     string `json:"address"`
+	Role        string `json:"role"`
+	CreatedAt   string `json:"created_at"`
+}
+
+func viewWorkgroupMember(m store.WorkgroupMember) workgroupMemberView {
+	return workgroupMemberView{
+		WorkgroupID: m.WorkgroupID,
+		Address:     m.Address,
+		Role:        m.Role,
+		CreatedAt:   m.CreatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+// workgroupViewOf returns a group with its members attached.
+//
+// The member list is fetched here rather than left to the client because every
+// screen that shows an organization also lists who is in it. A member lookup
+// that fails does not fail the response: the group exists and is worth showing,
+// and an empty list is closer to the truth than a 500 for a page whose subject
+// is the group.
+func (s *Server) workgroupViewOf(ctx context.Context, actor policy.Principal, wg store.Workgroup) workgroupView {
+	view := viewWorkgroup(wg)
+	members, err := s.admin.ListWorkgroupMembers(ctx, actor, wg.ID)
+	if err != nil {
+		s.log.Warn("could not load workgroup members", "workgroup_id", wg.ID, "error", err)
+		return view
+	}
+	view.Members = make([]workgroupMemberView, 0, len(members))
+	for _, m := range members {
+		view.Members = append(view.Members, viewWorkgroupMember(m))
+	}
+	return view
 }
 
 func viewImpersonations(gs []admin.ImpersonationView) []impersonationView {

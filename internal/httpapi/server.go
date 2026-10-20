@@ -57,6 +57,7 @@ type contextKey int
 const (
 	principalKey contextKey = iota
 	sessionIDKey
+	mailOwnerKey
 )
 
 // Server holds the long-lived dependencies the handlers share.
@@ -92,6 +93,9 @@ type Server struct {
 	aliases *store.Aliases
 	shared  *store.SharedMailboxes
 	grants  *store.SharedMailboxGrants
+	// workgroups answers "which organization is this address in", which the top
+	// bar and the address book both need.
+	workgroups *store.Workgroups
 	// policies is held so a handler can answer a question about this
 	// deployment's switches. It is the same object the login path and the admin
 	// service decide with, so there is one answer rather than three.
@@ -382,6 +386,7 @@ func New(opts Options) (*Server, error) {
 		aliases:      store.NewAliases(),
 		shared:       store.NewSharedMailboxes(),
 		grants:       store.NewSharedMailboxGrants(),
+		workgroups:   store.NewWorkgroups(),
 		staticDir:    opts.StaticDir,
 		imports:      opts.Imports,
 	}, nil
@@ -428,6 +433,10 @@ func (s *Server) Handler() http.Handler {
 		// The calendar routes are for the signed-in user's calendars and any
 		// workgroup calendars they may see. The same authenticated group applies.
 		s.mountCalendar(r)
+
+		// The organization routes answer "who is in my organization", which the
+		// header, the address book and the invite picker all need.
+		s.mountOrganization(r)
 	})
 
 	// CalDAV is not part of the REST surface: a calendar client is handed

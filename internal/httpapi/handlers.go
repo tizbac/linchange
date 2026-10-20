@@ -197,6 +197,10 @@ type meResponse struct {
 	// is false the same list is only a record of intentions. An operator shown
 	// the wrong one of those two will trust the wrong thing.
 	ImpersonationRequiresGrant bool `json:"impersonation_requires_grant"`
+	// Organization is the name of the workgroup the caller's address belongs to.
+	// A domain that belongs to no organization leaves it empty, and the top bar
+	// then shows the product name alone.
+	Organization string `json:"organization,omitempty"`
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -220,6 +224,14 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	// request: the client can render an address on its own.
 	if u, err := store.NewUsers().Get(r.Context(), s.db, principal.Address); err == nil {
 		out.DisplayName = u.DisplayName
+	}
+	// The organization is decoration, so a domain that belongs to no workgroup is
+	// not an error: it just means there is no name to show.
+	if wg, err := s.workgroups.ForAddress(r.Context(), s.db, principal.Address); err == nil {
+		out.Organization = wg.DisplayName
+		if out.Organization == "" {
+			out.Organization = wg.Name
+		}
 	}
 	s.writeJSON(w, http.StatusOK, out)
 }

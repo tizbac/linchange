@@ -44,6 +44,8 @@ func (s *Server) mountCalendar(r chi.Router) {
 
 		// ICS download for an event
 		r.Get("/{id}/events/{eventID}.ics", s.handleEventICS)
+		// Generate an iTIP REQUEST (invitation) for an event
+		r.Get("/{id}/events/{eventID}/invite.ics", s.handleEventInvite)
 	})
 }
 
@@ -82,6 +84,15 @@ func (s *Server) handleListCalendars(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		calendars = append(calendars, cal)
+	}
+	// The organization's calendars come along too. A team calendar nobody can
+	// see cannot be booked, so it is listed for everyone in the organization;
+	// whether a booking is accepted is decided when the event is written, not
+	// here.
+	if wg, ok := s.organizationFor(ctx, who.Address); ok {
+		if group, err := store.NewCalendars().ByWorkgroup(ctx, s.db, wg.ID); err == nil {
+			calendars = append(calendars, group...)
+		}
 	}
 	s.writeJSON(w, http.StatusOK, listCalendarsResponse{Calendars: calendars})
 }
@@ -586,4 +597,55 @@ func (s *Server) handleEventICS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/calendar; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"event-%d.ics\"", eventID))
 	w.Write(row.ICalBlob)
+}
+
+// ---------------------------------------------------------------------------
+// iTIP invitation generation
+// ---------------------------------------------------------------------------
+
+// handleEventInvite generates an iTIP REQUEST (invitation) for an event.
+// The response is an iCalendar document with METHOD:REQUEST that can be
+// attached to an email to invite attendees.
+func (s *Server) handleEventInvite(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid calendar id")
+		return
+	}
+	eventID, err := strconv.ParseInt(chi.URLParam(r, "eventID"), 10, 64)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid event id")
+		return
+	}
+
+	row, err := store.NewEvents().Get(ctx, s.db, eventID)
+	if err != nil {
+		s.writeError(w, mapErrorCode(err), err.Error())
+		return
+	}
+	if row.CalendarID != id {
+		s.writeError(w, http.StatusBadRequest, "event not in this calendar")
+		return
+	}
+
+	// Parse the stored iCalendar blob to an ical.Document
+	doc, err := ical.Parse(row.ICalBlob)
+	if err != nil || len(doc.Events) == 0 {
+		s.writeError(w, http.StatusInternalServerError, "failed to parse event")
+		return
+	}
+	ev := doc.Events[0]
+
+	// The organizer must be the calendar owner for the invitation to be valid.
+	// The stored event may have a different organizer if it was received via iTIP.
+	who := Principal(ctx)
+	ev.Organizer = ical.Organizer{Address: who.Address}
+
+	// Generate the iTIP REQUEST
+	invite := ical.BuildRequest(ev)
+
+	w.Header().Set("Content-Type", "text/calendar; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"invite-%d.ics\"", eventID))
+	w.Write(invite)
 }

@@ -66,6 +66,12 @@ const (
 
 	ActionImpersonationGrant  = "impersonation.grant"
 	ActionImpersonationRevoke = "impersonation.revoke"
+
+	ActionWorkgroupCreate = "workgroup.create"
+	ActionWorkgroupUpdate = "workgroup.update"
+	ActionWorkgroupDelete = "workgroup.delete"
+	ActionWorkgroupGrant  = "workgroup.grant"
+	ActionWorkgroupRevoke = "workgroup.revoke"
 )
 
 // ErrDenied is returned when the caller is not permitted to do what they
@@ -82,16 +88,17 @@ var ErrInvalid = errors.New("admin: invalid request")
 type Service struct {
 	db *sqlx.DB
 
-	domains   *store.Domains
-	users     *store.Users
-	aliases   *store.Aliases
-	shared    *store.SharedMailboxes
-	grants    *store.SharedMailboxGrants
-	quotas    *store.Quotas
-	imperson  *store.ImpersonationGrants
-	audit     *store.AuditLog
-	credentia *store.Credentials
-	sessions  *store.Sessions
+	domains    *store.Domains
+	users      *store.Users
+	aliases    *store.Aliases
+	shared     *store.SharedMailboxes
+	grants     *store.SharedMailboxGrants
+	workgroups *store.Workgroups
+	quotas     *store.Quotas
+	imperson   *store.ImpersonationGrants
+	audit      *store.AuditLog
+	credentia  *store.Credentials
+	sessions   *store.Sessions
 
 	argon2            config.Argon2Params
 	minPasswordLength int
@@ -118,6 +125,7 @@ func New(opts Options) (*Service, error) {
 		aliases:           store.NewAliases(),
 		shared:            store.NewSharedMailboxes(),
 		grants:            store.NewSharedMailboxGrants(),
+		workgroups:        store.NewWorkgroups(),
 		quotas:            store.NewQuotas(),
 		imperson:          store.NewImpersonationGrants(),
 		audit:             store.NewAuditLog(),
@@ -289,4 +297,140 @@ func (s *Service) DeleteContactGroup(ctx context.Context, actor policy.Principal
 		return store.ErrNotFound
 	}
 	return nil
+}
+
+// ========================================================================
+// Workgroups (Organizations)
+// ========================================================================
+
+// CreateWorkgroupRequest is the input for creating a workgroup.
+type CreateWorkgroupRequest struct {
+	Name        string
+	Domain      string
+	DisplayName string
+	Description string
+	OpenBooking *bool
+	Members     []store.WorkgroupMember
+}
+
+// ListWorkgroups returns all workgroups.
+func (s *Service) ListWorkgroups(ctx context.Context, actor policy.Principal) ([]store.Workgroup, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
+	return s.workgroups.List(ctx, s.db)
+}
+
+// CreateWorkgroup creates a new workgroup with its founding members.
+func (s *Service) CreateWorkgroup(ctx context.Context, actor policy.Principal, req CreateWorkgroupRequest) (store.Workgroup, error) {
+	if err := requireAdmin(actor); err != nil {
+		return store.Workgroup{}, err
+	}
+	wg, err := s.workgroups.Create(ctx, s.db, store.CreateWorkgroupRequest{
+		Name:        req.Name,
+		Domain:      req.Domain,
+		DisplayName: req.DisplayName,
+		Description: req.Description,
+		OpenBooking: req.OpenBooking,
+		Members:     req.Members,
+	})
+	if err != nil {
+		return store.Workgroup{}, fmt.Errorf("admin: creating workgroup: %w", err)
+	}
+	// Record audit for each member added
+	for _, m := range req.Members {
+		_ = s.record(ctx, s.db, actor, change{
+			action:     ActionWorkgroupGrant,
+			targetType: "workgroup_member",
+			targetID:   fmt.Sprintf("%d", wg.ID),
+			target:     m.Address,
+			detail:     map[string]any{"role": m.Role},
+		})
+	}
+	return wg, nil
+}
+
+// GetWorkgroup returns a workgroup by ID.
+func (s *Service) GetWorkgroup(ctx context.Context, actor policy.Principal, id int64) (store.Workgroup, error) {
+	if err := requireAdmin(actor); err != nil {
+		return store.Workgroup{}, err
+	}
+	return s.workgroups.Get(ctx, s.db, id)
+}
+
+// UpdateWorkgroupRequest is the input for updating a workgroup.
+type UpdateWorkgroupRequest struct {
+	Name        string
+	DisplayName string
+	Description string
+	OpenBooking *bool
+}
+
+// UpdateWorkgroup updates a workgroup.
+func (s *Service) UpdateWorkgroup(ctx context.Context, actor policy.Principal, id int64, name, displayName, description string, openBooking *bool) (store.Workgroup, error) {
+	if err := requireAdmin(actor); err != nil {
+		return store.Workgroup{}, err
+	}
+	wg, err := s.workgroups.Update(ctx, s.db, id, store.UpdateWorkgroupRequest{
+		Name:        name,
+		DisplayName: displayName,
+		Description: description,
+		OpenBooking: openBooking,
+	})
+	if err != nil {
+		return store.Workgroup{}, fmt.Errorf("admin: updating workgroup: %w", err)
+	}
+	return wg, nil
+}
+
+// DeleteWorkgroup deletes a workgroup.
+func (s *Service) DeleteWorkgroup(ctx context.Context, actor policy.Principal, id int64) error {
+	if err := requireAdmin(actor); err != nil {
+		return err
+	}
+	if err := s.workgroups.Delete(ctx, s.db, id); err != nil {
+		return fmt.Errorf("admin: deleting workgroup: %w", err)
+	}
+	return nil
+}
+
+// ListWorkgroupMembers returns all members of a workgroup.
+func (s *Service) ListWorkgroupMembers(ctx context.Context, actor policy.Principal, id int64) ([]store.WorkgroupMember, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
+	return s.workgroups.Members(ctx, s.db, id)
+}
+
+// AddWorkgroupMember adds a member to a workgroup.
+func (s *Service) AddWorkgroupMember(ctx context.Context, actor policy.Principal, id int64, address, role string) error {
+	if err := requireAdmin(actor); err != nil {
+		return err
+	}
+	if err := s.workgroups.AddMember(ctx, s.db, id, address, role); err != nil {
+		return fmt.Errorf("admin: adding workgroup member: %w", err)
+	}
+	return s.record(ctx, s.db, actor, change{
+		action:     ActionWorkgroupGrant,
+		targetType: "workgroup_member",
+		targetID:   fmt.Sprintf("%d", id),
+		target:     address,
+		detail:     map[string]any{"role": role},
+	})
+}
+
+// RemoveWorkgroupMember removes a member from a workgroup.
+func (s *Service) RemoveWorkgroupMember(ctx context.Context, actor policy.Principal, id int64, address string) error {
+	if err := requireAdmin(actor); err != nil {
+		return err
+	}
+	if _, err := s.workgroups.RemoveMember(ctx, s.db, id, address); err != nil {
+		return fmt.Errorf("admin: removing workgroup member: %w", err)
+	}
+	return s.record(ctx, s.db, actor, change{
+		action:     ActionWorkgroupRevoke,
+		targetType: "workgroup_member",
+		targetID:   fmt.Sprintf("%d", id),
+		target:     address,
+	})
 }

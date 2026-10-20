@@ -50,35 +50,40 @@ type Domain struct {
 	DKIMSelector *string
 	// ContactGroupID is the contact group this domain belongs to.
 	ContactGroupID *int64
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// WorkgroupID is the organization (workgroup) this domain belongs to.
+	// All users in this domain are implicitly members of the workgroup.
+	WorkgroupID *int64
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // CreateDomainRequest is what an administrator supplies to add a domain. Nil
 // pointers fall back to the schema defaults, so a minimal request is just a
 // name.
 type CreateDomainRequest struct {
-	Name               string
-	Status             DomainStatus // empty -> active
-	IsLocal            bool
-	Description        string
-	DefaultQuotaBytes  *int64
-	DailySendLimit     *int
-	DKIMSelector       *string
-	ContactGroupID     *int64
+	Name              string
+	Status            DomainStatus // empty -> active
+	IsLocal           bool
+	Description       string
+	DefaultQuotaBytes *int64
+	DailySendLimit    *int
+	DKIMSelector      *string
+	ContactGroupID    *int64
+	WorkgroupID       *int64
 }
 
 // UpdateDomainRequest carries the mutable fields of a domain. Unlike the
 // create form these are not optional: the caller supplies the whole row, which
 // is what a settings page already has.
 type UpdateDomainRequest struct {
-	Status             DomainStatus
-	IsLocal            bool
-	Description        string
-	DefaultQuotaBytes  int64
-	DailySendLimit     *int
-	DKIMSelector       *string
-	ContactGroupID     *int64
+	Status            DomainStatus
+	IsLocal           bool
+	Description       string
+	DefaultQuotaBytes int64
+	DailySendLimit    *int
+	DKIMSelector      *string
+	ContactGroupID    *int64
+	WorkgroupID       *int64
 }
 
 // domainRow is the table as scanned. Nullable columns are read through
@@ -91,7 +96,8 @@ type domainRow struct {
 	DefaultQuotaBytes int64          `db:"default_quota_bytes"`
 	DailySendLimit    *int           `db:"daily_send_limit"`
 	DKIMSelector      *string        `db:"dkim_selector"`
-	ContactGroupID       *int64         `db:"contact_group_id"`
+	ContactGroupID    *int64         `db:"contact_group_id"`
+	WorkgroupID       *int64         `db:"workgroup_id"`
 	CreatedAt         time.Time      `db:"created_at"`
 	UpdatedAt         time.Time      `db:"updated_at"`
 }
@@ -109,7 +115,8 @@ func (r domainRow) domain() Domain {
 		DefaultQuotaBytes: r.DefaultQuotaBytes,
 		DailySendLimit:    r.DailySendLimit,
 		DKIMSelector:      r.DKIMSelector,
-ContactGroupID:      r.ContactGroupID,
+		ContactGroupID:    r.ContactGroupID,
+		WorkgroupID:       r.WorkgroupID,
 		CreatedAt:         r.CreatedAt,
 		UpdatedAt:         r.UpdatedAt,
 	}
@@ -117,7 +124,8 @@ ContactGroupID:      r.ContactGroupID,
 
 const domainSelect = `
 	SELECT name, status, is_local, description, default_quota_bytes,
-	       daily_send_limit, dkim_selector, created_at, updated_at
+	       daily_send_limit, dkim_selector, contact_group_id, workgroup_id,
+	       created_at, updated_at
 	FROM domains`
 
 // Domains reads and writes the domains table.
@@ -143,11 +151,11 @@ func (d *Domains) Create(ctx context.Context, q Querier, req CreateDomainRequest
 
 	const query = `
 		INSERT INTO domains (name, status, is_local, description,
-		                      default_quota_bytes, daily_send_limit, dkim_selector, contact_group_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+		                      default_quota_bytes, daily_send_limit, dkim_selector, contact_group_id, workgroup_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 	if _, err := q.ExecContext(ctx, query,
 		req.Name, status, req.IsLocal, req.Description,
-		quota, req.DailySendLimit, req.DKIMSelector, req.ContactGroupID); err != nil {
+		quota, req.DailySendLimit, req.DKIMSelector, req.ContactGroupID, req.WorkgroupID); err != nil {
 		if IsConflict(err) {
 			return ErrConflict
 		}
@@ -196,11 +204,11 @@ func (d *Domains) Update(ctx context.Context, q Querier, name string, req Update
 		UPDATE domains SET
 			status = $2, is_local = $3, description = $4,
 			default_quota_bytes = $5, daily_send_limit = $6, dkim_selector = $7,
-			contact_group_id = $8, updated_at = now()
+			contact_group_id = $8, workgroup_id = $9, updated_at = now()
 		WHERE name = $1`
 	res, err := q.ExecContext(ctx, query,
 		name, req.Status, req.IsLocal, req.Description,
-		req.DefaultQuotaBytes, req.DailySendLimit, req.DKIMSelector, req.ContactGroupID)
+		req.DefaultQuotaBytes, req.DailySendLimit, req.DKIMSelector, req.ContactGroupID, req.WorkgroupID)
 	if err != nil {
 		return fmt.Errorf("store: updating domain: %w", err)
 	}

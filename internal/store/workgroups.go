@@ -50,6 +50,14 @@ type WorkgroupMember struct {
 // IsAdmin reports whether the member may administer the workgroup.
 func (m WorkgroupMember) IsAdmin() bool { return m.Role == WorkgroupRoleAdmin }
 
+// Contact is one address belonging to an organization, with the display name its
+// mailbox carries. It is what the address list and the composer's suggestions
+// show.
+type Contact struct {
+	Address     string `db:"address"`
+	DisplayName string `db:"display_name"`
+}
+
 // Workgroups reads and writes the workgroups tables.
 type Workgroups struct{}
 
@@ -145,6 +153,119 @@ func (w *Workgroups) ByName(ctx context.Context, q Querier, domain, name string)
 	}
 	if err != nil {
 		return Workgroup{}, fmt.Errorf("store: loading workgroup by name: %w", err)
+	}
+	return out, nil
+}
+
+// ForDomain returns the organization that owns a domain.
+//
+// A group owns a domain in one of two ways: it is the group's home domain, the
+// one its own address lives in, or the domain row names the group. Both count,
+// because a deployment that predates domains.workgroup_id only has the first.
+// ErrNotFound means the domain belongs to no organization.
+func (w *Workgroups) ForDomain(ctx context.Context, q Querier, domain string) (Workgroup, error) {
+	if domain == "" {
+		return Workgroup{}, ErrNotFound
+	}
+	var out Workgroup
+	err := q.GetContext(ctx, &out, `
+		SELECT `+workgroupColumns+`
+		FROM workgroups w
+		WHERE w.domain = $1
+		   OR EXISTS (SELECT 1 FROM domains d
+                      WHERE d.name = $1 AND d.workgroup_id = w.id)
+		ORDER BY w.domain, w.name
+		LIMIT 1`, domain)
+	if IsNotFound(err) {
+		return Workgroup{}, ErrNotFound
+	}
+	if err != nil {
+		return Workgroup{}, fmt.Errorf("store: loading workgroup for domain: %w", err)
+	}
+	return out, nil
+}
+
+// ForAddress is ForDomain applied to the domain part of an address. Every
+// caller that has an address and wants the organization behind it uses this,
+// rather than splitting the string itself.
+func (w *Workgroups) ForAddress(ctx context.Context, q Querier, address string) (Workgroup, error) {
+	_, domain, found := strings.Cut(strings.ToLower(strings.TrimSpace(address)), "@")
+	if !found {
+		return Workgroup{}, ErrNotFound
+	}
+	return w.ForDomain(ctx, q, domain)
+}
+
+// Domains returns the domains an organization owns: its home domain first, then
+// any others attached to it.
+func (w *Workgroups) Domains(ctx context.Context, q Querier, workgroupID int64) ([]string, error) {
+	wg, err := w.Get(ctx, q, workgroupID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := q.QueryxContext(ctx, `
+		SELECT d.name
+		FROM domains d
+		WHERE d.workgroup_id = $1 AND d.name <> $2
+		ORDER BY d.name`, workgroupID, wg.Domain)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing workgroup domains: %w", err)
+	}
+	defer rows.Close()
+
+	out := []string{wg.Domain}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("store: scanning workgroup domain: %w", err)
+		}
+		out = append(out, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterating workgroup domains: %w", err)
+	}
+	return out, nil
+}
+
+// People returns the enabled mailboxes in the domains an organization owns.
+//
+// Membership in the organization is not the filter here: everyone with an
+// address in one of its domains is a contact, which is what makes an
+// organization-wide address list useful in the first place.
+func (w *Workgroups) People(ctx context.Context, q Querier, workgroupID int64) ([]Contact, error) {
+	domains, err := w.Domains(ctx, q, workgroupID)
+	if err != nil {
+		return nil, err
+	}
+	return w.PeopleInDomains(ctx, q, domains)
+}
+
+// PeopleInDomains returns the enabled mailboxes whose addresses sit in one of
+// the given domains.
+func (w *Workgroups) PeopleInDomains(ctx context.Context, q Querier, domains []string) ([]Contact, error) {
+	if len(domains) == 0 {
+		return nil, nil
+	}
+	rows, err := q.QueryxContext(ctx, `
+		SELECT u.address, u.display_name
+		FROM users u
+		WHERE u.enabled AND lower(split_part(u.address, '@', 2)) = ANY($1)
+		ORDER BY COALESCE(NULLIF(u.display_name, ''), u.address)`, domains)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing organization contacts: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]Contact, 0, 16)
+	for rows.Next() {
+		var c Contact
+		if err := rows.StructScan(&c); err != nil {
+			return nil, fmt.Errorf("store: scanning organization contact: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterating organization contacts: %w", err)
 	}
 	return out, nil
 }
@@ -261,6 +382,33 @@ func (w *Workgroups) RemoveMember(ctx context.Context, q Querier, workgroupID in
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
+}
+
+// UpdateWorkgroupRequest carries the mutable fields of a workgroup.
+type UpdateWorkgroupRequest struct {
+	Name        string
+	DisplayName string
+	Description string
+	OpenBooking *bool
+}
+
+// Update updates a workgroup's mutable fields.
+func (w *Workgroups) Update(ctx context.Context, q Querier, id int64, req UpdateWorkgroupRequest) (Workgroup, error) {
+	var out Workgroup
+	err := q.GetContext(ctx, &out, `
+		UPDATE workgroups SET
+			name = $2, display_name = $3, description = $4,
+			open_booking = $5, updated_at = now()
+		WHERE id = $1
+		RETURNING id, name, domain, display_name, description, open_booking, created_at, updated_at`,
+		id, req.Name, req.DisplayName, req.Description, req.OpenBooking)
+	if err != nil {
+		if IsNotFound(err) {
+			return Workgroup{}, ErrNotFound
+		}
+		return Workgroup{}, fmt.Errorf("store: updating workgroup: %w", err)
+	}
+	return out, nil
 }
 
 // SetOpenBooking records whether anyone may book onto the group's calendars
