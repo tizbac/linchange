@@ -8,8 +8,15 @@ FROM node:22-alpine AS frontend-builder
 
 WORKDIR /app/web
 
-# Copy package files
+# Copy package files and the install-time scripts.
+#
+# npm ci runs the postinstall hook, and that hook is a file in web/scripts, so
+# it has to be on disk before the install rather than arriving with the rest of
+# the source. The destination is spelled out because a bare "./" would copy the
+# directory's contents into the working directory and leave the hook where npm
+# cannot find it.
 COPY web/package*.json ./
+COPY web/scripts/ ./scripts/
 
 # Install dependencies
 RUN npm ci

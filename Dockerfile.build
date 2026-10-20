@@ -36,8 +36,14 @@ ARG VERSION=dev
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy web package files for npm caching
+# Copy web package files for npm caching.
+#
+# web/scripts comes with them: npm ci runs the postinstall hook, and that hook
+# is a file in this directory. Copying only the manifests leaves the install
+# failing on a missing module, which reads as a broken dependency rather than
+# as a file nobody copied.
 COPY web/package*.json ./web/
+COPY web/scripts/ ./web/scripts/
 RUN cd /build/web && npm ci
 
 # Copy all source code
