@@ -229,10 +229,10 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 				"message_id", msg.ID,
 				"blob_sha256", fmt.Sprintf("%x", msg.BlobSHA256))
 			dsnDelay := time.Duration(0)
-	if p.cfg.DSN.Enabled {
-		dsnDelay = p.cfg.DSN.Delay
-	}
-	return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, "blob not found", dsnDelay)
+			if p.cfg.DSN.Enabled {
+				dsnDelay = p.cfg.DSN.Delay
+			}
+			return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, "blob not found", dsnDelay)
 		}
 		return fmt.Errorf("get blob: %w", err)
 	}
@@ -307,10 +307,10 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 				"message_id", msg.ID,
 				"attempts", msg.Attempts)
 			dsnDelay := time.Duration(0)
-		if p.cfg.DSN.Enabled {
-			dsnDelay = p.cfg.DSN.Delay
-		}
-		return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, err.Error(), dsnDelay)
+			if p.cfg.DSN.Enabled {
+				dsnDelay = p.cfg.DSN.Delay
+			}
+			return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, err.Error(), dsnDelay)
 		}
 
 		nextAttemptAt := time.Now().Add(nextDelay)
@@ -332,10 +332,10 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 		nextDelay, ok := p.cfg.Retry.CalculateBackoff(msg.Attempts, msg.CreatedAt)
 		if !ok {
 			dsnDelay := time.Duration(0)
-		if p.cfg.DSN.Enabled {
-			dsnDelay = p.cfg.DSN.Delay
-		}
-		return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, err.Error(), dsnDelay)
+			if p.cfg.DSN.Enabled {
+				dsnDelay = p.cfg.DSN.Delay
+			}
+			return p.cfg.Outbox.MarkFailed(ctx, nil, msg.ID, msg.Attempts, err.Error(), dsnDelay)
 		}
 		nextAttemptAt := time.Now().Add(nextDelay)
 		return p.cfg.Outbox.MarkDeferred(ctx, nil, msg.ID, msg.Attempts+1, err.Error(), nextAttemptAt)
@@ -419,7 +419,12 @@ func (p *DSNProcessor) Process(ctx context.Context, blobStore BlobStore, submiss
 			}
 
 			// Insert the DSN into the outbox for delivery.
-			_, err = submissionFn(msg.SubmittedBy, msg.EnvelopeFrom, bounceData, []OutboxRecipient{
+			// The bounce envelope sender must be the DSN FromAddress (or empty for
+			// a null sender), not the original message's envelope sender. The DSN
+			// message headers already contain From: <DSN FromAddress> and
+			// To: <original sender>.
+			dsnEnvelopeFrom := p.pool.cfg.DSN.FromAddress
+			_, err = submissionFn(msg.SubmittedBy, dsnEnvelopeFrom, bounceData, []OutboxRecipient{
 				{
 					Position: 0,
 					Address:  msg.SubmittedBy,

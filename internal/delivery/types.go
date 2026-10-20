@@ -16,6 +16,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/mail"
+	"sort"
 	"strings"
 	"time"
 
@@ -193,6 +194,8 @@ func (c BackoffConfig) CalculateBackoff(attempts int, createdAt time.Time) (time
 // ---------------------------------------------------------------------------
 
 // SMTPConfig holds the connection parameters for the SMTP client.
+// If Host is empty, the client will perform direct MX delivery to the
+// recipient domains (looking up MX records and connecting directly).
 type SMTPConfig struct {
 	Host               string
 	Port               int
@@ -215,7 +218,20 @@ func NewSMTPClient(cfg SMTPConfig) SMTPClient {
 }
 
 // Send delivers a message using go-smtp.
+// If cfg.Host is set, it connects to that smart host.
+// If cfg.Host is empty, it performs direct MX delivery to each recipient domain.
 func (c *smtpClient) Send(ctx context.Context, from string, to []string, data []byte) error {
+	if c.cfg.Host != "" {
+		// Smart host mode - connect to the configured host
+		return c.sendViaSmartHost(ctx, from, to, data)
+	}
+
+	// Direct MX delivery mode
+	return c.sendViaMX(ctx, from, to, data)
+}
+
+// sendViaSmartHost connects to the configured smart host and delivers the message.
+func (c *smtpClient) sendViaSmartHost(ctx context.Context, from string, to []string, data []byte) error {
 	dialer := &net.Dialer{
 		Timeout: c.cfg.ConnectTimeout,
 	}
@@ -327,6 +343,212 @@ func (c *smtpClient) Send(ctx context.Context, from string, to []string, data []
 		return &ErrTransient{Err: fmt.Errorf("some recipients failed: %v", permanent)}
 	}
 	return nil
+}
+
+// sendViaMX performs direct MX delivery to each recipient's domain.
+// It groups recipients by domain, looks up MX records, and tries each MX host in priority order.
+func (c *smtpClient) sendViaMX(ctx context.Context, from string, to []string, data []byte) error {
+	// Group recipients by domain
+	recipientsByDomain := make(map[string][]string)
+	for _, addr := range to {
+		domain := extractDomain(addr)
+		if domain != "" {
+			recipientsByDomain[domain] = append(recipientsByDomain[domain], addr)
+		}
+	}
+
+	// If we couldn't parse any domains, fall back to treating all as transient
+	if len(recipientsByDomain) == 0 {
+		return &ErrTransient{Err: fmt.Errorf("no valid recipient domains")}
+	}
+
+	// Try each domain independently - a failure for one domain doesn't affect others
+	var (
+		allDelivered []string
+		allPermanent []string
+		allTransient []string
+	)
+
+	for domain, recipients := range recipientsByDomain {
+		// Look up MX records for this domain
+		mxRecords, err := c.lookupMX(ctx, domain)
+		if err != nil {
+			// MX lookup failed - mark all recipients for this domain as transient
+			allTransient = append(allTransient, recipients...)
+			continue
+		}
+
+		// Try each MX host in priority order
+		delivered, permanent, transient := c.tryMXHosts(ctx, mxRecords, from, recipients, data)
+		allDelivered = append(allDelivered, delivered...)
+		allPermanent = append(allPermanent, permanent...)
+		allTransient = append(allTransient, transient...)
+	}
+
+	// If all recipients permanently rejected, fail immediately
+	if len(allPermanent) > 0 && len(allDelivered) == 0 && len(allTransient) == 0 {
+		return &ErrPermanent{Err: fmt.Errorf("all recipients rejected: %v", allPermanent)}
+	}
+
+	// If some recipients delivered, consider it a partial success
+	// The worker will handle retry for transient/permanent ones
+	if len(allTransient) > 0 || len(allPermanent) > 0 {
+		var failed []string
+		failed = append(failed, allTransient...)
+		failed = append(failed, allPermanent...)
+		return &ErrTransient{Err: fmt.Errorf("some recipients failed: %v", failed)}
+	}
+
+	return nil
+}
+
+// tryMXHosts tries to deliver to each MX host in priority order.
+// Returns delivered, permanent failures, and transient failures.
+func (c *smtpClient) tryMXHosts(ctx context.Context, mxRecords []*net.MX, from string, recipients []string, data []byte) ([]string, []string, []string) {
+	var (
+		delivered []string
+		permanent []string
+		transient []string
+	)
+
+	for _, mx := range mxRecords {
+		host := strings.TrimSuffix(mx.Host, ".")
+		addr := net.JoinHostPort(host, "25") // MX delivery always uses port 25
+
+		dialer := &net.Dialer{
+			Timeout: c.cfg.ConnectTimeout,
+		}
+
+		var s *smtp.Client
+
+		// Try plain connection first (MX delivery typically uses port 25 with opportunistic STARTTLS)
+		conn, dialErr := dialer.DialContext(ctx, "tcp", addr)
+		if dialErr != nil {
+			// This MX host unreachable - try next one
+			continue
+		}
+		s = smtp.NewClient(conn)
+
+		if err := s.Hello("linchange"); err != nil {
+			s.Close()
+			continue
+		}
+
+		// The go-smtp library does not expose a public StartTLS method.
+		// For MX delivery on port 25, we proceed without TLS (opportunistic).
+		// A production deployment should use a smart host with TLS for security.
+
+		if err := s.Mail(from, nil); err != nil {
+			if smtpIsPermanent(err) {
+				s.Close()
+				permanent = append(permanent, recipients...)
+				return delivered, permanent, transient
+			}
+			s.Close()
+			continue
+		}
+
+		// Attempt each recipient
+		var (
+			thisDelivered []string
+			thisPermanent []string
+			thisTransient []string
+		)
+
+		for _, toAddr := range recipients {
+			if err := s.Rcpt(toAddr, nil); err != nil {
+				if smtpIsPermanent(err) {
+					thisPermanent = append(thisPermanent, toAddr)
+				} else {
+					thisTransient = append(thisTransient, toAddr)
+				}
+				continue
+			}
+			thisDelivered = append(thisDelivered, toAddr)
+		}
+
+		// If all recipients permanently rejected on this MX, try next MX
+		if len(thisPermanent) > 0 && len(thisDelivered) == 0 && len(thisTransient) == 0 {
+			s.Close()
+			continue
+		}
+
+		// Send DATA for delivered recipients
+		if len(thisDelivered) > 0 {
+			if err := sendMailData(s, data); err != nil {
+				s.Close()
+				continue
+			}
+		}
+
+		// Try transient recipients
+		for _, addr := range thisTransient {
+			if err := s.Rcpt(addr, nil); err != nil {
+				thisPermanent = append(thisPermanent, addr)
+				continue
+			}
+			if err := sendMailData(s, data); err != nil {
+				thisPermanent = append(thisPermanent, addr)
+				continue
+			}
+			thisDelivered = append(thisDelivered, addr)
+		}
+
+		s.Close()
+
+		delivered = append(delivered, thisDelivered...)
+		permanent = append(permanent, thisPermanent...)
+		transient = append(transient, thisTransient...)
+
+		// If we delivered at least some recipients, consider this MX successful
+		// (don't try lower-priority MX hosts)
+		if len(delivered) > 0 {
+			return delivered, permanent, transient
+		}
+
+		// If all were transient/permanent on this MX, try next MX
+	}
+
+	// All MX hosts failed - mark all as transient for retry
+	return delivered, permanent, append(transient, recipients...)
+}
+
+// lookupMX looks up MX records for a domain.
+// Returns them sorted by priority (lowest first).
+func (c *smtpClient) lookupMX(ctx context.Context, domain string) ([]*net.MX, error) {
+	// Use the system resolver with a timeout
+	type result struct {
+		mx  []*net.MX
+		err error
+	}
+	resCh := make(chan result, 1)
+	go func() {
+		mx, err := net.LookupMX(domain)
+		resCh <- result{mx: mx, err: err}
+	}()
+
+	select {
+	case res := <-resCh:
+		if res.err != nil {
+			return nil, res.err
+		}
+		// Sort by priority (lower = higher preference)
+		sort.Slice(res.mx, func(i, j int) bool {
+			return res.mx[i].Pref < res.mx[j].Pref
+		})
+		return res.mx, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// extractDomain extracts the domain part from an email address.
+func extractDomain(addr string) string {
+	at := strings.LastIndex(addr, "@")
+	if at < 0 || at == len(addr)-1 {
+		return ""
+	}
+	return strings.ToLower(addr[at+1:])
 }
 
 // smtpIsPermanent checks if an SMTP error indicates a permanent failure
