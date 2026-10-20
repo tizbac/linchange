@@ -39,10 +39,12 @@ sed -E \
 
 # Autodiscover answers with the advertised ports, and the tests insist every
 # URL it names can be reached, so the set has to describe the ports this stack
-# actually publishes.
+# actually publishes. The generated config already carries an advertised block
+# (every port left at 0), so its values are rewritten in place: printing a
+# second mapping under the same key is something a YAML parser refuses rather
+# than something it merges.
 awk -v port="$PORT" '
-  { print }
-  /^exchange:/ {
+  function printAdvertised() {
     print "  advertised:"
     print "    imap: 1143"
     print "    imaps: 1993"
@@ -51,7 +53,51 @@ awk -v port="$PORT" '
     print "    smtp: 1025"
     print "    submission: 1587"
     print "    http: " port
-  }' .e2e-linchange.yaml > .e2e-linchange.yaml.tmp \
+  }
+  BEGIN {
+    ports["imap"] = 1143
+    ports["imaps"] = 1993
+    ports["pop3"] = 1110
+    ports["pop3s"] = 1995
+    ports["smtp"] = 1025
+    ports["submission"] = 1587
+    ports["http"] = port
+  }
+  /^exchange:/ { inexchange = 1 }
+  inexchange && /^  advertised:/ { inblock = 1; seen = 1; print; next }
+  inblock {
+    if ($0 ~ /^    [a-z_]+: /) {
+      key = $1
+      sub(/:$/, "", key)
+      if (key in ports) { print "    " key ": " ports[key]; next }
+    } else {
+      inblock = 0
+    }
+  }
+  # A config without the block still gets one, before the next top-level key
+  # closes the exchange section.
+  inexchange && !seen && !inblock && /^[a-z]/ && !/^exchange:/ {
+    printAdvertised()
+    inexchange = 0
+  }
+  { print }
+  END { if (inexchange && !seen) printAdvertised() }
+' .e2e-linchange.yaml > .e2e-linchange.yaml.tmp \
+  && mv .e2e-linchange.yaml.tmp .e2e-linchange.yaml
+
+# Meeting invitations carry a join link built from meetings.public_url, and a
+# config without one derives https://<hostname> — an address this stack does
+# not serve, so a test that follows its own invitation lands on a dead page.
+# The value is written under the heading (or a heading is added) rather than
+# appended, because two public_url lines in one block are refused, not merged.
+awk -v port="$PORT" '
+  BEGIN { url = "  public_url: http://127.0.0.1:" port }
+  /^meetings:/ { print; print url; inmeetings = 1; seen = 1; next }
+  inmeetings && /^  public_url:/ { next }
+  inmeetings && /^[^ ]/ { inmeetings = 0 }
+  { print }
+  END { if (!seen) { print "meetings:"; print url } }
+' .e2e-linchange.yaml > .e2e-linchange.yaml.tmp \
   && mv .e2e-linchange.yaml.tmp .e2e-linchange.yaml
 
 exec ./bin/linchange --config .e2e-linchange.yaml --web-dir web/dist/linchange-web/browser

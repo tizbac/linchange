@@ -430,10 +430,26 @@ func queryTime(r *http.Request, name string) time.Time {
 func (s *Server) handleListFolders(w http.ResponseWriter, r *http.Request) {
 	// The ?owner= query, when present, was already resolved and checked by the
 	// sharedMailbox middleware, so mailOwner is the mailbox this caller may read.
-	folders, err := s.mail.Folders(r.Context(), mailOwner(r))
+	owner := mailOwner(r)
+	folders, err := s.mail.Folders(r.Context(), owner)
 	if err != nil {
 		s.writeMailError(w, r, err)
 		return
+	}
+	// An owner with no folders at all is a mailbox nothing has ever been
+	// delivered to, and the standard set is what every client expects to find:
+	// IMAP, EWS and EAS address those folders by name, and the web client has
+	// nothing to open without them. Creating them here is idempotent and covers
+	// mailboxes declared before that was done at creation time.
+	if len(folders) == 0 {
+		if err := s.mail.EnsureFolders(r.Context(), owner); err != nil {
+			s.writeMailError(w, r, err)
+			return
+		}
+		if folders, err = s.mail.Folders(r.Context(), owner); err != nil {
+			s.writeMailError(w, r, err)
+			return
+		}
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"folders": folders})
 }

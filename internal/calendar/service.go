@@ -55,6 +55,14 @@ func (s *Service) Target(ctx context.Context, q store.Querier, cal store.Calenda
 	target := policy.CalendarTarget{ShowFreeBusy: cal.ShowFreeBusy}
 	if cal.Owner != nil {
 		target.Owner = *cal.Owner
+		// A share with yourself is a question the WHERE clause cannot even
+		// reach, so the owner's own access is not looked up: one fewer query
+		// on every request to discover what the ownership rule says anyway.
+		if !strings.EqualFold(*cal.Owner, who.Address) {
+			if err := s.resolveShare(ctx, q, cal, who, &target); err != nil {
+				return target, err
+			}
+		}
 		return target, nil
 	}
 	if cal.WorkgroupID == nil {
@@ -70,6 +78,13 @@ func (s *Service) Target(ctx context.Context, q store.Querier, cal store.Calenda
 	}
 	target.OpenBooking = group.OpenBooking
 
+	// A team calendar can be shared too — with a group that should be able to
+	// edit it without being made administrators of the organization, which is
+	// a different and larger grant than writing events.
+	if err := s.resolveShare(ctx, q, cal, who, &target); err != nil {
+		return target, err
+	}
+
 	member, err := s.groups.Member(ctx, q, *cal.WorkgroupID, who.Address)
 	switch {
 	case err == nil:
@@ -81,6 +96,49 @@ func (s *Service) Target(ctx context.Context, q store.Querier, cal store.Calenda
 		return target, err
 	}
 	return target, nil
+}
+
+// resolveShare fills in what a calendar share granted this principal.
+//
+// One lookup answers both kinds of subject, and the group case is resolved by
+// the database rather than here: a group that reaches somebody through the
+// organization's domains is a fact about the directory, and re-deriving that in
+// Go is how the two answers would come apart.
+func (s *Service) resolveShare(ctx context.Context, q store.Querier, cal store.Calendar, who policy.Principal, target *policy.CalendarTarget) error {
+	level, err := store.NewCalendarShares().AccessLevel(ctx, q, cal.ID, who.Address)
+	if err != nil {
+		return err
+	}
+	target.SharedRead = level != ""
+	target.SharedWrite = level == store.CalendarShareWrite
+	return nil
+}
+
+// Level answers what a principal may do with a calendar: "write" if they may
+// put events on it, "read" if they may only look at it, and "" if neither.
+//
+// It asks the same two questions the routes ask, in the same order, rather than
+// restating them: the client needs to know whether to offer an edit control,
+// and a client-side rule that disagreed with the server would be the worst kind
+// of bug — one that only appears after somebody clicks Save.
+func (s *Service) Level(ctx context.Context, q store.Querier, who policy.Principal, cal store.Calendar) (string, error) {
+	target, err := s.Target(ctx, q, cal, who)
+	if err != nil {
+		return "", err
+	}
+	if err := s.Authorize(who, policy.ActionReadCalendar, cal, target); err != nil {
+		return "", nil
+	}
+	action := policy.ActionWriteCalendar
+	if cal.IsWorkgroup() {
+		// Event writes on a team calendar are bookings, matching how Create,
+		// Update and Delete authorize them.
+		action = policy.ActionBookWorkgroup
+	}
+	if err := s.Authorize(who, action, cal, target); err != nil {
+		return store.CalendarShareRead, nil
+	}
+	return store.CalendarShareWrite, nil
 }
 
 // Authorize checks an action against a calendar and translates the policy
@@ -449,26 +507,75 @@ func (s *Service) Update(ctx context.Context, q store.Querier, who policy.Princi
 // rather than that it silently vanished, which they cannot distinguish from a
 // delivery failure.
 func (s *Service) Cancel(ctx context.Context, q store.Querier, who policy.Principal, id int64) (store.Event, error) {
-	existing, err := s.events.Get(ctx, q, id)
-	if err != nil {
-		return store.Event{}, err
-	}
-	cal, err := s.calendars.Get(ctx, q, existing.CalendarID)
-	if err != nil {
-		return store.Event{}, err
-	}
-	target, err := s.Target(ctx, q, cal, who)
-	if err != nil {
-		return store.Event{}, err
-	}
-	action := policy.ActionWriteCalendar
-	if cal.IsWorkgroup() {
-		action = policy.ActionBookWorkgroup
-	}
-	if err := s.Authorize(who, action, cal, target); err != nil {
+	if err := s.authorizeEventWrite(ctx, q, who, id); err != nil {
 		return store.Event{}, err
 	}
 	return s.events.Cancel(ctx, q, id)
+}
+
+// Delete removes an event outright.
+//
+// It goes through the same check as Cancel: the event decides which calendar
+// the request is really about, so the check cannot be pointed at a calendar the
+// event never lived on. A route that deleted by id alone was, until this
+// existed, a way for any signed-in person to remove anybody's event.
+func (s *Service) Delete(ctx context.Context, q store.Querier, who policy.Principal, id int64) error {
+	if err := s.authorizeEventWrite(ctx, q, who, id); err != nil {
+		return err
+	}
+	return s.events.Delete(ctx, q, id)
+}
+
+// Readable returns a calendar the principal may see, or the refusal.
+//
+// Every route that hands back a calendar's contents goes through here, so that
+// reading is one rule asked in one place rather than a check each handler
+// remembers to add.
+func (s *Service) Readable(ctx context.Context, q store.Querier, who policy.Principal, calendarID int64) (store.Calendar, error) {
+	cal, err := s.calendars.Get(ctx, q, calendarID)
+	if err != nil {
+		return store.Calendar{}, err
+	}
+	target, err := s.Target(ctx, q, cal, who)
+	if err != nil {
+		return store.Calendar{}, err
+	}
+	if err := s.Authorize(who, policy.ActionReadCalendar, cal, target); err != nil {
+		return store.Calendar{}, err
+	}
+	return cal, nil
+}
+
+// authorizeEventWrite checks that the principal may write to the calendar the
+// event lives on. It loads the event first for that reason: the calendar is a
+// property of the row, not of the URL the row was asked for.
+func (s *Service) authorizeEventWrite(ctx context.Context, q store.Querier, who policy.Principal, eventID int64) error {
+	existing, err := s.events.Get(ctx, q, eventID)
+	if err != nil {
+		return err
+	}
+	cal, err := s.calendars.Get(ctx, q, existing.CalendarID)
+	if err != nil {
+		return err
+	}
+	return s.authorizeWriteTo(ctx, q, who, cal)
+}
+
+// authorizeWriteTo checks the event-write rule for a calendar: the owner, a
+// share that granted write, or — on a team calendar — the booking rule, which
+// is what keeps a meeting room bookable by whoever needs it.
+func (s *Service) authorizeWriteTo(ctx context.Context, q store.Querier, who policy.Principal, cal store.Calendar) error {
+	target, err := s.Target(ctx, q, cal, who)
+	if err != nil {
+		return err
+	}
+	action := policy.ActionWriteCalendar
+	if cal.IsWorkgroup() {
+		// Writing an event onto a team calendar is booking, not administering
+		// it: an outsider is welcome to put a meeting in the room.
+		action = policy.ActionBookWorkgroup
+	}
+	return s.Authorize(who, action, cal, target)
 }
 
 // writableCalendar resolves a draft's calendar and checks that the principal may
@@ -478,9 +585,8 @@ func (s *Service) Cancel(ctx context.Context, q store.Querier, who policy.Princi
 // client that has not chosen one sends.
 func (s *Service) writableCalendar(ctx context.Context, q store.Querier, who policy.Principal, calendarID int64) (store.Calendar, error) {
 	var (
-		cal    store.Calendar
-		err    error
-		target policy.CalendarTarget
+		cal store.Calendar
+		err error
 	)
 	if calendarID == 0 {
 		cal, err = s.calendars.EnsureDefault(ctx, q, who.Address, defaultTimezone())
@@ -493,18 +599,7 @@ func (s *Service) writableCalendar(ctx context.Context, q store.Querier, who pol
 			return cal, err
 		}
 	}
-	target, err = s.Target(ctx, q, cal, who)
-	if err != nil {
-		return cal, err
-	}
-
-	action := policy.ActionWriteCalendar
-	if cal.IsWorkgroup() {
-		// Writing an event onto a team calendar is booking, not administering
-		// it: an outsider is welcome to put a meeting in the room.
-		action = policy.ActionBookWorkgroup
-	}
-	if err := s.Authorize(who, action, cal, target); err != nil {
+	if err := s.authorizeWriteTo(ctx, q, who, cal); err != nil {
 		return cal, err
 	}
 	return cal, nil

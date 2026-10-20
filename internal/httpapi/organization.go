@@ -24,6 +24,11 @@ func (s *Server) mountOrganization(r chi.Router) {
 		r.Use(s.requireAuth)
 		r.Get("/", s.handleMyOrganization)
 		r.Get("/people", s.handleOrganizationPeople)
+		// The groups are here, next to the people, for the same reason the
+		// people are not under /admin: choosing "invite the sales team" or
+		// "share with everyone" is a thing every member does, not an
+		// administrative act.
+		r.Get("/groups", s.handleOrganizationGroups)
 	})
 }
 
@@ -85,6 +90,30 @@ func (s *Server) handleOrganizationPeople(w http.ResponseWriter, r *http.Request
 		out = append(out, viewContact(c))
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"people": out})
+}
+
+// handleOrganizationGroups lists the groups in the caller's organization.
+//
+// The list is names, counts and ids rather than membership. A member picking a
+// group to invite or to share a calendar with needs to know which one they
+// mean; the server expands it when the invitation goes out, so the addresses
+// are neither something the client has to carry nor something it can get subtly
+// wrong. Somebody whose domain belongs to no organization gets an empty list,
+// which is also the truth.
+func (s *Server) handleOrganizationGroups(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	wg, found := s.organizationFor(ctx, Principal(ctx).Address)
+	if !found {
+		s.writeJSON(w, http.StatusOK, map[string]any{"groups": []workgroupGroupView{}})
+		return
+	}
+	groups, err := store.NewGroups().List(ctx, s.db, wg.ID)
+	if err != nil {
+		s.log.Error("listing organization groups", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "could not load groups")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"groups": viewWorkgroupGroups(groups)})
 }
 
 // contactView is one address in the organization.

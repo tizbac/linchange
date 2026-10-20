@@ -32,6 +32,11 @@ export interface MeetingDraft {
   end: string;
   timezone?: string;
   attendees: Attendee[];
+  // groups are organization groups to invite whole. The server expands them
+  // into attendees when the meeting is created, so what is sent here is an id
+  // and what comes back is people — a client-side expansion would invite
+  // whoever the list said when the page loaded.
+  groups?: number[];
 }
 
 // Meeting is the whole meeting as the room page draws it.

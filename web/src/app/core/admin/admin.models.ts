@@ -99,6 +99,47 @@ export interface AuditEntry {
   created_at: string;
 }
 
+// OutboxMessageState mirrors the server's outbox_state enum: what the delivery
+// worker is doing with a message overall.
+export type OutboxMessageState = 'queued' | 'sending' | 'sent' | 'deferred' | 'failed' | 'bounced';
+
+// OutboxRecipientState mirrors recipient_state: each address settles on its
+// own, which is how one message can be half delivered and half refused.
+export type OutboxRecipientState = 'pending' | 'delivered' | 'deferred' | 'failed';
+
+// OutboxMessageView is one message in the outbound queue. The two counts are
+// what a list is read for; recipients arrive only from the detail endpoint.
+export interface OutboxMessageView {
+  id: number;
+  submitted_by: string;
+  envelope_from: string;
+  size: number;
+  state: OutboxMessageState;
+  attempts: number;
+  next_attempt_at: string;
+  last_error?: string;
+  recipient_count: number;
+  delivered_count: number;
+  created_at: string;
+  sent_at?: string;
+  failed_at?: string;
+  dsn_at?: string;
+  recipients?: OutboxRecipientView[];
+}
+
+// OutboxRecipientView is one envelope recipient and its own fate. A message
+// may have been delivered to two addresses and refused by the third, and the
+// bounce that explains it names exactly those — never the ones that worked.
+export interface OutboxRecipientView {
+  position: number;
+  address: string;
+  kind: string;
+  state: OutboxRecipientState;
+  attempts: number;
+  last_error?: string;
+  delivered_at?: string;
+}
+
 // Quota is rendered from bytes everywhere in the server, and the admin panel is
 // where an operator checks it, so the conversion lives in one place rather than
 // being repeated in every template.
@@ -140,6 +181,44 @@ export interface Workgroup {
 export interface WorkgroupMember {
   workgroup_id: number;
   address: string;
-  role: 'member' | 'admin';
+  // 'member' is a row somebody added; 'domain' is an address inside one of the
+  // organization's own domains, which is a membership nobody maintains and
+  // nobody can remove. A domain member has no role, since nobody granted one.
+  role?: 'member' | 'admin';
+  source?: 'member' | 'domain';
   created_at: string;
+}
+
+// OrgCalendar is a calendar the organization owns rather than a person: it has
+// no owner, so it outlasts whoever created it, and it appears in the calendar
+// picker of everybody in the organization.
+export interface OrgCalendar {
+  id: number;
+  workgroup_id?: number;
+  owner?: string;
+  name: string;
+  display_name?: string;
+  color: string;
+  timezone: string;
+  description: string;
+  show_free_busy: boolean;
+  is_default?: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// WorkgroupGroup is a named set of people inside an organization, addressed
+// when inviting to a meeting or sharing a calendar.
+export interface WorkgroupGroup {
+  id: number;
+  workgroup_id: number;
+  name: string;
+  description: string;
+  // everyone marks the organization's own group: every address in its domains.
+  // It takes no members and cannot be deleted, because there is nothing in it
+  // to add or to take away — its membership is the directory.
+  everyone?: boolean;
+  member_count: number;
+  created_at: string;
+  updated_at: string;
 }

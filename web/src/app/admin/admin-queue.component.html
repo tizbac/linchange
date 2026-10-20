@@ -1,0 +1,179 @@
+
+    <admin-page>
+      <admin-nav />
+      <div class="space-y-6">
+        <admin-page-header
+          title="Outbound queue"
+          hint="Every message this server submitted for delivery, newest first, with how many of
+            its recipients received it. When mail has not arrived, this is the page that says what
+            happened — and where a message stuck in retry is tried again."
+        >
+          <admin-button (pressed)="reload()">Refresh</admin-button>
+        </admin-page-header>
+
+        <admin-notice [message]="error()" tone="error" />
+        <admin-notice [message]="ok()" tone="ok" />
+
+        <form
+          class="flex flex-wrap items-end gap-3"
+          (ngSubmit)="reload()"
+        >
+          <label class="block">
+            <span class="mb-1 block text-xs font-medium text-slate-600">State</span>
+            <select class="{{ input }}" name="state" [(ngModel)]="stateFilter">
+              <option value="">every state</option>
+              @for (state of states; track state) {
+                <option [value]="state">{{ state }}</option>
+              }
+            </select>
+          </label>
+          <label class="block">
+            <span class="mb-1 block text-xs font-medium text-slate-600">Submitted by</span>
+            <input
+              class="{{ input }}"
+              name="submitter"
+              [(ngModel)]="submitterFilter"
+              placeholder="alice@example.com"
+            />
+          </label>
+          <admin-button variant="primary" type="submit">Filter</admin-button>
+          @if (stateFilter || submitterFilter) {
+            <admin-button
+              (pressed)="stateFilter = ''; submitterFilter = ''; reload()"
+            >
+              Clear
+            </admin-button>
+          }
+        </form>
+
+        <admin-panel [bodyClass]="'p-0'">
+          @if (loading()) {
+            <div class="px-5 py-6"><admin-busy [busy]="true" label="Loading the queue…" /></div>
+          } @else if (messages().length === 0) {
+            <admin-empty
+              text="Nothing in the queue with that filter. An empty queue is either good news or a filter that is too narrow."
+            />
+          } @else {
+            <table class="w-full">
+              <thead class="border-b border-slate-200 bg-slate-50">
+                <tr>
+                  <th class="{{ head }}">#</th>
+                  <th class="{{ head }}">Submitted</th>
+                  <th class="{{ head }}">From</th>
+                  <th class="{{ head }}">Delivered</th>
+                  <th class="{{ head }}">State</th>
+                  <th class="{{ head }}">Attempts</th>
+                  <th class="{{ head }}">Last error</th>
+                  <th class="{{ head }} text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                @for (m of messages(); track m.id) {
+                  <tr>
+                    <td class="{{ cell }} font-medium text-slate-900">{{ m.id }}</td>
+                    <td class="{{ cell }} whitespace-nowrap text-slate-600">{{ m.created_at }}</td>
+                    <td class="{{ cell }}">{{ m.submitted_by }}</td>
+                    <td class="{{ cell }}">
+                      <span
+                        class="font-medium"
+                        [class.text-emerald-700]="m.recipient_count > 0 && m.delivered_count === m.recipient_count"
+                        [class.text-rose-700]="m.delivered_count === 0 && m.recipient_count > 0"
+                      >
+                        {{ m.delivered_count }}/{{ m.recipient_count }}
+                      </span>
+                      <span class="text-xs text-slate-400">{{ m.size }} bytes</span>
+                    </td>
+                    <td class="{{ cell }}">
+                      <span class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 {{ stateTone(m.state) }}">
+                        {{ m.state }}
+                      </span>
+                    </td>
+                    <td class="{{ cell }}">{{ m.attempts }}</td>
+                    <td class="{{ cell }} max-w-md truncate text-slate-500" [title]="m.last_error || ''">
+                      {{ m.last_error || '—' }}
+                    </td>
+                    <td class="{{ cell }} whitespace-nowrap text-right">
+                      <admin-button (pressed)="open(m)">
+                        {{ detail()?.id === m.id ? 'Hide' : 'Details' }}
+                      </admin-button>
+                      @if (canRequeue(m)) {
+                        <admin-button variant="danger" [disabled]="busy()" (pressed)="requeue(m)">
+                          Try again
+                        </admin-button>
+                      }
+                    </td>
+                  </tr>
+                  @if (detail()?.id === m.id) {
+                    <tr class="bg-slate-50/60">
+                      <td colspan="8" class="px-4 py-4">
+                        <div class="space-y-3">
+                          <div class="flex flex-wrap items-center gap-3">
+                            <span class="text-sm font-medium text-slate-700">
+                              Message {{ m.id }} — {{ m.recipient_count }}
+                              {{ m.recipient_count === 1 ? 'recipient' : 'recipients' }}
+                            </span>
+                            @if (m.last_error) {
+                              <span class="text-sm text-rose-700">{{ m.last_error }}</span>
+                            }
+                            <span class="flex-1"></span>
+                            @if (m.sent_at) {
+                              <span class="text-xs text-slate-500">sent {{ m.sent_at }}</span>
+                            }
+                            @if (m.dsn_at) {
+                              <span class="text-xs text-slate-500">bounce sent {{ m.dsn_at }}</span>
+                            }
+                            <admin-button (pressed)="closeDetail()">Close</admin-button>
+                          </div>
+
+                          @if (detail(); as openMessage) {
+                            @if (!openMessage.recipients) {
+                              <admin-busy [busy]="true" label="Loading recipients…" />
+                            } @else if (openMessage.recipients.length === 0) {
+                              <p class="text-sm text-slate-500">No recipients were recorded.</p>
+                            } @else {
+                              <table class="w-full">
+                                <thead class="border-b border-slate-200">
+                                  <tr>
+                                    <th class="{{ head }}">Address</th>
+                                    <th class="{{ head }}">Kind</th>
+                                    <th class="{{ head }}">State</th>
+                                    <th class="{{ head }}">Attempts</th>
+                                    <th class="{{ head }}">What the server said</th>
+                                  </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-100">
+                                  @for (recipient of openMessage.recipients; track recipient.position) {
+                                    <tr>
+                                      <td class="{{ cell }} font-medium text-slate-900">
+                                        {{ recipient.address }}
+                                      </td>
+                                      <td class="{{ cell }} text-slate-500">{{ recipient.kind }}</td>
+                                      <td class="{{ cell }}">
+                                        <span
+                                          class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 {{ recipientTone(recipient.state) }}"
+                                        >
+                                          {{ recipient.state }}
+                                        </span>
+                                      </td>
+                                      <td class="{{ cell }}">{{ recipient.attempts }}</td>
+                                      <td class="{{ cell }} text-slate-600">
+                                        {{ recipient.last_error || '—' }}
+                                      </td>
+                                    </tr>
+                                  }
+                                </tbody>
+                              </table>
+                            }
+                          }
+                        </div>
+                      </td>
+                    </tr>
+                  }
+                }
+              </tbody>
+            </table>
+          }
+        </admin-panel>
+      </div>
+    </admin-page>
+

@@ -68,6 +68,11 @@ const ICONS: Record<string, string[]> = {
     'M12 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8z',
     'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2',
   ],
+  // The disclosure triangle beside a collapsible row. Two spellings because
+  // an icon name that is not in this map renders the folder icon instead of
+  // nothing, which is how a chevron used to show up as a second folder.
+  chevron_right: ['M9 18l6-6-6-6'],
+  chevron_down: ['M6 9l6 6 6-6'],
 };
 
 // MailIcon renders one icon from the closed set above.

@@ -80,6 +80,14 @@ type Draft struct {
 	// still gets a meeting at the hour it asked for.
 	Timezone  string     `json:"timezone,omitempty"`
 	Attendees []Attendee `json:"attendees"`
+	// Groups are whole groups to invite alongside the addresses above.
+	//
+	// An invitation is a list of ATTENDEE addresses — there is no address-shaped
+	// place for "the sales team" — so the expansion happens on the server,
+	// where the group's membership is the real one. A client that expanded it
+	// itself would invite whoever the list said a moment ago, which is exactly
+	// the set of people this field exists to stop going stale.
+	Groups []int64 `json:"groups,omitempty"`
 }
 
 // AttendeeStatus is one guest and everything known about them: the answer
@@ -258,6 +266,19 @@ func (s *Service) Create(ctx context.Context, who policy.Principal, d Draft) (*C
 	}
 	if !d.End.After(d.Start) {
 		return nil, fmt.Errorf("%w: the meeting ends before it starts", ErrInvalid)
+	}
+	// A group is invited whole by naming it, and it becomes people before any
+	// of the checks below run — so a group that expands to nobody ends up in
+	// "a meeting needs at least one guest" rather than in a meeting with no
+	// guests and a room full of people wondering why.
+	if len(d.Groups) > 0 {
+		addresses, err := s.expandGroups(ctx, organizer, d.Groups)
+		if err != nil {
+			return nil, err
+		}
+		for _, address := range addresses {
+			d.Attendees = append(d.Attendees, Attendee{Address: address})
+		}
 	}
 	guests, err := normaliseAttendees(d.Attendees, organizer)
 	if err != nil {
@@ -886,6 +907,55 @@ func normaliseAttendees(in []Attendee, organizer string) ([]Attendee, error) {
 		return nil, fmt.Errorf("%w: the organiser cannot be the only guest", ErrInvalid)
 	}
 	return out, nil
+}
+
+// expandGroups resolves the groups an organiser named into the addresses the
+// invitation will carry.
+func (s *Service) expandGroups(ctx context.Context, organizer string, ids []int64) ([]string, error) {
+	if err := s.allowGroups(ctx, organizer, ids); err != nil {
+		return nil, err
+	}
+	return store.NewGroups().Expand(ctx, s.db, ids)
+}
+
+// allowGroups refuses any group belonging to an organization the organiser is
+// not part of.
+//
+// Only groups of the organiser's own organization resolve. A group id is a
+// number anybody can guess, and answering a guess with a list of addresses
+// would turn this route into a directory of every organization on the server —
+// which is what /organization/people deliberately is not for somebody outside
+// the domain.
+func (s *Service) allowGroups(ctx context.Context, organizer string, ids []int64) error {
+	workgroups := store.NewWorkgroups()
+	groups := store.NewGroups()
+
+	// Resolved once: whether an address is in an organization is a fact about
+	// the address, not about which group was asked for.
+	mine, mineErr := workgroups.ForAddress(ctx, s.db, organizer)
+	checked := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		group, err := groups.Get(ctx, s.db, id)
+		if err != nil {
+			// An unknown group is a mistake worth reporting; skipping it would
+			// build a meeting that quietly leaves people out.
+			return err
+		}
+		if checked[group.WorkgroupID] {
+			continue
+		}
+		checked[group.WorkgroupID] = true
+		if mineErr == nil && mine.ID == group.WorkgroupID {
+			continue
+		}
+		// Somebody added to an organization from outside its domains is in it
+		// all the same: the membership row, not the address, is what says so.
+		if _, err := workgroups.Member(ctx, s.db, group.WorkgroupID, organizer); err == nil {
+			continue
+		}
+		return fmt.Errorf("%w: %s may not invite that organization's groups", ErrDenied, organizer)
+	}
+	return nil
 }
 
 // validAnswer reports whether a string is one of the four answers iTIP

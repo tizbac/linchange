@@ -107,6 +107,10 @@ export const routes: Routes = [
           import('./admin/admin-impersonation.component').then((m) => m.AdminImpersonationComponent),
       },
       {
+        path: 'queue',
+        loadComponent: () => import('./admin/admin-queue.component').then((m) => m.AdminQueueComponent),
+      },
+      {
         path: 'audit',
         loadComponent: () => import('./admin/admin-audit.component').then((m) => m.AdminAuditComponent),
       },

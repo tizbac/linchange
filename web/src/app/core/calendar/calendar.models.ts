@@ -5,6 +5,11 @@ export interface Calendar {
   id: number;
   owner?: string;
   workgroup_id?: number;
+  // level is what this caller may do with the calendar's events: "read" if
+  // they were shared onto it, "write" if they own it or may book into it. It
+  // rides along so a client can grey out controls it would otherwise offer and
+  // only discover are refused on save.
+  level?: 'read' | 'write';
   // name is the calendar's path segment in CalDAV and is what a rename changes.
   name: string;
   // display_name is the label a client may set independently of the name; when
@@ -43,6 +48,25 @@ export interface Attendee {
   role: string;
   partStat: string;
   rsvp: boolean;
+}
+
+// CalendarShare grants one subject — a person or one of the organization's
+// groups — access to a calendar. SubjectName comes back resolved for groups so
+// a dialog can show "Sales" rather than a group id.
+export interface CalendarShare {
+  id: number;
+  subject_kind: 'user' | 'group';
+  subject_address?: string;
+  subject_group_id?: number;
+  subject_name?: string;
+  level: 'read' | 'write';
+}
+
+export interface ShareCalendarRequest {
+  subject_kind: 'user' | 'group';
+  subject_address?: string;
+  subject_group_id?: number;
+  level: 'read' | 'write';
 }
 
 export interface EventDraft {

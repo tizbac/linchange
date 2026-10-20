@@ -19,6 +19,23 @@ interface ListData {
   cursor?: Cursor;
 }
 
+// rankFolder orders a folder list for display: INBOX first, then the special
+// folders in the order people look for them, then everything else by name. It
+// is one function because a shared mailbox's folders are shown exactly like the
+// user's own, and two copies of the order would drift apart.
+function rankFolder(f: Folder): number {
+  const specials: Record<string, number> = {
+    '\\sent': 1,
+    '\\drafts': 2,
+    '\\junk': 3,
+    '\\trash': 4,
+    '\\archive': 5,
+  };
+  if (f.name.toUpperCase() === 'INBOX') return 0;
+  const r = specials[f.special_use ?? ''];
+  return r === undefined ? 100 : r;
+}
+
 @Component({
   selector: 'app-mail',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -81,26 +98,68 @@ interface ListData {
               Shared with you
             </div>
             @for (s of shared(); track s.address) {
-              <div class="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-slate-600 cursor-pointer hover:bg-slate-50"
-                   (click)="selectShared(s)">
+              <div
+                class="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition"
+                [class.bg-brand-50]="selectedShared() === s.address"
+                [class.font-semibold]="selectedShared() === s.address"
+                [class.text-brand-800]="selectedShared() === s.address"
+                [class.text-slate-600]="selectedShared() !== s.address"
+                [title]="s.address"
+                (click)="selectShared(s)"
+              >
                 <app-mail-icon name="users" class="text-slate-400" />
-                <span class="min-w-0 flex-1 truncate" [title]="s.address">
-                  {{ s.display_name || s.address }}
-                </span>
+                <span class="min-w-0 flex-1 truncate">{{ s.display_name || s.address }}</span>
                 <span class="text-[11px] uppercase text-slate-400">{{ s.level }}</span>
-                <app-mail-icon name="chevron-right" class="text-slate-400" />
+                <app-mail-icon
+                  [name]="selectedShared() === s.address ? 'chevron_down' : 'chevron_right'"
+                  class="text-slate-400"
+                />
               </div>
+              <!-- The shared mailbox is a mailbox, so it shows the same tree the
+                   user's own does: every folder, subfolders indented, the unread
+                   count and the folder's own actions. The grant decides which of
+                   those actions exist rather than whether the folders are shown. -->
               @if (selectedShared() === s.address) {
-                @for (f of sharedFolders().get(s.address) || []; track f.id) {
+                @for (f of sharedSortedFolders(s.address); track f.id) {
+                  <div>
+                    <button
+                      class="flex w-full items-center gap-2 rounded-lg py-1.5 pr-2 text-left text-sm transition"
+                      [style.padding-left.px]="f.parent_id ? 28 : 8"
+                      [class.bg-brand-50]="selectedFolderId() === f.id"
+                      [class.font-semibold]="selectedFolderId() === f.id"
+                      [class.text-brand-800]="selectedFolderId() === f.id"
+                      [class.text-slate-700]="selectedFolderId() !== f.id"
+                      (click)="selectFolder(f, s.address)"
+                    >
+                      <app-mail-icon [name]="folderIcon(f.special_use)" class="text-slate-400" />
+                      <span class="min-w-0 flex-1 truncate">{{ f.name }}</span>
+                      @if (f.unread > 0) {
+                        <span class="rounded-full bg-brand-600 px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                          {{ f.unread > 999 ? '999+' : f.unread }}
+                        </span>
+                      } @else if (f.total > 0) {
+                        <span class="text-xs text-slate-400">{{ f.total }}</span>
+                      }
+                    </button>
+                    @if (selectedFolderId() === f.id && s.writable) {
+                      <div class="mb-1 flex flex-wrap gap-x-2 pb-1 pt-0.5" [style.padding-left.px]="f.parent_id ? 28 : 8">
+                        <button class="text-[11px] font-medium text-blue-600 hover:underline" (click)="renameFolder(f)">Rename</button>
+                        @if (f.total > 0) {
+                          <button class="text-[11px] font-medium text-blue-600 hover:underline" (click)="emptyFolder(f)">Empty</button>
+                        }
+                        @if (f.deletable) {
+                          <button class="text-[11px] font-medium text-rose-600 hover:underline" (click)="deleteFolder(f)">Delete</button>
+                        }
+                      </div>
+                    }
+                  </div>
+                }
+                @if (s.writable) {
                   <button
-                    class="w-full flex items-center gap-2 ml-6 rounded-lg px-2 py-1.5 text-sm text-slate-600 hover:bg-slate-50 transition"
-                    (click)="selectFolder(f, s.address)"
-                    [class.bg-brand-50]="selectedFolderId() === f.id"
-                    [class.text-brand-700]="selectedFolderId() === f.id"
+                    class="ml-6 flex w-[calc(100%-1.5rem)] items-center gap-2 rounded-lg px-2 py-1 text-[13px] text-slate-500 transition hover:bg-slate-100"
+                    (click)="newFolder()"
                   >
-                    <app-mail-icon [name]="folderIcon(f.special_use)" class="text-slate-400" />
-                    <span class="min-w-0 flex-1 truncate">{{ f.name }}</span>
-                    <span class="text-xs text-slate-400">{{ f.total }}</span>
+                    <app-mail-icon name="plus" /> New folder
                   </button>
                 }
               }
@@ -405,21 +464,17 @@ export class MailComponent implements OnInit {
   protected readonly formatDate = formatDate;
   protected readonly folderIcon = folderIcon;
 
-  protected readonly sortedFolders = computed(() => {
-    const specials: Record<string, number> = {
-      '\\sent': 1,
-      '\\drafts': 2,
-      '\\junk': 3,
-      '\\trash': 4,
-      '\\archive': 5,
-    };
-    const rank = (f: Folder): number => {
-      if (f.name.toUpperCase() === 'INBOX') return 0;
-      const r = specials[f.special_use ?? ''];
-      return r === undefined ? 100 : r;
-    };
-    return [...this.folders()].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
-  });
+  protected readonly sortedFolders = computed(() =>
+    [...this.folders()].sort((a, b) => rankFolder(a) - rankFolder(b) || a.name.localeCompare(b.name)),
+  );
+
+  // sharedSortedFolders is one shared mailbox's tree, ordered the way the
+  // user's own is: INBOX first, then the special folders, then the rest.
+  protected sharedSortedFolders(address: string): Folder[] {
+    return [...(this.sharedFolders().get(address) ?? [])].sort(
+      (a, b) => rankFolder(a) - rankFolder(b) || a.name.localeCompare(b.name),
+    );
+  }
 
   protected readonly moveTargets = computed(() =>
     this.currentFolders().filter((f) => f.id !== this.selectedFolderId()),

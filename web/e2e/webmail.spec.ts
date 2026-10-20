@@ -151,7 +151,7 @@ test.describe('webmail', () => {
     await expect(page.getByText(name)).toHaveCount(0);
   });
 
-  test('opens a shared mailbox and reads it read-only', async ({ page }) => {
+  test('opens a shared mailbox and files a message with an editor grant', async ({ page }) => {
     const subject = `E2E ${RUN} to the team`;
 
     await signIn(page);
@@ -172,9 +172,14 @@ test.describe('webmail', () => {
     await expect(page.getByRole('heading', { name: subject })).toBeVisible();
     await expect(page.locator('pre')).toContainText(`Team copy (${RUN}).`);
 
-    // Shared mail is read-only in this interface: the guard says so plainly
-    // rather than letting the server's refusal surface as a confusing error.
+    // The seeded member holds an editor grant — the level that may move or
+    // delete somebody else's mail — so the interface administers the team
+    // mailbox instead of refusing on its behalf. The message leaves the shared
+    // inbox for that mailbox's own Trash, never the member's: their own Trash
+    // is still empty, and the count beside the shared folder is what tells the
+    // two apart.
     await page.locator('app-mail-reader').getByRole('button', { name: 'Trash' }).click();
-    await expect(page.getByText('Shared mail is read-only here.')).toBeVisible();
+    await expect(page.getByText(subject)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Trash 1' })).toBeVisible();
   });
 });

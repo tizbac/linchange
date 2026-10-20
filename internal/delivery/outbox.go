@@ -432,3 +432,221 @@ func (r *OutboxRepository) execCtx(ctx context.Context, tx *sqlx.Tx, query strin
 	}
 	return r.db.ExecContext(ctx, query, args...)
 }
+
+// ---------------------------------------------------------------------------
+// The administrator's view of the queue.
+// ---------------------------------------------------------------------------
+
+// QueueFilter narrows a queue listing. The zero value asks for every message,
+// which is the answer to "what is in the queue at all" — the first thing
+// wanted when mail has not arrived, before anybody knows what to ask next.
+type QueueFilter struct {
+	// State limits the listing to one state; empty means every state.
+	State OutboxState
+	// Submitter limits it to one sender's messages.
+	Submitter string
+	// Limit caps the page: zero takes the default, and the default is capped
+	// so that one mistaken request cannot ask for the whole table.
+	Limit int
+	// Offset pages past the first Limit rows.
+	Offset int
+}
+
+const (
+	defaultQueueLimit = 50
+	maxQueueLimit     = 500
+)
+
+// OutboxQueueItem is one message as a queue listing draws it: the row, plus
+// the two counts that answer "did it go out?" without opening every message.
+//
+// The counts are computed in the same statement rather than gathered per row
+// because a listing with one extra query per message is how a queue page
+// becomes the slowest page on the server precisely when the server is busiest.
+type OutboxQueueItem struct {
+	ID             int64        `db:"id"`
+	SubmittedBy    string       `db:"submitted_by"`
+	EnvelopeFrom   string       `db:"envelope_from"`
+	Size           int64        `db:"size"`
+	State          OutboxState  `db:"state"`
+	Attempts       int          `db:"attempts"`
+	NextAttemptAt  time.Time    `db:"next_attempt_at"`
+	LastError      string       `db:"last_error"`
+	FailedAt       sql.NullTime `db:"failed_at"`
+	DSNAt          sql.NullTime `db:"dsn_at"`
+	SentAt         sql.NullTime `db:"sent_at"`
+	CreatedAt      time.Time    `db:"created_at"`
+	RecipientCount int          `db:"recipient_count"`
+	DeliveredCount int          `db:"delivered_count"`
+}
+
+// ListQueue returns recent messages, newest first.
+func (r *OutboxRepository) ListQueue(ctx context.Context, tx *sqlx.Tx, filter QueueFilter) ([]OutboxQueueItem, error) {
+	query := `
+		SELECT o.id, o.submitted_by, o.envelope_from, o.size, o.state, o.attempts,
+		       o.next_attempt_at, o.last_error, o.failed_at, o.dsn_at, o.sent_at,
+		       o.created_at,
+		       (SELECT count(*) FROM outbox_recipients r
+		        WHERE r.outbox_id = o.id) AS recipient_count,
+		       (SELECT count(*) FROM outbox_recipients r
+		        WHERE r.outbox_id = o.id AND r.state = 'delivered') AS delivered_count
+		FROM outbox o
+		WHERE 1 = 1`
+	args := make([]any, 0, 4)
+	if filter.State != "" {
+		args = append(args, filter.State)
+		// The cast is spelled out because state arrives as text and the column
+		// is an enum: without it Postgres is asked to compare an enum with an
+		// untyped parameter and cannot choose a side.
+		query += fmt.Sprintf(" AND o.state = $%d::outbox_state", len(args))
+	}
+	if filter.Submitter != "" {
+		args = append(args, filter.Submitter)
+		query += fmt.Sprintf(" AND o.submitted_by = $%d::citext", len(args))
+	}
+	query += ` ORDER BY o.created_at DESC, o.id DESC`
+
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = defaultQueueLimit
+	} else if limit > maxQueueLimit {
+		limit = maxQueueLimit
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	args = append(args, limit, offset)
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)-1, len(args))
+
+	rows, err := r.queryRows(ctx, tx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list queue: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]OutboxQueueItem, 0, limit)
+	for rows.Next() {
+		var item OutboxQueueItem
+		if err := scanQueueItem(rows, &item); err != nil {
+			return nil, fmt.Errorf("scan queue message: %w", err)
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate queue: %w", err)
+	}
+	return out, nil
+}
+
+// scanQueueItem reads one row of a queue listing.
+//
+// The columns are read by hand rather than through sqlx because the rest of
+// this file does: the driver returns enums as text, and the cast is spelled
+// out here rather than left to a tag reflection would have to guess at.
+func scanQueueItem(rows *sql.Rows, item *OutboxQueueItem) error {
+	return rows.Scan(
+		&item.ID,
+		&item.SubmittedBy,
+		&item.EnvelopeFrom,
+		&item.Size,
+		(*string)(&item.State),
+		&item.Attempts,
+		&item.NextAttemptAt,
+		&item.LastError,
+		&item.FailedAt,
+		&item.DSNAt,
+		&item.SentAt,
+		&item.CreatedAt,
+		&item.RecipientCount,
+		&item.DeliveredCount,
+	)
+}
+
+// Get returns one message with its recipients.
+//
+// An id nobody has is sql.ErrNoRows, which callers turn into "no such
+// message" — the same answer the routes give for anything else that is not
+// there, rather than a fault about a missing row.
+func (r *OutboxRepository) Get(ctx context.Context, tx *sqlx.Tx, id int64) (OutboxMessage, error) {
+	rows, err := r.queryRows(ctx, tx, `
+		SELECT id, submitted_by, envelope_from, blob_sha256, size, state, attempts,
+		       next_attempt_at, last_error, failed_at, dsn_at, sent_at, created_at
+		FROM outbox
+		WHERE id = $1`, id)
+	if err != nil {
+		return OutboxMessage{}, fmt.Errorf("get message: %w", err)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return OutboxMessage{}, fmt.Errorf("get message: %w", err)
+		}
+		return OutboxMessage{}, sql.ErrNoRows
+	}
+	var msg OutboxMessage
+	if err := scanOutboxMessage(rows, &msg); err != nil {
+		return OutboxMessage{}, fmt.Errorf("scan message: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return OutboxMessage{}, fmt.Errorf("iterate message: %w", err)
+	}
+	if msg.Recipients, err = r.loadRecipients(ctx, tx, id); err != nil {
+		return OutboxMessage{}, err
+	}
+	return msg, nil
+}
+
+// Requeue puts a message back into the queue for an immediate attempt: the
+// backoff is discarded, the failure timestamps are cleared so no bounce is
+// generated for a message being tried again, and every recipient that had
+// settled as refused is asked to try once more.
+//
+// Both updates happen in one transaction because they are one decision. A
+// message marked queued while its refused recipients stayed refused would be
+// claimed, find nobody willing to receive it, and settle without a single
+// attempt — a retry that looks like it happened and did not.
+//
+// A message in flight is not touched, and neither is one already sent: there
+// is nothing left to retry, and offering a button that promises a resend the
+// worker would not make is worse than not offering it. Both cases report
+// sql.ErrNoRows.
+func (r *OutboxRepository) Requeue(ctx context.Context, id int64) error {
+	if r.db == nil {
+		return errors.New("outbox: requeue requires a database handle")
+	}
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("requeue: beginning transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op once committed
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE outbox
+		SET state = 'queued', next_attempt_at = now(),
+		    failed_at = NULL, dsn_at = NULL
+		WHERE id = $1 AND state IN ('queued', 'deferred', 'failed', 'bounced')`, id)
+	if err != nil {
+		return fmt.Errorf("requeue: updating message: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+
+	// 'failed' recipients are the ones that need asking again: to the worker a
+	// settled failure is a refusal it will not retry, and it skips straight
+	// past them. 'pending' and 'deferred' are already owed an attempt, and
+	// 'delivered' must not be asked twice — that is how a resend duplicates
+	// mail people already received.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE outbox_recipients
+		SET state = 'pending'
+		WHERE outbox_id = $1 AND state = 'failed'`, id); err != nil {
+		return fmt.Errorf("requeue: resetting recipients: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("requeue: committing: %w", err)
+	}
+	return nil
+}

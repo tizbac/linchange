@@ -156,11 +156,23 @@
                       @for (m of wg.members; track m.address) {
                         <tr>
                           <td class="{{ cell }} font-medium text-slate-900">{{ m.address }}</td>
-                          <td class="{{ cell }}">{{ m.role }}</td>
+                          <td class="{{ cell }}">
+                            @if (m.source === 'domain') {
+                              <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">by domain</span>
+                            } @else {
+                              {{ m.role }}
+                            }
+                          </td>
                           <td class="{{ cell }} text-right">
-                            <admin-button variant="danger" [disabled]="busy()" (pressed)="removeMember(wg, m)">
-                              Remove
-                            </admin-button>
+                            <!-- A member who is in the organization because of
+                                 their address has no row to remove: taking one
+                                 away would leave the address in the group
+                                 anyway, so the control is not offered. -->
+                            @if (m.source !== 'domain') {
+                              <admin-button variant="danger" [disabled]="busy()" (pressed)="removeMember(wg, m)">
+                                Remove
+                              </admin-button>
+                            }
                           </td>
                         </tr>
                       }
@@ -179,7 +191,7 @@
                     >
                       <admin-multiselect
                         [model]="memberAddresses"
-                        [options]="users()"
+                        [options]="memberCandidates(wg)"
                         placeholder="Select users…"
                         (add)="memberAddresses = [...memberAddresses, $event]"
                         (removeItem)="memberAddresses = memberAddresses.filter(a => a !== $event)"
@@ -195,6 +207,200 @@
                       Add
                     </admin-button>
                     <admin-button (pressed)="memberFor.set(null)">Cancel</admin-button>
+                  </form>
+                }
+
+                <!-- The organization's calendars, created here because a team
+                     calendar exists before anybody books anything in it: who
+                     may create one is not the same question as who may book
+                     it, and only the first one belongs on this page. -->
+                <div class="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4">
+                  <span class="text-xs font-medium text-slate-600">Calendars</span>
+                  <span class="text-xs text-slate-500">
+                    {{ (calendars().get(wg.id) ?? []).length }} in the organization
+                  </span>
+                  <span class="flex-1"></span>
+                  <admin-button (pressed)="openCalendars(wg)">
+                    {{ calendarFor() === wg.id ? 'Close' : 'Manage' }}
+                  </admin-button>
+                </div>
+
+                @if (calendarFor() === wg.id) {
+                  @if ((calendars().get(wg.id) ?? []).length > 0) {
+                    <table class="w-full">
+                      <thead class="border-b border-slate-200 bg-slate-50">
+                        <tr>
+                          <th class="{{ head }}">Calendar</th>
+                          <th class="{{ head }}">Timezone</th>
+                          <th class="{{ head }}">Description</th>
+                          <th class="{{ head }} text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody class="divide-y divide-slate-100">
+                        @for (cal of calendars().get(wg.id) ?? []; track cal.id) {
+                          <tr>
+                            <td class="{{ cell }} font-medium text-slate-900">
+                              <span class="mr-2 inline-block h-2.5 w-2.5 rounded-full align-middle"
+                                    [style.backgroundColor]="cal.color"></span>
+                              {{ cal.name }}
+                            </td>
+                            <td class="{{ cell }}">{{ cal.timezone }}</td>
+                            <td class="{{ cell }} text-slate-500">{{ cal.description || '—' }}</td>
+                            <td class="{{ cell }} text-right">
+                              <admin-button [disabled]="busy()" (pressed)="renameCalendar(wg, cal)">
+                                Rename
+                              </admin-button>
+                              <admin-button variant="danger" [disabled]="busy()" (pressed)="removeCalendar(wg, cal)">
+                                Delete
+                              </admin-button>
+                            </td>
+                          </tr>
+                        }
+                      </tbody>
+                    </table>
+                  } @else {
+                    <admin-empty text="No calendars yet. The organization's events need somewhere to live." />
+                  }
+                  <form class="flex flex-wrap items-end gap-3" (ngSubmit)="createCalendar(wg)">
+                    <admin-field label="New calendar">
+                      <input
+                        class="{{ inputClass }}"
+                        name="calendarName"
+                        [(ngModel)]="calendarDraft.name"
+                        required
+                        placeholder="Team rota"
+                      />
+                    </admin-field>
+                    <admin-field label="Colour">
+                      <input class="{{ inputClass }}" type="color" name="calendarColor" [(ngModel)]="calendarDraft.color" />
+                    </admin-field>
+                    <admin-field label="Description">
+                      <input class="{{ inputClass }}" name="calendarDescription" [(ngModel)]="calendarDraft.description" />
+                    </admin-field>
+                    <admin-button variant="primary" type="submit" [disabled]="busy() || !calendarDraft.name.trim()">
+                      Create it
+                    </admin-button>
+                  </form>
+                }
+
+                <!-- Groups are the sets this organization addresses: invite one
+                     to a meeting, share a calendar with it. -->
+                <div class="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4">
+                  <span class="text-xs font-medium text-slate-600">Groups</span>
+                  <span class="text-xs text-slate-500">
+                    {{ (groups().get(wg.id) ?? []).length }} to invite or share with
+                  </span>
+                  <span class="flex-1"></span>
+                  <admin-button (pressed)="openGroups(wg)">
+                    {{ groupFor() === wg.id ? 'Close' : 'Manage' }}
+                  </admin-button>
+                </div>
+
+                @if (groupFor() === wg.id) {
+                  @if ((groups().get(wg.id) ?? []).length > 0) {
+                    <div class="space-y-3">
+                      @for (g of groups().get(wg.id) ?? []; track g.id) {
+                        <div class="rounded-lg border border-slate-200 p-3">
+                          <div class="flex flex-wrap items-center gap-2">
+                            <span class="font-medium text-slate-900">{{ g.name }}</span>
+                            @if (g.everyone) {
+                              <span
+                                class="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600"
+                              >
+                                the whole organization — {{ g.member_count }}
+                              </span>
+                            } @else {
+                              <span class="text-xs text-slate-500">
+                                {{ g.member_count }} {{ g.member_count === 1 ? 'person' : 'people' }}
+                              </span>
+                            }
+                            @if (g.description) {
+                              <span class="text-xs text-slate-400">{{ g.description }}</span>
+                            }
+                            <span class="flex-1"></span>
+                            <admin-button (pressed)="openGroupMembers(g)">
+                              {{ membersFor() === g.id ? 'Hide members' : 'Members' }}
+                            </admin-button>
+                            @if (!g.everyone) {
+                              <admin-button [disabled]="busy()" (pressed)="renameGroup(wg, g)">Rename</admin-button>
+                              <admin-button variant="danger" [disabled]="busy()" (pressed)="removeGroup(wg, g)">
+                                Delete
+                              </admin-button>
+                            }
+                          </div>
+
+                          @if (membersFor() === g.id) {
+                            <div class="mt-3 space-y-3">
+                              <div class="flex flex-wrap gap-1.5">
+                                @for (address of groupMembers().get(g.id) ?? []; track address) {
+                                  <span
+                                    class="inline-flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700"
+                                  >
+                                    {{ address }}
+                                    <!-- An address in the organization's domains is in
+                                         its own group whatever the button says, so the
+                                         control is not offered rather than failing. -->
+                                    @if (!g.everyone) {
+                                      <button
+                                        type="button"
+                                        class="hover:text-rose-600"
+                                        [disabled]="busy()"
+                                        (click)="removeGroupMember(g, address)"
+                                      >
+                                        ×
+                                      </button>
+                                    }
+                                  </span>
+                                } @empty {
+                                  <span class="text-xs text-slate-500">Nobody yet.</span>
+                                }
+                              </div>
+                              @if (!g.everyone) {
+                                <form class="flex flex-wrap items-center gap-3" (ngSubmit)="addGroupMembers(g)">
+                                  <div class="min-w-64 flex-1">
+                                    <admin-multiselect
+                                      [model]="groupMemberAddresses"
+                                      [options]="groupCandidates(g)"
+                                      placeholder="Select users…"
+                                      (add)="groupMemberAddresses = [...groupMemberAddresses, $event]"
+                                      (removeItem)="
+                                        groupMemberAddresses = groupMemberAddresses.filter(a => a !== $event)
+                                      "
+                                    />
+                                  </div>
+                                  <admin-button
+                                    variant="primary"
+                                    type="submit"
+                                    [disabled]="busy() || groupMemberAddresses.length === 0"
+                                  >
+                                    Add
+                                  </admin-button>
+                                </form>
+                              }
+                            </div>
+                          }
+                        </div>
+                      }
+                    </div>
+                  } @else {
+                    <admin-empty text="No groups yet. The organization's own group already holds everyone in its domains." />
+                  }
+                  <form class="flex flex-wrap items-end gap-3" (ngSubmit)="createGroup(wg)">
+                    <admin-field label="New group">
+                      <input
+                        class="{{ inputClass }}"
+                        name="groupName"
+                        [(ngModel)]="groupDraft.name"
+                        required
+                        placeholder="Sales"
+                      />
+                    </admin-field>
+                    <admin-field label="Description">
+                      <input class="{{ inputClass }}" name="groupDescription" [(ngModel)]="groupDraft.description" />
+                    </admin-field>
+                    <admin-button variant="primary" type="submit" [disabled]="busy() || !groupDraft.name.trim()">
+                      Create it
+                    </admin-button>
                   </form>
                 }
               </div>

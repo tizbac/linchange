@@ -14,6 +14,7 @@ const TABS: Tab[] = [
   { label: 'Shared mailboxes', path: '/admin/shared-mailboxes' },
   { label: 'Imports', path: '/admin/imports' },
   { label: 'Impersonation', path: '/admin/impersonation' },
+  { label: 'Outbound queue', path: '/admin/queue' },
   { label: 'Audit log', path: '/admin/audit' },
 ];
 

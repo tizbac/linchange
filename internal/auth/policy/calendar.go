@@ -77,6 +77,17 @@ type CalendarTarget struct {
 	// RequesterIsMember and RequesterIsAdmin come from the membership rows.
 	RequesterIsMember bool
 	RequesterIsAdmin  bool
+	// SharedRead and SharedWrite say what a calendar share granted this
+	// requester. They arrive already resolved — a share may have reached the
+	// requester through one of their groups, and which rows did it is a
+	// database question that answering here would turn these rules from pure
+	// into queryable.
+	//
+	// SharedWrite includes SharedRead; the two are separate rather than one
+	// three-valued field because the questions asked of them are separate, and
+	// "write but not read" is not a state anybody has to be able to express.
+	SharedRead  bool
+	SharedWrite bool
 	// ShowFreeBusy is whether this calendar's busy times are visible to others.
 	ShowFreeBusy bool
 }
@@ -105,14 +116,15 @@ func (p Principal) CanCalendar(a Action, target CalendarTarget) error {
 
 	switch a {
 	case ActionReadCalendar:
-		// Reading a personal calendar requires owning it. Reading a workgroup
-		// calendar is open to any authenticated principal, because a team
-		// calendar that only its members can see is not a team calendar: people
-		// need to find out when the rota is free in order to book it.
+		// Reading a personal calendar requires owning it or being shared on
+		// to it. Reading a workgroup calendar is open to any authenticated
+		// principal, because a team calendar that only its members can see is
+		// not a team calendar: people need to find out when the rota is free
+		// in order to book it.
 		if target.IsWorkgroup() {
 			return nil
 		}
-		if target.OwnedBy(p.Address) {
+		if target.OwnedBy(p.Address) || target.SharedRead || target.SharedWrite {
 			return nil
 		}
 		return &Denied{
@@ -124,7 +136,7 @@ func (p Principal) CanCalendar(a Action, target CalendarTarget) error {
 		// Writing is narrower than reading: on a workgroup calendar it is an
 		// administration action, not a booking one.
 		if target.IsWorkgroup() {
-			if !target.RequesterIsAdmin {
+			if !target.RequesterIsAdmin && !target.SharedWrite {
 				return &Denied{
 					Code:   CodeNotWorkgroupAdmin,
 					Detail: fmt.Sprintf("%s may not administer workgroup %d", p.Address, target.WorkgroupID),
@@ -132,7 +144,7 @@ func (p Principal) CanCalendar(a Action, target CalendarTarget) error {
 			}
 			return nil
 		}
-		if target.OwnedBy(p.Address) {
+		if target.OwnedBy(p.Address) || target.SharedWrite {
 			return nil
 		}
 		return &Denied{
@@ -149,8 +161,10 @@ func (p Principal) CanCalendar(a Action, target CalendarTarget) error {
 		}
 		// An open workgroup can be booked by anyone authenticated, which is what
 		// makes a meeting room bookable without an account on the rota. A
-		// closed one is members only.
-		if target.OpenBooking || target.RequesterIsMember {
+		// closed one is members only — except for a group it shared its
+		// calendar with, which is the same as being on the rota and is exactly
+		// why somebody shares a calendar rather than opening the group.
+		if target.OpenBooking || target.RequesterIsMember || target.SharedWrite {
 			return nil
 		}
 		return &Denied{
@@ -160,7 +174,10 @@ func (p Principal) CanCalendar(a Action, target CalendarTarget) error {
 
 	case ActionReadFreeBusy:
 		// Your own availability is never hidden from you, whatever the setting.
-		if target.OwnedBy(p.Address) {
+		// Neither is the availability of somebody who shared their calendar
+		// with you: you can see their events, so hiding the busy blocks would
+		// protect nothing.
+		if target.OwnedBy(p.Address) || target.SharedRead || target.SharedWrite {
 			return nil
 		}
 		if target.ShowFreeBusy {

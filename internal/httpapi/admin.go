@@ -14,6 +14,7 @@ import (
 
 	"github.com/linchange/linchange/internal/admin"
 	"github.com/linchange/linchange/internal/auth/policy"
+	"github.com/linchange/linchange/internal/delivery"
 	"github.com/linchange/linchange/internal/store"
 )
 
@@ -144,7 +145,38 @@ func mountAdminRoutes(r chi.Router, s *Server) {
 			r.Get("/members", s.listWorkgroupMembers)
 			r.Post("/members", s.addWorkgroupMember)
 			r.Delete("/members/{address}", s.removeWorkgroupMember)
+			// Groups are the sets an administrator addresses: invite one to a
+			// meeting, share a calendar with it.
+			r.Get("/groups", s.listWorkgroupGroups)
+			r.Post("/groups", s.createWorkgroupGroup)
+			r.Route("/groups/{groupID}", func(r chi.Router) {
+				r.Patch("/", s.updateWorkgroupGroup)
+				r.Delete("/", s.deleteWorkgroupGroup)
+				r.Get("/members", s.listWorkgroupGroupMembers)
+				r.Post("/members", s.addWorkgroupGroupMember)
+				r.Delete("/members/{address}", s.removeWorkgroupGroupMember)
+			})
+			// The organization's calendars are administered here rather than
+			// through the calendar API: that path is for a person's own
+			// calendars, and "create a team calendar" is an organizational act.
+			r.Get("/calendars", s.listWorkgroupCalendars)
+			r.Post("/calendars", s.createWorkgroupCalendar)
+			r.Route("/calendars/{calendarID}", func(r chi.Router) {
+				r.Patch("/", s.updateWorkgroupCalendar)
+				r.Delete("/", s.deleteWorkgroupCalendar)
+			})
 		})
+	})
+
+	// --- outbound queue ---
+	// Where undelivered mail can be looked at: what was submitted, who it was
+	// going to, what each attempt said, and a way to try a stuck message
+	// again. Without it the only answer to "why did it not arrive" is a log
+	// file, read in the dark.
+	r.Route("/outbox", func(r chi.Router) {
+		r.Get("/", s.listOutbox)
+		r.Get("/{id}", s.getOutbox)
+		r.Post("/{id}/requeue", s.requeueOutbox)
 	})
 
 	r.Get("/audit", s.listAudit)
@@ -885,6 +917,187 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{"entries": out})
 }
 
+// --- outbound queue ---
+
+// outboxView is one message as the queue page draws it: the row, how far its
+// recipients got, and the times that say what became of it.
+//
+// The timestamps are omitted when they never happened rather than sent as a
+// zero value: a page rendering "0001-01-01" for "never sent" answers a
+// question nobody asked.
+type outboxView struct {
+	ID             int64   `json:"id"`
+	SubmittedBy    string  `json:"submitted_by"`
+	EnvelopeFrom   string  `json:"envelope_from"`
+	Size           int64   `json:"size"`
+	State          string  `json:"state"`
+	Attempts       int     `json:"attempts"`
+	NextAttemptAt  string  `json:"next_attempt_at"`
+	LastError      string  `json:"last_error,omitempty"`
+	RecipientCount int     `json:"recipient_count"`
+	DeliveredCount int     `json:"delivered_count"`
+	CreatedAt      string  `json:"created_at"`
+	SentAt         *string `json:"sent_at,omitempty"`
+	FailedAt       *string `json:"failed_at,omitempty"`
+	DSNAt          *string `json:"dsn_at,omitempty"`
+	// Recipients is filled in by the detail view only. A listing carrying
+	// every recipient of every message would be a query per row, and the two
+	// counts above are what a list is read for.
+	Recipients []outboxRecipientView `json:"recipients,omitempty"`
+}
+
+type outboxRecipientView struct {
+	Position    int     `json:"position"`
+	Address     string  `json:"address"`
+	Kind        string  `json:"kind"`
+	State       string  `json:"state"`
+	Attempts    int     `json:"attempts"`
+	LastError   string  `json:"last_error,omitempty"`
+	DeliveredAt *string `json:"delivered_at,omitempty"`
+}
+
+func outboxTime(valid bool, t time.Time) *string {
+	if !valid {
+		return nil
+	}
+	s := t.UTC().Format(time.RFC3339)
+	return &s
+}
+
+func viewOutbox(item delivery.OutboxQueueItem) outboxView {
+	return outboxView{
+		ID:             item.ID,
+		SubmittedBy:    item.SubmittedBy,
+		EnvelopeFrom:   item.EnvelopeFrom,
+		Size:           item.Size,
+		State:          string(item.State),
+		Attempts:       item.Attempts,
+		NextAttemptAt:  item.NextAttemptAt.UTC().Format(time.RFC3339),
+		LastError:      item.LastError,
+		RecipientCount: item.RecipientCount,
+		DeliveredCount: item.DeliveredCount,
+		CreatedAt:      item.CreatedAt.UTC().Format(time.RFC3339),
+		SentAt:         outboxTime(item.SentAt.Valid, item.SentAt.Time),
+		FailedAt:       outboxTime(item.FailedAt.Valid, item.FailedAt.Time),
+		DSNAt:          outboxTime(item.DSNAt.Valid, item.DSNAt.Time),
+	}
+}
+
+// viewOutboxMessage is the detail view: the same row, plus the recipients
+// themselves — which is the whole point of opening one message, since "who did
+// not get it, and what did the server say" cannot be answered by the counts.
+func viewOutboxMessage(msg delivery.OutboxMessage) outboxView {
+	view := outboxView{
+		ID:            msg.ID,
+		SubmittedBy:   msg.SubmittedBy,
+		EnvelopeFrom:  msg.EnvelopeFrom,
+		Size:          msg.Size,
+		State:         string(msg.State),
+		Attempts:      msg.Attempts,
+		NextAttemptAt: msg.NextAttemptAt.UTC().Format(time.RFC3339),
+		LastError:     msg.LastError,
+		CreatedAt:     msg.CreatedAt.UTC().Format(time.RFC3339),
+		SentAt:        outboxTime(msg.SentAt.Valid, msg.SentAt.Time),
+		FailedAt:      outboxTime(msg.FailedAt.Valid, msg.FailedAt.Time),
+		DSNAt:         outboxTime(msg.DSNAt.Valid, msg.DSNAt.Time),
+		Recipients:    make([]outboxRecipientView, 0, len(msg.Recipients)),
+	}
+	for _, r := range msg.Recipients {
+		view.RecipientCount++
+		if r.State == delivery.RecipientDelivered {
+			view.DeliveredCount++
+		}
+		view.Recipients = append(view.Recipients, outboxRecipientView{
+			Position:    r.Position,
+			Address:     r.Address,
+			Kind:        string(r.Kind),
+			State:       string(r.State),
+			Attempts:    r.Attempts,
+			LastError:   r.LastError,
+			DeliveredAt: outboxTime(r.DeliveredAt.Valid, r.DeliveredAt.Time),
+		})
+	}
+	return view
+}
+
+// listOutbox answers what is in the outbound queue, newest first, optionally
+// narrowed to one state or one sender.
+func (s *Server) listOutbox(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	filter := delivery.QueueFilter{
+		Submitter: strings.TrimSpace(q.Get("submitter")),
+	}
+	if state := strings.TrimSpace(q.Get("state")); state != "" {
+		switch state {
+		case "queued", "sending", "sent", "deferred", "failed", "bounced":
+			filter.State = delivery.OutboxState(state)
+		default:
+			// Refused rather than quietly matching nothing. An unknown filter
+			// on the page meant to explain missing mail would otherwise
+			// explain an empty queue instead.
+			s.writeError(w, http.StatusBadRequest, "unknown state")
+			return
+		}
+	}
+	if raw := q.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			s.writeError(w, http.StatusBadRequest, "limit is not a number")
+			return
+		}
+		filter.Limit = n
+	}
+	if raw := q.Get("offset"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			s.writeError(w, http.StatusBadRequest, "offset is not a number")
+			return
+		}
+		filter.Offset = n
+	}
+
+	items, err := s.admin.OutboxQueue(r.Context(), Principal(r.Context()), filter)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	out := make([]outboxView, 0, len(items))
+	for _, item := range items {
+		out = append(out, viewOutbox(item))
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"messages": out})
+}
+
+// getOutbox returns one message with its recipients: what was submitted, each
+// address's own state and error, and when the message finally settled.
+func (s *Server) getOutbox(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid message id")
+		return
+	}
+	msg, err := s.admin.OutboxMessage(r.Context(), Principal(r.Context()), id)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, viewOutboxMessage(msg))
+}
+
+// requeueOutbox tries a stuck message again now.
+func (s *Server) requeueOutbox(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid message id")
+		return
+	}
+	if err := s.admin.RequeueOutbox(r.Context(), Principal(r.Context()), id); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // --- small helpers ---
 
 func stringOr(p *string, fallback string) string {
@@ -1332,6 +1545,315 @@ func (s *Server) removeWorkgroupMember(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// --- organization groups ---
+
+// listWorkgroupGroups answers with the organization's groups: the sets an
+// administrator addresses, Everyone leading because it is the one that is
+// always right for "the whole organization".
+func (s *Server) listWorkgroupGroups(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	groups, err := s.admin.ListWorkgroupGroups(r.Context(), Principal(r.Context()), id)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"groups": viewWorkgroupGroups(groups)})
+}
+
+// createWorkgroupGroup adds a group to an organization.
+func (s *Server) createWorkgroupGroup(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	var in struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if strings.TrimSpace(in.Name) == "" {
+		s.writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	group, err := s.admin.CreateWorkgroupGroup(r.Context(), Principal(r.Context()), id, in.Name, in.Description)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusCreated, viewWorkgroupGroup(group))
+}
+
+// updateWorkgroupGroup renames a group or changes its description.
+func (s *Server) updateWorkgroupGroup(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	groupID, ok := pathID(r, "groupID")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid group id")
+		return
+	}
+	var in struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	group, err := s.admin.UpdateWorkgroupGroup(r.Context(), Principal(r.Context()), id, groupID, in.Name, in.Description)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, viewWorkgroupGroup(group))
+}
+
+// deleteWorkgroupGroup removes a group. The organization's own group cannot be
+// deleted, and says so rather than failing as if it had never existed.
+func (s *Server) deleteWorkgroupGroup(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	groupID, ok := pathID(r, "groupID")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid group id")
+		return
+	}
+	if err := s.admin.DeleteWorkgroupGroup(r.Context(), Principal(r.Context()), id, groupID); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// listWorkgroupGroupMembers answers who is in a group. For the organization's
+// own group that is every address in its domains, which is worth showing rather
+// than hiding behind a count: it is the group somebody picks to reach everyone.
+func (s *Server) listWorkgroupGroupMembers(w http.ResponseWriter, r *http.Request) {
+	id, groupID, ok := s.workgroupGroupPath(w, r)
+	if !ok {
+		return
+	}
+	members, err := s.admin.WorkgroupGroupMembers(r.Context(), Principal(r.Context()), id, groupID)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"members": members})
+}
+
+// addWorkgroupGroupMember adds an address to a group.
+func (s *Server) addWorkgroupGroupMember(w http.ResponseWriter, r *http.Request) {
+	id, groupID, ok := s.workgroupGroupPath(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Address string `json:"address"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if strings.TrimSpace(in.Address) == "" {
+		s.writeError(w, http.StatusBadRequest, "address is required")
+		return
+	}
+	if err := s.admin.AddWorkgroupGroupMember(r.Context(), Principal(r.Context()), id, groupID, in.Address); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// removeWorkgroupGroupMember takes an address out of a group.
+func (s *Server) removeWorkgroupGroupMember(w http.ResponseWriter, r *http.Request) {
+	id, groupID, ok := s.workgroupGroupPath(w, r)
+	if !ok {
+		return
+	}
+	address := chi.URLParam(r, "address")
+	removed, err := s.admin.RemoveWorkgroupGroupMember(r.Context(), Principal(r.Context()), id, groupID, address)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	if !removed {
+		s.writeError(w, http.StatusNotFound, "that address is not in the group")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// workgroupGroupPath reads the organization and group ids every group route
+// carries, writing the failure itself so the handlers above do not each spend
+// five lines saying the same thing badly.
+func (s *Server) workgroupGroupPath(w http.ResponseWriter, r *http.Request) (workgroupID, groupID int64, ok bool) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return 0, 0, false
+	}
+	group, ok := pathID(r, "groupID")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid group id")
+		return 0, 0, false
+	}
+	return id, group, true
+}
+
+// --- organization calendars ---
+
+// listWorkgroupCalendars answers with the organization's calendars.
+func (s *Server) listWorkgroupCalendars(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	cals, err := s.admin.WorkgroupCalendars(r.Context(), Principal(r.Context()), id)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"calendars": cals})
+}
+
+// createWorkgroupCalendar creates a calendar the whole organization owns.
+func (s *Server) createWorkgroupCalendar(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	var in createCalendarRequest
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if strings.TrimSpace(in.Name) == "" {
+		s.writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	cal, err := s.admin.CreateWorkgroupCalendar(r.Context(), Principal(r.Context()), id,
+		store.CreateCalendarRequest{
+			Name:         in.Name,
+			Color:        in.Color,
+			Timezone:     in.Timezone,
+			Description:  in.Description,
+			ShowFreeBusy: in.ShowFreeBusy,
+		})
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusCreated, cal)
+}
+
+// updateWorkgroupCalendar renames or recolours one of the organization's
+// calendars.
+func (s *Server) updateWorkgroupCalendar(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	calendarID, ok := pathID(r, "calendarID")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid calendar id")
+		return
+	}
+	var in updateCalendarRequest
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if err := s.admin.UpdateWorkgroupCalendar(r.Context(), Principal(r.Context()), id, calendarID,
+		store.UpdateCalendarRequest{
+			Name:         in.Name,
+			Color:        in.Color,
+			Timezone:     in.Timezone,
+			Description:  in.Description,
+			ShowFreeBusy: in.ShowFreeBusy,
+		}); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteWorkgroupCalendar removes one of the organization's calendars and
+// every event in it.
+func (s *Server) deleteWorkgroupCalendar(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	calendarID, ok := pathID(r, "calendarID")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid calendar id")
+		return
+	}
+	if err := s.admin.DeleteWorkgroupCalendar(r.Context(), Principal(r.Context()), id, calendarID); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// workgroupGroupView is one group as the organization page draws it: its name,
+// and how many addresses it reaches — the number that tells somebody choosing
+// between "the organization" and "the sales team" what they are choosing.
+type workgroupGroupView struct {
+	ID          int64  `json:"id"`
+	WorkgroupID int64  `json:"workgroup_id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	// Everyone says this is the organization's own group, whose membership is
+	// every address in its domains rather than a list somebody maintains. It
+	// cannot be deleted and takes no members, which the client shows as a
+	// disabled control rather than as a button that fails.
+	Everyone    bool   `json:"everyone"`
+	MemberCount int    `json:"member_count"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+func viewWorkgroupGroup(g store.WorkgroupGroup) workgroupGroupView {
+	return workgroupGroupView{
+		ID:          g.ID,
+		WorkgroupID: g.WorkgroupID,
+		Name:        g.Name,
+		Description: g.Description,
+		Everyone:    g.Everyone,
+		MemberCount: g.MemberCount,
+		CreatedAt:   g.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:   g.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func viewWorkgroupGroups(groups []store.WorkgroupGroup) []workgroupGroupView {
+	out := make([]workgroupGroupView, 0, len(groups))
+	for _, g := range groups {
+		out = append(out, viewWorkgroupGroup(g))
+	}
+	return out
+}
+
 // --- view helpers for workgroups ---
 
 type workgroupView struct {
@@ -1366,7 +1888,12 @@ type workgroupMemberView struct {
 	WorkgroupID int64  `json:"workgroup_id"`
 	Address     string `json:"address"`
 	Role        string `json:"role"`
-	CreatedAt   string `json:"created_at"`
+	// Source says how the address came to be in the group: "member" is a row
+	// somebody added, "domain" is an address in one of the group's own domains,
+	// which is a membership nobody maintains and nobody can remove. The client
+	// shows the second kind without a remove control for exactly that reason.
+	Source    string `json:"source"`
+	CreatedAt string `json:"created_at"`
 }
 
 func viewWorkgroupMember(m store.WorkgroupMember) workgroupMemberView {
@@ -1374,7 +1901,21 @@ func viewWorkgroupMember(m store.WorkgroupMember) workgroupMemberView {
 		WorkgroupID: m.WorkgroupID,
 		Address:     m.Address,
 		Role:        m.Role,
+		Source:      "member",
 		CreatedAt:   m.CreatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+// workgroupMemberFromDomain is a member the address makes rather than a row in
+// the member table. It has no role and no creation time because there was no
+// grant: the person is in the group because of where their mail lives.
+func workgroupMemberFromDomain(workgroupID int64, address string) workgroupMemberView {
+	return workgroupMemberView{
+		WorkgroupID: workgroupID,
+		Address:     address,
+		Role:        "",
+		Source:      "domain",
+		CreatedAt:   "",
 	}
 }
 
@@ -1385,6 +1926,11 @@ func viewWorkgroupMember(m store.WorkgroupMember) workgroupMemberView {
 // that fails does not fail the response: the group exists and is worth showing,
 // and an empty list is closer to the truth than a 500 for a page whose subject
 // is the group.
+//
+// The list holds both kinds of member: the rows added by hand and everybody in
+// the group's domains. The second kind is what makes the first kind make sense,
+// since the question an administrator is usually asking is "who is in this
+// organization", and most of the answer is the domains.
 func (s *Server) workgroupViewOf(ctx context.Context, actor policy.Principal, wg store.Workgroup) workgroupView {
 	view := viewWorkgroup(wg)
 	members, err := s.admin.ListWorkgroupMembers(ctx, actor, wg.ID)
@@ -1393,8 +1939,24 @@ func (s *Server) workgroupViewOf(ctx context.Context, actor policy.Principal, wg
 		return view
 	}
 	view.Members = make([]workgroupMemberView, 0, len(members))
+	listed := make(map[string]bool, len(members))
 	for _, m := range members {
+		listed[strings.ToLower(m.Address)] = true
 		view.Members = append(view.Members, viewWorkgroupMember(m))
+	}
+
+	people, err := s.admin.WorkgroupPeople(ctx, actor, wg.ID)
+	if err != nil {
+		s.log.Warn("could not load workgroup addresses", "workgroup_id", wg.ID, "error", err)
+		return view
+	}
+	for _, p := range people {
+		if listed[strings.ToLower(p.Address)] {
+			// Already listed as an explicit member, and the row carries the
+			// role, which is the more specific of the two answers.
+			continue
+		}
+		view.Members = append(view.Members, workgroupMemberFromDomain(wg.ID, p.Address))
 	}
 	return view
 }

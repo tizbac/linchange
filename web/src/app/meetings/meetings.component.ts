@@ -6,6 +6,7 @@ import { errorMessage } from '../core/http-error';
 import { MeetingsApi } from '../core/meetings/meetings-api';
 import { MeetingDraft, MeetingListItem } from '../core/meetings/meetings.models';
 import { formatWhen, partStatLabel } from '../core/meetings/meetings.ui';
+import { OrganizationApi, OrganizationGroup } from '../core/organization/organization-api';
 
 // browserZone is the zone this browser displays times in; it becomes the
 // meeting's display timezone unless the organiser changes it.
@@ -108,6 +109,45 @@ function defaults() {
                 class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               ></textarea>
             </label>
+
+            <!-- Groups invite people who have not been written down: the
+                 server expands each one into guests when the meeting is
+                 created, so a colleague who joins on Tuesday is in Wednesday's
+                 meeting without this list being rewritten. -->
+            <div class="sm:col-span-2">
+              <span class="text-sm font-medium text-slate-700">
+                Groups <span class="font-normal text-slate-400">— invited whole, at whatever they hold when the invitation goes out</span>
+              </span>
+              @if (orgGroups().length > 0) {
+                <div class="mt-1 flex flex-wrap gap-2">
+                  @for (g of orgGroups(); track g.id) {
+                    <label
+                      class="inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition-colors"
+                      [ngClass]="
+                        invitedGroups().includes(g.id)
+                          ? 'border-brand-500 bg-brand-50 text-brand-800'
+                          : 'border-slate-300 text-slate-700 hover:bg-slate-50'
+                      "
+                    >
+                      <input
+                        type="checkbox"
+                        class="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                        [checked]="invitedGroups().includes(g.id)"
+                        (change)="toggleGroup(g)"
+                      />
+                      {{ g.name }}
+                      <span class="text-xs" [ngClass]="invitedGroups().includes(g.id) ? 'text-brand-600' : 'text-slate-400'">
+                        {{ g.everyone ? 'whole organization' : g.member_count + (g.member_count === 1 ? ' person' : ' people') }}
+                      </span>
+                    </label>
+                  }
+                </div>
+              } @else {
+                <p class="mt-1 text-sm text-slate-400">
+                  Your organization has no groups — invite people by address above.
+                </p>
+              }
+            </div>
 
             <label class="block">
               <span class="text-sm font-medium text-slate-700">Location <span class="font-normal text-slate-400">(optional; the join link fills in)</span></span>
@@ -215,11 +255,18 @@ function defaults() {
 export class MeetingsComponent {
   private readonly api = inject(MeetingsApi);
   private readonly router = inject(Router);
+  private readonly orgApi = inject(OrganizationApi);
 
   readonly items = signal<MeetingListItem[]>([]);
   readonly loading = signal(true);
   readonly saving = signal(false);
   readonly creating = signal(false);
+
+  // The organization's groups: the other way to name guests, fetched with the
+  // page because the list is short and the form is the only place it is used.
+  // Somebody whose domain belongs to no organization simply sees none.
+  readonly orgGroups = signal<OrganizationGroup[]>([]);
+  readonly invitedGroups = signal<number[]>([]);
 
   loadError = '';
   formError = '';
@@ -238,6 +285,12 @@ export class MeetingsComponent {
 
   constructor() {
     this.load();
+    void this.orgApi
+      .groups()
+      .then((res) => this.orgGroups.set(res.groups ?? []))
+      // A failure here only costs the group picker: the address list above it
+      // still invites everybody, so there is nothing to report.
+      .catch(() => this.orgGroups.set([]));
   }
 
   async load(): Promise<void> {
@@ -273,8 +326,9 @@ export class MeetingsComponent {
       return;
     }
     const attendees = this.parseAttendees();
-    if (attendees.length === 0) {
-      this.formError = 'Add at least one guest.';
+    const groups = this.invitedGroups();
+    if (attendees.length === 0 && groups.length === 0) {
+      this.formError = 'Add at least one guest, or invite a group.';
       return;
     }
 
@@ -297,6 +351,10 @@ export class MeetingsComponent {
       end: endAdjusted.toISOString(),
       timezone: this.timezone.trim() || undefined,
       attendees,
+      // The groups go as ids and become people on the server, so what the
+      // invitation carries is the group's membership when it was sent rather
+      // than when the form was filled in.
+      groups: groups.length > 0 ? groups : undefined,
     };
 
     this.saving.set(true);
@@ -316,6 +374,16 @@ export class MeetingsComponent {
     } finally {
       this.saving.set(false);
     }
+  }
+
+  // toggleGroup adds or drops a whole group from the invitation. It sets a new
+  // array rather than mutating the old one because the checkbox reads the
+  // signal on every change detection pass.
+  toggleGroup(group: OrganizationGroup): void {
+    const chosen = this.invitedGroups();
+    this.invitedGroups.set(
+      chosen.includes(group.id) ? chosen.filter((id) => id !== group.id) : [...chosen, group.id],
+    );
   }
 
   // parseAttendees reads the textarea: one guest per line, with the

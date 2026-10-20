@@ -8,10 +8,13 @@ import {
   ContactGroup,
   Domain,
   ImpersonationGrant,
+  OrgCalendar,
+  OutboxMessageView,
   SharedMailbox,
   SharedMailboxGrant,
   User,
   Workgroup,
+  WorkgroupGroup,
   WorkgroupMember,
 } from './admin.models';
 import { ImportJob, ImportJobRequest } from '../mail/mail.models';
@@ -224,6 +227,39 @@ export class AdminApi {
     return this.get(`/audit${query}`);
   }
 
+  // --- outbound queue ---
+
+  // listOutbox is what an administrator opens when mail has not arrived:
+  // every message submitted for delivery, newest first, each with the two
+  // counts that say whether it went out.
+  listOutbox(filter: {
+    state?: string;
+    submitter?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ messages: OutboxMessageView[] }> {
+    const parts: string[] = [];
+    if (filter.state) parts.push(`state=${encodeURIComponent(filter.state)}`);
+    if (filter.submitter) parts.push(`submitter=${encodeURIComponent(filter.submitter)}`);
+    if (filter.limit) parts.push(`limit=${filter.limit}`);
+    if (filter.offset) parts.push(`offset=${filter.offset}`);
+    const query = parts.length ? `?${parts.join('&')}` : '';
+    return this.get(`/outbox${query}`);
+  }
+
+  // getOutbox opens one message with its recipients: the per-address state
+  // and error, which is the part a count cannot show.
+  getOutbox(id: number): Promise<OutboxMessageView> {
+    return this.get(`/outbox/${id}`);
+  }
+
+  // requeueOutbox tries a stuck message again now instead of when its backoff
+  // expires. The server refuses one in flight or already sent, so a click that
+  // changes nothing comes back as a message rather than as silence.
+  requeueOutbox(id: number): Promise<void> {
+    return this.request('post', `/outbox/${id}/requeue`, null) as Promise<void>;
+  }
+
   // --- imports ---
 
   listImports(owner?: string): Promise<{ imports: ImportJob[] }> {
@@ -304,6 +340,69 @@ export class AdminApi {
 
   removeWorkgroupMember(id: number, address: string): Promise<void> {
     return this.request('delete', `/workgroups/${id}/members/${encodeURIComponent(address)}`, null) as Promise<void>;
+  }
+
+  // --- organization calendars ---
+
+  listWorkgroupCalendars(id: number): Promise<{ calendars: OrgCalendar[] }> {
+    return this.get(`/workgroups/${id}/calendars`);
+  }
+
+  createWorkgroupCalendar(
+    id: number,
+    body: { name: string; color?: string; timezone?: string; description?: string },
+  ): Promise<OrgCalendar> {
+    return this.post(`/workgroups/${id}/calendars`, body);
+  }
+
+  updateWorkgroupCalendar(
+    id: number,
+    calendarID: number,
+    body: { name?: string; color?: string; timezone?: string; description?: string },
+  ): Promise<void> {
+    return this.request('patch', `/workgroups/${id}/calendars/${calendarID}`, body) as Promise<void>;
+  }
+
+  deleteWorkgroupCalendar(id: number, calendarID: number): Promise<void> {
+    return this.request('delete', `/workgroups/${id}/calendars/${calendarID}`, null) as Promise<void>;
+  }
+
+  // --- organization groups ---
+
+  listWorkgroupGroups(id: number): Promise<{ groups: WorkgroupGroup[] }> {
+    return this.get(`/workgroups/${id}/groups`);
+  }
+
+  createWorkgroupGroup(id: number, body: { name: string; description?: string }): Promise<WorkgroupGroup> {
+    return this.post(`/workgroups/${id}/groups`, body);
+  }
+
+  updateWorkgroupGroup(
+    id: number,
+    groupID: number,
+    body: { name?: string; description?: string },
+  ): Promise<WorkgroupGroup> {
+    return this.request('patch', `/workgroups/${id}/groups/${groupID}`, body) as Promise<WorkgroupGroup>;
+  }
+
+  deleteWorkgroupGroup(id: number, groupID: number): Promise<void> {
+    return this.request('delete', `/workgroups/${id}/groups/${groupID}`, null) as Promise<void>;
+  }
+
+  listWorkgroupGroupMembers(id: number, groupID: number): Promise<{ members: string[] }> {
+    return this.get(`/workgroups/${id}/groups/${groupID}/members`);
+  }
+
+  addWorkgroupGroupMember(id: number, groupID: number, body: { address: string }): Promise<void> {
+    return this.request('post', `/workgroups/${id}/groups/${groupID}/members`, body) as Promise<void>;
+  }
+
+  removeWorkgroupGroupMember(id: number, groupID: number, address: string): Promise<void> {
+    return this.request(
+      'delete',
+      `/workgroups/${id}/groups/${groupID}/members/${encodeURIComponent(address)}`,
+      null,
+    ) as Promise<void>;
   }
 
   private get<T>(path: string): Promise<T> {

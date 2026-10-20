@@ -71,6 +71,15 @@ const ICONS: Record<string, string[]> = {
     'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
   ],
   arrow_left: ['M15 18l-6-6 6-6'],
+  // share-2: three nodes and the two links between them, which is what a share
+  // is — one calendar reaching several people.
+  share: [
+    'M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+    'M6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+    'M18 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+    'M8.59 13.51l6.83 3.98',
+    'M15.41 6.51l-6.82 3.98',
+  ],
   arrow_right: ['M9 18l6-6-6-6'],
   chevron_left: ['M15 18l-6-6 6-6'],
   chevron_right: ['M9 18l6-6-6-6'],

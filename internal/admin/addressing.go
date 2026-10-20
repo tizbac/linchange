@@ -10,6 +10,7 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/linchange/linchange/internal/auth/policy"
+	"github.com/linchange/linchange/internal/imapd"
 	"github.com/linchange/linchange/internal/store"
 )
 
@@ -261,14 +262,14 @@ func (s *Service) DeclareSharedMailbox(ctx context.Context, actor policy.Princip
 		if _, err := s.users.Get(ctx, q, req.Address); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				if err := s.users.Create(ctx, q, store.CreateUserRequest{
-					Address:     req.Address,
-					Source:      policy.SourceShared,
-					DisplayName: req.DisplayName,
-					Enabled:     ptr(true),
+					Address:        req.Address,
+					Source:         policy.SourceShared,
+					DisplayName:    req.DisplayName,
+					Enabled:        ptr(true),
 					MailboxEnabled: ptr(true),
-					QuotaBytes:  nil,
-					Timezone:    "UTC",
-					Language:    "en",
+					QuotaBytes:     nil,
+					Timezone:       "UTC",
+					Language:       "en",
 				}); err != nil {
 					return mapStore(err)
 				}
@@ -278,6 +279,14 @@ func (s *Service) DeclareSharedMailbox(ctx context.Context, actor policy.Princip
 		}
 		if err := s.shared.Declare(ctx, q, req); err != nil {
 			return mapStore(err)
+		}
+		// The standard folders are part of a usable mailbox, and a member's
+		// first look at a shared one usually happens in the web client before
+		// anything has been delivered to it. Without this the mailbox opens
+		// with no folder tree at all, which reads as a broken share rather than
+		// as a folder set nobody has created yet.
+		if err := imapd.NewMailboxRepo().EnsureFolders(ctx, q, req.Address); err != nil {
+			return fmt.Errorf("creating the standard folders: %w", err)
 		}
 		var err error
 		created, err = s.shared.Get(ctx, q, req.Address)

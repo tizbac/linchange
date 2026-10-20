@@ -29,6 +29,8 @@ import rrulePlugin from '@fullcalendar/rrule';
 import { CalendarApi } from '../core/calendar/calendar-api';
 import {
   Calendar as CalendarModel,
+  CalendarShare,
+  ShareCalendarRequest,
   Event as EventModel,
   ListEventsResponse,
   CreateEventRequest,
@@ -38,6 +40,8 @@ import {
   Availability,
   ICalEvent,
 } from '../core/calendar/calendar.models';
+import { Contact, OrganizationApi, OrganizationGroup } from '../core/organization/organization-api';
+import { errorMessage } from '../core/http-error';
 import { formatDateTime, formatDate, startOfDay, endOfDay, toRFC3339, parseRFC3339, toLocalInputValue } from '../core/calendar/ui';
 import { NgIf, NgFor, NgClass } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -99,6 +103,14 @@ import { CalIcon } from '../core/calendar/ui';
           >
             <app-cal-icon name="plus" [size]="16" class="mr-1 inline" />
             New Event
+          </button>
+          <button
+            type="button"
+            class="px-4 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+            (click)="openSharing()"
+          >
+            <app-cal-icon name="share" [size]="16" class="mr-1 inline" />
+            Sharing
           </button>
         </div>
       </div>
@@ -175,22 +187,178 @@ import { CalIcon } from '../core/calendar/ui';
                   </ul>
                 </div>
               }
-              <div class="flex gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-                <button
-                  type="button"
-                  class="flex-1 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-                  (click)="editEvent(selectedEvent()!)"
+              <!-- A calendar shared to this caller as view only has controls
+                   whose only answer would arrive on save, as a refusal. The
+                   server refuses them anyway; this just does not ask. -->
+              @if (canEditSelected()) {
+                <div class="flex gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+                  <button
+                    type="button"
+                    class="flex-1 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                    (click)="editEvent(selectedEvent()!)"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    class="flex-1 px-3 py-2 text-sm font-medium text-red-600 bg-red-50 dark:bg-red-900/20 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+                    (click)="deleteEvent(selectedEvent()!)"
+                  >
+                    Delete
+                  </button>
+                </div>
+              } @else {
+                <p class="pt-2 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400">
+                  This calendar was shared with you as view only.
+                </p>
+              }
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- Sharing Modal -->
+      @if (shareModal()) {
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" (click)="closeSharing()">
+          <div
+            class="bg-white dark:bg-gray-900 rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto text-gray-900 dark:text-gray-100"
+            (click)="$event.stopPropagation()"
+          >
+            <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Who can see this calendar</h2>
+              <button
+                type="button"
+                class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                (click)="closeSharing()"
+                aria-label="Close"
+              >
+                <app-cal-icon name="x" [size]="20" />
+              </button>
+            </div>
+            <div class="p-4 space-y-4">
+              <div>
+                <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">Calendar</label>
+                <select
+                  [ngModel]="shareCalendarId()"
+                  (ngModelChange)="selectShareCalendar($event)"
+                  name="shareCalendar"
+                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500"
                 >
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  class="flex-1 px-3 py-2 text-sm font-medium text-red-600 bg-red-50 dark:bg-red-900/20 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
-                  (click)="deleteEvent(selectedEvent()!)"
-                >
-                  Delete
-                </button>
+                  @for (cal of calendars(); track cal.id) {
+                    <option [value]="cal.id">
+                      {{ cal.display_name || cal.name }}{{ cal.workgroup_id ? ' · organization' : '' }}
+                    </option>
+                  }
+                </select>
               </div>
+
+              @if (shareError()) {
+                <p class="text-sm text-rose-600 dark:text-rose-400">{{ shareError() }}</p>
+              }
+
+              <div>
+                <span class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">Shared with</span>
+                @if (shares().length > 0) {
+                  <ul class="divide-y divide-gray-200 dark:divide-gray-700">
+                    @for (share of shares(); track share.id) {
+                      <li class="flex items-center gap-2 py-2">
+                        <span class="flex-1 text-sm text-gray-900 dark:text-gray-100">
+                          {{ shareLabel(share) }}
+                          <span class="text-xs text-gray-500 dark:text-gray-400">
+                            {{ share.subject_kind === 'group' ? ' · group' : '' }}
+                          </span>
+                        </span>
+                        <select
+                          [ngModel]="share.level"
+                          (ngModelChange)="changeShareLevel(share, $event)"
+                          [disabled]="shareBusy()"
+                          [attr.aria-label]="'Access level for ' + shareLabel(share)"
+                          class="px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+                        >
+                          <option value="read">may view</option>
+                          <option value="write">may edit</option>
+                        </select>
+                        <button
+                          type="button"
+                          class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 hover:text-rose-600 transition-colors"
+                          [disabled]="shareBusy()"
+                          (click)="removeShare(share)"
+                          [attr.aria-label]="'Stop sharing with ' + shareLabel(share)"
+                        >
+                          <app-cal-icon name="x" [size]="16" />
+                        </button>
+                      </li>
+                    }
+                  </ul>
+                } @else if (!shareError()) {
+                  <p class="text-sm text-gray-500 dark:text-gray-400">
+                    Nobody else: only you can open this calendar.
+                  </p>
+                }
+              </div>
+
+              <form (ngSubmit)="addShare()" class="space-y-3 border-t border-gray-200 dark:border-gray-700 pt-3">
+                <div>
+                  <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">Share with</label>
+                  <select
+                    [(ngModel)]="shareSubject"
+                    name="shareSubject"
+                    class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Choose somebody…</option>
+                    <optgroup label="People">
+                      @for (p of orgPeople(); track p.address) {
+                        <option [value]="'user:' + p.address">{{ p.display_name || p.address }}</option>
+                      }
+                    </optgroup>
+                    <optgroup label="Groups">
+                      @for (g of orgGroups(); track g.id) {
+                        <option [value]="'group:' + g.id">
+                          {{ g.name }} ({{ g.everyone ? 'the whole organization' : g.member_count + ' people' }})
+                        </option>
+                      }
+                    </optgroup>
+                  </select>
+                </div>
+                <div class="flex items-center gap-4">
+                  <label class="flex items-center gap-2 text-sm text-gray-900 dark:text-gray-100">
+                    <input
+                      type="radio"
+                      name="shareLevel"
+                      value="read"
+                      [(ngModel)]="shareLevel"
+                      class="w-4 h-4 border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+                    />
+                    May view
+                  </label>
+                  <label class="flex items-center gap-2 text-sm text-gray-900 dark:text-gray-100">
+                    <input
+                      type="radio"
+                      name="shareLevel"
+                      value="write"
+                      [(ngModel)]="shareLevel"
+                      class="w-4 h-4 border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+                    />
+                    May edit
+                  </label>
+                </div>
+                <div class="flex gap-2">
+                  <button
+                    type="submit"
+                    class="flex-1 px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+                    [disabled]="shareBusy() || !shareSubject"
+                  >
+                    {{ shareBusy() ? 'Saving…' : 'Share' }}
+                  </button>
+                  <button
+                    type="button"
+                    class="flex-1 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                    (click)="closeSharing()"
+                  >
+                    Close
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         </div>
@@ -235,7 +403,7 @@ import { CalIcon } from '../core/calendar/ui';
                 >
                   @for (cal of calendars(); track cal.id) {
                     <option [value]="cal.id">
-                      {{ cal.display_name || cal.name }}{{ cal.workgroup_id ? ' · organization' : '' }}
+                      {{ cal.display_name || cal.name }}{{ cal.workgroup_id ? ' · organization' : '' }}{{ cal.level === 'read' ? ' · view only' : '' }}
                     </option>
                   }
                 </select>
@@ -404,6 +572,10 @@ import { CalIcon } from '../core/calendar/ui';
 })
 export class CalendarComponent implements AfterViewInit, OnDestroy {
   private readonly api = inject(CalendarApi);
+  // The directory the sharing dialog offers its people and groups from: it is
+  // the organization's, and it is derived from the caller's own address on the
+  // server, so there is nothing to pass it.
+  private readonly orgApi = inject(OrganizationApi);
   // The FullCalendar component instance, not the DOM element. The wrapper is
   // what holds the live CalendarApi, so typing this as ElementRef<HTMLElement>
   // would hand back a div with no view on it.
@@ -421,6 +593,26 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
   readonly saving = signal(false);
   readonly loading = signal(false);
 
+  // --- sharing ---
+  //
+  // A calendar is shared by its own side — the owner, or an administrator of
+  // the organization that owns it — so the dialog loads the shares for the
+  // calendar chosen and shows the server's refusal when the caller is not on
+  // that side, rather than deciding the question here and hiding the button.
+  readonly shareModal = signal(false);
+  readonly shareCalendarId = signal<number | null>(null);
+  readonly shares = signal<CalendarShare[]>([]);
+  readonly shareBusy = signal(false);
+  readonly shareError = signal('');
+  readonly orgPeople = signal<Contact[]>([]);
+  readonly orgGroups = signal<OrganizationGroup[]>([]);
+
+  // The subject select carries "user:address" or "group:id" in one value. Two
+  // controls where only one may be filled is a rule somebody has to be told;
+  // one control with both kinds in it is not.
+  shareSubject = '';
+  shareLevel: 'read' | 'write' = 'read';
+
   // Edit form - use a plain object for ngModel binding
   editForm = {
     id: 0,
@@ -437,6 +629,158 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
   // Helper to update editForm and trigger change detection
   private updateEditForm(partial: Partial<typeof this.editForm>): void {
     this.editForm = { ...this.editForm, ...partial };
+  }
+
+  // --- sharing ---
+
+  // openSharing opens the dialog on the calendar the caller is most likely to
+  // mean — their default — and fills the pickers it needs alongside it.
+  async openSharing(): Promise<void> {
+    const calendars = this.calendars();
+    const preferred = calendars.find((c) => c.is_default) ?? calendars[0];
+    this.shareCalendarId.set(preferred?.id ?? null);
+    this.shareSubject = '';
+    this.shareLevel = 'read';
+    this.shareError.set(preferred ? '' : 'There is no calendar to share yet.');
+    this.shareModal.set(true);
+
+    // The pickers are filled once: the directory does not change while a
+    // dialog is open, and a second request per open would be one per click on
+    // a toolbar button.
+    if (this.orgPeople().length === 0) {
+      void this.orgApi
+        .people()
+        .then((res) => this.orgPeople.set(res.people ?? []))
+        // Somebody with no organization has nobody to offer, which is also
+        // what an empty picker says.
+        .catch(() => this.orgPeople.set([]));
+    }
+    if (this.orgGroups().length === 0) {
+      void this.orgApi
+        .groups()
+        .then((res) => this.orgGroups.set(res.groups ?? []))
+        .catch(() => this.orgGroups.set([]));
+    }
+    await this.loadShares();
+  }
+
+  closeSharing(): void {
+    this.shareModal.set(false);
+  }
+
+  async selectShareCalendar(id: number): Promise<void> {
+    this.shareCalendarId.set(Number(id));
+    this.shareSubject = '';
+    await this.loadShares();
+  }
+
+  private async loadShares(): Promise<void> {
+    const id = this.shareCalendarId();
+    if (id === null) {
+      this.shares.set([]);
+      return;
+    }
+    this.shareError.set('');
+    try {
+      const res = await this.api.listShares(id);
+      this.shares.set(res.shares ?? []);
+    } catch (err) {
+      // A refusal here is the answer to "who may change this calendar's
+      // shares", so it is shown: the dialog has nothing else worth drawing,
+      // and a blank list would read as "shared with nobody".
+      this.shares.set([]);
+      this.shareError.set(errorMessage(err));
+    }
+  }
+
+  // addShare grants the chosen subject the chosen level. The server edits an
+  // existing share for the same subject rather than adding a second one, so
+  // the list after it is always one row per subject.
+  async addShare(): Promise<void> {
+    const id = this.shareCalendarId();
+    if (id === null) return;
+    const separator = this.shareSubject.indexOf(':');
+    const kind = separator < 0 ? '' : this.shareSubject.slice(0, separator);
+    const value = separator < 0 ? '' : this.shareSubject.slice(separator + 1);
+    if (!value) {
+      this.shareError.set('Choose a person or a group to share with.');
+      return;
+    }
+
+    const req: ShareCalendarRequest =
+      kind === 'group'
+        ? { subject_kind: 'group', subject_group_id: Number(value), level: this.shareLevel }
+        : { subject_kind: 'user', subject_address: value, level: this.shareLevel };
+
+    this.shareBusy.set(true);
+    this.shareError.set('');
+    try {
+      await this.api.share(id, req);
+      this.shareSubject = '';
+      await this.loadShares();
+    } catch (err) {
+      this.shareError.set(errorMessage(err));
+    } finally {
+      this.shareBusy.set(false);
+    }
+  }
+
+  // changeShareLevel raises or lowers an existing share. It resends the same
+  // subject with the new level, which the server treats as the edit it is.
+  async changeShareLevel(share: CalendarShare, level: string): Promise<void> {
+    const id = this.shareCalendarId();
+    if (id === null) return;
+    const wanted: 'read' | 'write' = level === 'write' ? 'write' : 'read';
+    const req: ShareCalendarRequest =
+      share.subject_kind === 'group'
+        ? { subject_kind: 'group', subject_group_id: share.subject_group_id, level: wanted }
+        : { subject_kind: 'user', subject_address: share.subject_address, level: wanted };
+    this.shareBusy.set(true);
+    this.shareError.set('');
+    try {
+      await this.api.share(id, req);
+      await this.loadShares();
+    } catch (err) {
+      this.shareError.set(errorMessage(err));
+    } finally {
+      this.shareBusy.set(false);
+    }
+  }
+
+  async removeShare(share: CalendarShare): Promise<void> {
+    const id = this.shareCalendarId();
+    if (id === null) return;
+    this.shareBusy.set(true);
+    this.shareError.set('');
+    try {
+      await this.api.unshare(id, share.id);
+      await this.loadShares();
+    } catch (err) {
+      this.shareError.set(errorMessage(err));
+    } finally {
+      this.shareBusy.set(false);
+    }
+  }
+
+  // shareLabel reads what a share names, in the words a person recognizes.
+  shareLabel(share: CalendarShare): string {
+    if (share.subject_kind === 'group') {
+      return share.subject_name || 'a group';
+    }
+    return share.subject_address || 'somebody';
+  }
+
+  // canEditSelected is whether the event pane should offer its controls. An
+  // event on a calendar shared as view only would only learn it cannot be
+  // edited when the save came back refused, so the offer is not made. A
+  // calendar whose level is unknown — the server omits nothing today, but a
+  // client that cannot tell should err towards the buttons and let the server
+  // answer, rather than silently hiding them.
+  canEditSelected(): boolean {
+    const ext = this.selectedEvent()?.extendedProps as { calendarId?: number } | undefined;
+    if (ext?.calendarId === undefined) return false;
+    const cal = this.calendars().find((c) => c.id === ext.calendarId);
+    return cal?.level !== 'read';
   }
 
   // FullCalendar options

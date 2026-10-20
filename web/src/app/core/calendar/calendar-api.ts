@@ -5,6 +5,8 @@ import {
   Calendar,
   CreateCalendarRequest,
   UpdateCalendarRequest,
+  CalendarShare,
+  ShareCalendarRequest,
   Event,
   ListEventsResponse,
   CreateEventRequest,
@@ -45,6 +47,28 @@ export class CalendarApi {
 
   delete(id: number): Promise<void> {
     return this.del(`/${id}`);
+  }
+
+  // --- sharing ---
+
+  // listShares answers who else may see a calendar and at what level. Only the
+  // calendar's own side may ask — the owner, or an administrator of the
+  // organization it belongs to — so a refusal here means the caller is on the
+  // outside of that question rather than that the calendar has no shares.
+  listShares(calendarId: number): Promise<{ shares: CalendarShare[] }> {
+    return this.fetch(`/${calendarId}/shares`);
+  }
+
+  // share grants one person or group a level of access. Sharing twice with the
+  // same subject edits it rather than adding a second row.
+  share(calendarId: number, req: ShareCalendarRequest): Promise<CalendarShare> {
+    return this.post(`/${calendarId}/shares`, req);
+  }
+
+  // unshare removes the share by its own id, which is the only identifier that
+  // says which row on which calendar was shown to the caller.
+  unshare(calendarId: number, shareId: number): Promise<void> {
+    return this.del(`/${calendarId}/shares/${shareId}`);
   }
 
   // --- events ---

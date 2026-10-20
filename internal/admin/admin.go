@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -72,6 +73,30 @@ const (
 	ActionWorkgroupDelete = "workgroup.delete"
 	ActionWorkgroupGrant  = "workgroup.grant"
 	ActionWorkgroupRevoke = "workgroup.revoke"
+
+	// Organization calendars are their own action rather than riding on the
+	// workgroup ones: creating a team calendar is a change somebody will look
+	// for after the fact, and "workgroup.update" says only that something about
+	// the group changed.
+	ActionCalendarCreate = "calendar.create"
+	ActionCalendarUpdate = "calendar.update"
+	ActionCalendarDelete = "calendar.delete"
+
+	// Groups are addressed rather than merely listed, so who is in one and
+	// which groups exist are both things a log reader needs later: a meeting
+	// that went to the wrong people should be traceable to the member row that
+	// put them there.
+	ActionGroupCreate       = "workgroup_group.create"
+	ActionGroupUpdate       = "workgroup_group.update"
+	ActionGroupDelete       = "workgroup_group.delete"
+	ActionGroupMemberAdd    = "workgroup_group.member_add"
+	ActionGroupMemberRemove = "workgroup_group.member_remove"
+
+	// A requeue is deliberately noticed: mail that was given up on is being
+	// tried again by hand, and if it fails twice the log should show that
+	// somebody asked for the second go rather than that the queue retried by
+	// itself.
+	ActionOutboxRequeue = "outbox.requeue"
 )
 
 // ErrDenied is returned when the caller is not permitted to do what they
@@ -402,10 +427,43 @@ func (s *Service) ListWorkgroupMembers(ctx context.Context, actor policy.Princip
 	return s.workgroups.Members(ctx, s.db, id)
 }
 
+// WorkgroupPeople returns every address that belongs to a workgroup without
+// being listed as a member of it: the enabled mailboxes in the group's domains.
+//
+// Membership is derived rather than listed wherever it can be, because an
+// address in a group's domain is in that group the moment it exists. A member
+// row is only ever needed for somebody outside those domains, which is what
+// AddWorkgroupMember says when handed the other kind.
+func (s *Service) WorkgroupPeople(ctx context.Context, actor policy.Principal, id int64) ([]store.Contact, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
+	return s.workgroups.People(ctx, s.db, id)
+}
+
 // AddWorkgroupMember adds a member to a workgroup.
+//
+// Only addresses outside the group's own domains can be added: everybody else
+// is already in it by virtue of their address, and a row saying so would be
+// something an administrator could later remove while the person stayed a
+// member, which is how a list starts lying about who is in the group.
 func (s *Service) AddWorkgroupMember(ctx context.Context, actor policy.Principal, id int64, address, role string) error {
 	if err := requireAdmin(actor); err != nil {
 		return err
+	}
+	domains, err := s.workgroups.Domains(ctx, s.db, id)
+	if err != nil {
+		return fmt.Errorf("admin: listing workgroup domains: %w", err)
+	}
+	at := strings.LastIndex(address, "@")
+	if at >= 0 {
+		for _, domain := range domains {
+			if strings.EqualFold(address[at+1:], domain) {
+				return errors.Join(ErrInvalid, fmt.Errorf(
+					"%s is already a member of this organization: everyone with an address in %s is",
+					address, domain))
+			}
+		}
 	}
 	if err := s.workgroups.AddMember(ctx, s.db, id, address, role); err != nil {
 		return fmt.Errorf("admin: adding workgroup member: %w", err)
