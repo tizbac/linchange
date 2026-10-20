@@ -78,38 +78,41 @@ func (r *OutboxRepository) InsertMessage(ctx context.Context, tx *sqlx.Tx, submi
 // Claim due messages for delivery.
 // ---------------------------------------------------------------------------
 
-// ClaimMessages returns up to maxMessages queued messages whose next_attempt_at
-// has passed, locking them for update. The returned messages include their
-// recipients.
-func (r *OutboxRepository) ClaimMessages(ctx context.Context, tx *sqlx.Tx, maxMessages int) ([]OutboxMessage, error) {
-	var query string
-	var args []any
-
-	if tx != nil {
-		query = `
-			SELECT id, submitted_by, envelope_from, blob_sha256, size, state,
-			       attempts, next_attempt_at, last_error, failed_at, dsn_at, sent_at, created_at
-			FROM outbox
-			WHERE state IN ('queued', 'deferred')
-			  AND next_attempt_at <= now()
-			ORDER BY next_attempt_at ASC
-			LIMIT $1
-			FOR UPDATE SKIP LOCKED`
-		args = []any{maxMessages}
-	} else {
-		query = `
-			SELECT id, submitted_by, envelope_from, blob_sha256, size, state,
-			       attempts, next_attempt_at, last_error, failed_at, dsn_at, sent_at, created_at
-			FROM outbox
-			WHERE state IN ('queued', 'deferred')
-			  AND next_attempt_at <= now()
-			ORDER BY next_attempt_at ASC
-			LIMIT $1
-			FOR UPDATE SKIP LOCKED`
-		args = []any{maxMessages}
+// ClaimForSending takes the next batch of due messages out of the queue,
+// marking every one of them 'sending' in the same statement that reads them
+// back.
+//
+// The mark and the read are one statement because they are one decision. Read
+// the due rows in one call and mark each one in the next, and every worker
+// polling at that moment selects the same rows: FOR UPDATE SKIP LOCKED holds
+// its lock only for the statement that took it, and there was no transaction
+// around the pair. The losers then reported "message already claimed" as an
+// error for mail that was being delivered perfectly well — a log line that
+// reads like a delivery failure precisely when somebody is reading the log
+// for one.
+//
+// A message taken here belongs to this caller until it settles or is given
+// back: nothing retries a message in the 'sending' state, so a worker that
+// stops before reaching one it claimed has to Release it first.
+func (r *OutboxRepository) ClaimForSending(ctx context.Context, maxMessages int) ([]OutboxMessage, error) {
+	if maxMessages < 1 {
+		maxMessages = 1
 	}
-
-	rows, err := r.queryRows(ctx, tx, query, args...)
+	rows, err := r.db.QueryContext(ctx, `
+		UPDATE outbox
+		SET state = 'sending'
+		WHERE id IN (
+			SELECT id
+			FROM outbox
+			WHERE state IN ('queued', 'deferred')
+			  AND next_attempt_at <= now()
+			ORDER BY next_attempt_at ASC
+			LIMIT $1
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING id, submitted_by, envelope_from, blob_sha256, size, state,
+		          attempts, next_attempt_at, last_error, failed_at, dsn_at,
+		          sent_at, created_at`, maxMessages)
 	if err != nil {
 		return nil, fmt.Errorf("claim messages: %w", err)
 	}
@@ -121,17 +124,56 @@ func (r *OutboxRepository) ClaimMessages(ctx context.Context, tx *sqlx.Tx, maxMe
 		if err := scanOutboxMessage(rows, &msg); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
-		msg.Recipients, err = r.loadRecipients(ctx, tx, msg.ID)
-		if err != nil {
-			return nil, fmt.Errorf("load recipients for message %d: %w", msg.ID, err)
-		}
 		messages = append(messages, msg)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate messages: %w", err)
 	}
 
+	// The recipients are read after the claim, outside it: the claim made
+	// these rows this caller's own, so no other worker can change them in the
+	// meantime, and a second query keeps the claiming statement itself small.
+	for i := range messages {
+		if messages[i].Recipients, err = r.loadRecipients(ctx, nil, messages[i].ID); err != nil {
+			// The claim stands even though the recipients could not be read,
+			// so the messages go back rather than waiting for an administrator
+			// to notice them 'sending' with nobody working on them.
+			ids := make([]int64, 0, len(messages))
+			for _, m := range messages {
+				ids = append(ids, m.ID)
+			}
+			_ = r.Release(context.WithoutCancel(ctx), ids)
+			return nil, err
+		}
+	}
+
 	return messages, nil
+}
+
+// Release puts claimed messages back into the queue without attempting them.
+//
+// It is what a worker owes the messages it took and never reached: the queue's
+// due query looks only at 'queued' and 'deferred', so a message left
+// 'sending' by a shutdown is retried by nobody and waits for somebody to
+// notice it in the queue.
+//
+// Only a message still 'sending' is released. One the worker settled is not
+// put back for a second delivery, whatever state it settled into.
+func (r *OutboxRepository) Release(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	query, args, err := sqlx.In(`
+		UPDATE outbox
+		SET state = 'queued', next_attempt_at = now()
+		WHERE state = 'sending' AND id IN (?)`, ids)
+	if err != nil {
+		return fmt.Errorf("release: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx, sqlx.Rebind(sqlx.DOLLAR, query), args...); err != nil {
+		return fmt.Errorf("release: %w", err)
+	}
+	return nil
 }
 
 // scanOutboxMessage scans an OutboxMessage from a sql.Rows cursor.
@@ -214,30 +256,6 @@ func (r *OutboxRepository) queryRows(ctx context.Context, tx *sqlx.Tx, query str
 // ---------------------------------------------------------------------------
 // Update message and recipient states after delivery.
 // ---------------------------------------------------------------------------
-
-// MarkSending updates the message state to "sending" to claim it for delivery.
-func (r *OutboxRepository) MarkSending(ctx context.Context, tx *sqlx.Tx, messageID int64) error {
-	var query string
-	var args []any
-
-	if tx != nil {
-		query = `UPDATE outbox SET state = 'sending' WHERE id = $1 AND state IN ('queued', 'deferred')`
-		args = []any{messageID}
-	} else {
-		query = `UPDATE outbox SET state = 'sending' WHERE id = $1 AND state IN ('queued', 'deferred')`
-		args = []any{messageID}
-	}
-
-	result, err := r.execCtx(ctx, tx, query, args...)
-	if err != nil {
-		return fmt.Errorf("mark sending: %w", err)
-	}
-	affected, _ := result.RowsAffected()
-	if affected == 0 {
-		return errors.New("mark sending: message already claimed or not found")
-	}
-	return nil
-}
 
 // MarkSent marks the message and all its recipients as delivered.
 func (r *OutboxRepository) MarkSent(ctx context.Context, tx *sqlx.Tx, messageID int64) error {

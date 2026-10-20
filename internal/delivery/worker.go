@@ -212,8 +212,12 @@ func (p *Pool) IsActive() bool {
 
 func (p *Pool) worker(ctx context.Context, workerID int) {
 	for {
-		// Claim messages from the outbox.
-		messages, err := p.cfg.Outbox.ClaimMessages(ctx, nil, p.cfg.PerDomainConcurrency)
+		// Claim due messages. The claim marks them 'sending' in the same
+		// statement that takes them, so a message is handed to one worker
+		// however many are polling: reading the rows and marking them one
+		// call apart left every worker claiming the same batch and the losers
+		// logging a delivery error for mail that was going out fine.
+		messages, err := p.cfg.Outbox.ClaimForSending(ctx, p.cfg.PerDomainConcurrency)
 		if err != nil {
 			p.logger.Error("outbox claim", "worker", workerID, "error", err)
 			// Wait before retrying the claim.
@@ -239,29 +243,56 @@ func (p *Pool) worker(ctx context.Context, workerID int) {
 			continue
 		}
 
-		p.active.Add(int64(len(messages)))
-
-		for _, msg := range messages {
+		for i := range messages {
+			// Stopping is not a delivery failure: whatever this worker
+			// claimed and has not reached goes back to the queue, because
+			// nothing retries a message left 'sending'.
 			select {
 			case <-ctx.Done():
-				p.active.Add(-int64(len(messages)))
+				p.releaseClaims(workerID, messages[i:])
 				return
 			case <-p.quit:
-				p.active.Add(-int64(len(messages)))
+				p.releaseClaims(workerID, messages[i:])
 				return
 			default:
 			}
 
-			if err := p.deliver(ctx, workerID, msg); err != nil {
+			p.active.Add(1)
+			if err := p.deliver(ctx, workerID, messages[i]); err != nil {
 				p.logger.Error("delivery failed",
 					"worker", workerID,
-					"message_id", msg.ID,
+					"message_id", messages[i].ID,
 					"error", err)
 			}
-
 			p.active.Add(-1)
 		}
 	}
+}
+
+// releaseClaims hands claimed messages back to the queue unattempted, which
+// is what the pool owes them when it is told to stop. The context the pool is
+// running under is already done by then, and the release is precisely the
+// thing that still has to happen, so it is given its own.
+func (p *Pool) releaseClaims(workerID int, messages []OutboxMessage) {
+	if len(messages) == 0 {
+		return
+	}
+	ids := make([]int64, 0, len(messages))
+	for _, m := range messages {
+		ids = append(ids, m.ID)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := p.cfg.Outbox.Release(ctx, ids); err != nil {
+		p.logger.Error("releasing unattempted messages",
+			"worker", workerID,
+			"count", len(ids),
+			"error", err)
+		return
+	}
+	p.logger.Info("released unattempted messages back to the queue",
+		"worker", workerID,
+		"count", len(ids))
 }
 
 // ---------------------------------------------------------------------------
@@ -322,10 +353,9 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 		}
 	}
 
-	// Mark message as "sending" to claim it.
-	if err := p.cfg.Outbox.MarkSending(ctx, nil, msg.ID); err != nil {
-		return fmt.Errorf("mark sending: %w", err)
-	}
+	// The message was marked 'sending' by the claim that handed it here, so
+	// there is nothing to take ownership of on the way in: the rows are this
+	// worker's already, and no other one was offered them.
 
 	// Only recipients that have not settled are sent. A message whose local
 	// half has already arrived is retried for the rest, and sending the
