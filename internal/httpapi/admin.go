@@ -164,6 +164,13 @@ func mountAdminRoutes(r chi.Router, s *Server) {
 			r.Route("/calendars/{calendarID}", func(r chi.Router) {
 				r.Patch("/", s.updateWorkgroupCalendar)
 				r.Delete("/", s.deleteWorkgroupCalendar)
+				// Shares on an organization calendar are administered by the
+				// organization's admins (and the domain admin), so they sit
+				// alongside the calendar CRUD here rather than in the personal
+				// calendar API, which is for a person's own calendars.
+				r.Get("/shares", s.listWorkgroupCalendarShares)
+				r.Post("/shares", s.shareWorkgroupCalendar)
+				r.Delete("/shares/{shareID}", s.unshareWorkgroupCalendar)
 			})
 		})
 	})
@@ -1809,6 +1816,125 @@ func (s *Server) deleteWorkgroupCalendar(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := s.admin.DeleteWorkgroupCalendar(r.Context(), Principal(r.Context()), id, calendarID); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// listWorkgroupCalendarShares lists the shares on an organization's calendar.
+func (s *Server) listWorkgroupCalendarShares(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	calendarID, ok := pathID(r, "calendarID")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid calendar id")
+		return
+	}
+	shares, err := s.admin.WorkgroupCalendarShares(r.Context(), Principal(r.Context()), id, calendarID)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	// Reuse the shareView from the calendar API.
+	names, err := s.groupNames(r, shares)
+	if err != nil {
+		s.log.Warn("could not name the groups on a calendar share", "error", err)
+	}
+	out := make([]shareView, 0, len(shares))
+	for _, share := range shares {
+		out = append(out, viewCalendarShare(share, names[share.GroupID()]))
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"shares": out})
+}
+
+// shareWorkgroupCalendar grants a user or group access to an organization's calendar.
+func (s *Server) shareWorkgroupCalendar(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	calendarID, ok := pathID(r, "calendarID")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid calendar id")
+		return
+	}
+	var in struct {
+		SubjectKind    string `json:"subject_kind"`
+		SubjectAddress string `json:"subject_address"`
+		SubjectGroupID int64  `json:"subject_group_id"`
+		Level          string `json:"level"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if in.Level == "" {
+		in.Level = store.CalendarShareRead
+	}
+	if in.Level != store.CalendarShareRead && in.Level != store.CalendarShareWrite {
+		s.writeError(w, http.StatusBadRequest, "level must be read or write")
+		return
+	}
+
+	share := store.CalendarShare{
+		CalendarID:  calendarID,
+		SubjectKind: in.SubjectKind,
+		Level:       in.Level,
+	}
+	switch in.SubjectKind {
+	case store.ShareSubjectUser:
+		address := strings.TrimSpace(in.SubjectAddress)
+		if address == "" {
+			s.writeError(w, http.StatusBadRequest, "subject_address is required")
+			return
+		}
+		share.SubjectAddress = &address
+	case store.ShareSubjectGroup:
+		if in.SubjectGroupID == 0 {
+			s.writeError(w, http.StatusBadRequest, "subject_group_id is required")
+			return
+		}
+		share.SubjectGroupID = &in.SubjectGroupID
+	default:
+		s.writeError(w, http.StatusBadRequest, "subject_kind must be user or group")
+		return
+	}
+
+	created, err := s.admin.ShareWorkgroupCalendar(r.Context(), Principal(r.Context()), id, calendarID, share)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	names, err := s.groupNames(r, []store.CalendarShare{created})
+	if err != nil {
+		s.log.Warn("could not name the group on a calendar share", "error", err)
+	}
+	s.writeJSON(w, http.StatusCreated, viewCalendarShare(created, names[created.GroupID()]))
+}
+
+// unshareWorkgroupCalendar removes a share from an organization's calendar.
+func (s *Server) unshareWorkgroupCalendar(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	calendarID, ok := pathID(r, "calendarID")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid calendar id")
+		return
+	}
+	shareID, ok := pathID(r, "shareID")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid share id")
+		return
+	}
+	if err := s.admin.UnshareWorkgroupCalendar(r.Context(), Principal(r.Context()), id, calendarID, shareID); err != nil {
 		adminErrors(w, s, err)
 		return
 	}

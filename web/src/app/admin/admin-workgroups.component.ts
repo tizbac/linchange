@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@ang
 import { FormsModule } from '@angular/forms';
 import { AdminApi } from '../core/admin/admin-api';
 import { Domain, OrgCalendar, Workgroup, WorkgroupGroup, WorkgroupMember } from '../core/admin/admin.models';
+import { CalendarShare, ShareCalendarRequest } from '../core/calendar/calendar.models';
 import { errorMessage } from '../core/http-error';
 import {
   AdminButton,
@@ -58,6 +59,10 @@ export class AdminWorkgroupsComponent implements OnInit {
   protected readonly memberFor = signal<number | null>(null);
   protected readonly calendarFor = signal<number | null>(null);
   protected readonly calendars = signal<Map<number, OrgCalendar[]>>(new Map());
+  protected readonly calendarSharesFor = signal<number | null>(null);
+  protected readonly calendarShares = signal<Map<number, CalendarShare[]>>(new Map());
+  protected calendarShareSubject = '';
+  protected calendarShareLevel: 'read' | 'write' = 'read';
   protected readonly groupFor = signal<number | null>(null);
   protected readonly groups = signal<Map<number, WorkgroupGroup[]>>(new Map());
   protected readonly membersFor = signal<number | null>(null);
@@ -302,6 +307,109 @@ export class AdminWorkgroupsComponent implements OnInit {
     } finally {
       this.busy.set(false);
     }
+  }
+
+  // --- organization calendar shares ---
+
+  protected openCalendarShares(wg: Workgroup, cal: OrgCalendar): void {
+    this.error.set('');
+    const next = this.calendarSharesFor() === cal.id ? null : cal.id;
+    this.calendarSharesFor.set(next);
+    if (next !== null && !this.calendarShares().has(cal.id)) {
+      void this.loadCalendarShares(wg, cal);
+    }
+  }
+
+  private async loadCalendarShares(wg: Workgroup, cal: OrgCalendar): Promise<void> {
+    try {
+      const res = await this.api.listWorkgroupCalendarShares(wg.id, cal.id);
+      const next = new Map(this.calendarShares());
+      next.set(cal.id, res.shares ?? []);
+      this.calendarShares.set(next);
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    }
+  }
+
+  protected async addCalendarShare(wg: Workgroup, cal: OrgCalendar): Promise<void> {
+    const separator = this.calendarShareSubject.indexOf(':');
+    const kind = separator < 0 ? '' : this.calendarShareSubject.slice(0, separator);
+    const value = separator < 0 ? '' : this.calendarShareSubject.slice(separator + 1);
+    if (!value) {
+      this.error.set('Choose a person or a group to share with.');
+      return;
+    }
+
+    const req: ShareCalendarRequest =
+      kind === 'group'
+        ? { subject_kind: 'group', subject_group_id: Number(value), level: this.calendarShareLevel }
+        : { subject_kind: 'user', subject_address: value, level: this.calendarShareLevel };
+
+    this.busy.set(true);
+    this.error.set('');
+    try {
+      await this.api.shareWorkgroupCalendar(wg.id, cal.id, req);
+      this.calendarShareSubject = '';
+      await this.loadCalendarShares(wg, cal);
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  protected async changeCalendarShareLevel(wg: Workgroup, cal: OrgCalendar, share: CalendarShare, level: 'read' | 'write'): Promise<void> {
+    const req: ShareCalendarRequest =
+      share.subject_kind === 'group'
+        ? { subject_kind: 'group', subject_group_id: share.subject_group_id!, level }
+        : { subject_kind: 'user', subject_address: share.subject_address!, level };
+    this.busy.set(true);
+    this.error.set('');
+    try {
+      await this.api.shareWorkgroupCalendar(wg.id, cal.id, req);
+      await this.loadCalendarShares(wg, cal);
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  protected async removeCalendarShare(wg: Workgroup, cal: OrgCalendar, share: CalendarShare): Promise<void> {
+    this.busy.set(true);
+    this.error.set('');
+    try {
+      await this.api.unshareWorkgroupCalendar(wg.id, cal.id, share.id);
+      await this.loadCalendarShares(wg, cal);
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  protected calendarShareCandidates(wg: Workgroup, cal: OrgCalendar): string[] {
+    // Build candidates from organization people and groups
+    const candidates: string[] = [];
+    const people = this.users().filter((address) => !this.isAlreadyShared(cal, 'user', address));
+    candidates.push(...people.map((a) => `user:${a}`));
+    const groups = this.groups().get(wg.id) ?? [];
+    candidates.push(...groups.filter((g) => !this.isAlreadyShared(cal, 'group', '', g.id)).map((g) => `group:${g.id}`));
+    return candidates;
+  }
+
+  private isAlreadyShared(cal: OrgCalendar, kind: 'user' | 'group', address: string, groupId?: number): boolean {
+    const shares = this.calendarShares().get(cal.id) ?? [];
+    return shares.some((s) =>
+      s.subject_kind === kind && (kind === 'user' ? s.subject_address === address : s.subject_group_id === groupId)
+    );
+  }
+
+  protected shareLabel(share: CalendarShare): string {
+    if (share.subject_kind === 'group') {
+      return `${share.subject_name || 'group'} · group`;
+    }
+    return share.subject_address || '';
   }
 
   // --- organization groups ---

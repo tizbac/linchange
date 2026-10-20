@@ -214,6 +214,75 @@ func NewSMTPClient(cfg SMTPConfig) SMTPClient {
 	return &smtpClient{cfg: cfg}
 }
 
+// dialSession connects to addr and starts a session with the server: TLS when
+// the configuration asks for it and the server will have it, and in the clear
+// when it will not.
+//
+// A server whose EHLO carries no STARTTLS extension is not a delivery
+// failure. Relays, smart hosts and mail exchangers on a private network often
+// take mail in the clear because that is all they were ever built to do, and
+// treating their silence as an error deferred every message through them into
+// the same wall until the retry lifetime ran out — the mail never left, and
+// the log said so in a line that names no fault anybody could fix. An MTA that
+// accepts mail without TLS still accepts the mail.
+//
+// What is deliberately not fallen back from is a server that offers STARTTLS
+// and then fails it. That peer promised encryption and did not keep the
+// promise, which is worth reporting rather than quietly sending the message
+// on unencrypted after somebody in the middle had the chance to say no.
+func (c *smtpClient) dialSession(ctx context.Context, dialer *net.Dialer, addr string) (*smtp.Client, error) {
+	tlsConfig := &tls.Config{
+		ServerName:         c.cfg.Host,
+		InsecureSkipVerify: c.cfg.InsecureSkipVerify,
+	}
+
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("dial: %w", err)
+	}
+
+	if !c.cfg.TLS {
+		return startPlainSession(conn)
+	}
+
+	s, err := smtp.NewClientStartTLS(conn, tlsConfig)
+	if err == nil {
+		return s, nil
+	}
+	// NewClientStartTLS closes the connection it gives up on, so carrying on
+	// in the clear means dialling the server again rather than reusing it.
+	if !startTLSUnsupported(err) {
+		return nil, fmt.Errorf("STARTTLS: %w", err)
+	}
+	conn, err = dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("dial: %w", err)
+	}
+	return startPlainSession(conn)
+}
+
+// startPlainSession greets a server that is being talked to in the clear.
+func startPlainSession(conn net.Conn) (*smtp.Client, error) {
+	s := smtp.NewClient(conn)
+	if err := s.Hello("linchange"); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("EHLO: %w", err)
+	}
+	return s, nil
+}
+
+// startTLSUnsupported reports whether err is go-smtp declining to continue
+// because the server's EHLO advertised no STARTTLS extension.
+//
+// go-smtp returns that refusal as a plain error with nothing to inspect but
+// its text, so this matches the text. A version that starts wrapping it
+// differently stops matching, and the fallback then goes away rather than
+// misfiring: a mismatch costs one deferral, a false positive would send mail
+// in the clear against a server that does offer TLS.
+func startTLSUnsupported(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "server doesn't support STARTTLS")
+}
+
 // Send delivers a message using go-smtp.
 func (c *smtpClient) Send(ctx context.Context, from string, to []string, data []byte) error {
 	dialer := &net.Dialer{
@@ -222,36 +291,7 @@ func (c *smtpClient) Send(ctx context.Context, from string, to []string, data []
 
 	addr := net.JoinHostPort(c.cfg.Host, fmt.Sprintf("%d", c.cfg.Port))
 
-	var s *smtp.Client
-	var err error
-
-	tlsConfig := &tls.Config{
-		ServerName:         c.cfg.Host,
-		InsecureSkipVerify: c.cfg.InsecureSkipVerify,
-	}
-
-	if c.cfg.TLS {
-		// Direct TLS (port 465 typically).
-		conn, dialErr := dialer.DialContext(ctx, "tcp", addr)
-		if dialErr != nil {
-			return &ErrTransient{Err: fmt.Errorf("dial TLS: %w", dialErr)}
-		}
-		s, err = smtp.NewClientStartTLS(conn, tlsConfig)
-	} else {
-		// Plain connection with STARTTLS attempt.
-		conn, dialErr := dialer.DialContext(ctx, "tcp", addr)
-		if dialErr != nil {
-			return &ErrTransient{Err: fmt.Errorf("dial: %w", dialErr)}
-		}
-		s = smtp.NewClient(conn)
-		if err := s.Hello("linchange"); err != nil {
-			s.Close()
-			return &ErrTransient{Err: fmt.Errorf("EHLO: %w", err)}
-		}
-		// The go-smtp library does not expose a public StartTLS method,
-		// so we only support STARTTLS when the whole connection is TLS.
-	}
-
+	s, err := c.dialSession(ctx, dialer, addr)
 	if err != nil {
 		return &ErrTransient{Err: fmt.Errorf("SMTP connect: %w", err)}
 	}
@@ -373,28 +413,9 @@ func (c *smtpClient) SendEach(ctx context.Context, from string, to []string, dat
 
 	dialer := &net.Dialer{Timeout: c.cfg.ConnectTimeout}
 	addr := net.JoinHostPort(c.cfg.Host, fmt.Sprintf("%d", c.cfg.Port))
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	s, err := c.dialSession(ctx, dialer, addr)
 	if err != nil {
 		out.failTransient(to, fmt.Sprintf("connect %s: %v", addr, err))
-		return out
-	}
-
-	var s *smtp.Client
-	if c.cfg.TLS {
-		s, err = smtp.NewClientStartTLS(conn, &tls.Config{
-			ServerName:         c.cfg.Host,
-			InsecureSkipVerify: c.cfg.InsecureSkipVerify,
-		})
-	} else {
-		s = smtp.NewClient(conn)
-		if err = s.Hello("linchange"); err != nil {
-			s.Close()
-			out.failTransient(to, fmt.Sprintf("EHLO: %v", err))
-			return out
-		}
-	}
-	if err != nil {
-		out.failTransient(to, fmt.Sprintf("STARTTLS: %v", err))
 		return out
 	}
 	defer s.Close()

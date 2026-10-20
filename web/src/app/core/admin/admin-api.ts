@@ -18,6 +18,7 @@ import {
   WorkgroupMember,
 } from './admin.models';
 import { ImportJob, ImportJobRequest } from '../mail/mail.models';
+import { CalendarShare, ShareCalendarRequest } from '../calendar/calendar.models';
 
 const API = '/api/v1/admin';
 
@@ -365,6 +366,24 @@ export class AdminApi {
 
   deleteWorkgroupCalendar(id: number, calendarID: number): Promise<void> {
     return this.request('delete', `/workgroups/${id}/calendars/${calendarID}`, null) as Promise<void>;
+  }
+
+  // --- organization calendar shares ---
+
+  listWorkgroupCalendarShares(id: number, calendarID: number): Promise<{ shares: CalendarShare[] }> {
+    return this.get(`/workgroups/${id}/calendars/${calendarID}/shares`);
+  }
+
+  shareWorkgroupCalendar(
+    id: number,
+    calendarID: number,
+    body: { subject_kind: 'user' | 'group'; subject_address?: string; subject_group_id?: number; level: 'read' | 'write' },
+  ): Promise<CalendarShare> {
+    return this.post(`/workgroups/${id}/calendars/${calendarID}/shares`, body);
+  }
+
+  unshareWorkgroupCalendar(id: number, calendarID: number, shareID: number): Promise<void> {
+    return this.request('delete', `/workgroups/${id}/calendars/${calendarID}/shares/${shareID}`, null) as Promise<void>;
   }
 
   // --- organization groups ---

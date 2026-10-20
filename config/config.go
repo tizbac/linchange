@@ -19,7 +19,7 @@ type Config struct {
 	LDAP     LDAP      `yaml:"ldap"`
 	Mail     Mail      `yaml:"mail"`
 	Exchange Exchange  `yaml:"exchange"`
-	Meetings Meetings `yaml:"meetings"`
+	Meetings Meetings  `yaml:"meetings"`
 	Log      Log       `yaml:"logging"`
 }
 
@@ -94,7 +94,7 @@ type TLS struct {
 	// http:// end up where they meant to go. ACME HTTP-01 challenges are
 	// still served on HTTP: without them no certificate could ever be
 	// issued. Defaults to on; set to false to keep serving plain HTTP.
-	RedirectHTTP bool  `yaml:"redirect_http"`
+	RedirectHTTP bool `yaml:"redirect_http"`
 	ACME         ACME `yaml:"acme"`
 }
 
@@ -382,8 +382,12 @@ type Outbound struct {
 	SMTPHost string `yaml:"smtp_host"`
 	// SMTPPort is the port for the smart host. Default is 587.
 	SMTPPort int `yaml:"smtp_port"`
-	// SMTPStartTLS uses STARTTLS on the submission port. When false and
-	// SMTPHost is set, TLS is used directly (port 465).
+	// SMTPStartTLS asks for STARTTLS when delivering through the smart host.
+	// A server whose EHLO advertises no STARTTLS is contacted in the clear
+	// rather than refused — an MTA that accepts mail without TLS still
+	// accepts the mail — while one that offers STARTTLS and cannot complete
+	// the handshake is reported as a failure. When false, the session is in
+	// the clear from the first byte.
 	SMTPStartTLS bool `yaml:"smtp_starttls"`
 	// SMTPUsername and SMTPPassword are used for authentication.
 	SMTPUsername string `yaml:"smtp_username"`

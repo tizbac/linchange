@@ -250,6 +250,9 @@
                               <admin-button [disabled]="busy()" (pressed)="renameCalendar(wg, cal)">
                                 Rename
                               </admin-button>
+                              <admin-button [disabled]="busy()" (pressed)="openCalendarShares(wg, cal)">
+                                Shares
+                              </admin-button>
                               <admin-button variant="danger" [disabled]="busy()" (pressed)="removeCalendar(wg, cal)">
                                 Delete
                               </admin-button>
@@ -281,6 +284,78 @@
                       Create it
                     </admin-button>
                   </form>
+
+                  <!-- Shares for the selected calendar -->
+                  @if (calendarSharesFor() !== null) {
+                    @let calId = calendarSharesFor();
+                    @let cal = (calendars().get(wg.id) ?? []).find(c => c.id === calId);
+                    @if (cal) {
+                      <div class="border-t border-slate-200 pt-4 mt-4">
+                        <div class="flex flex-wrap items-center gap-3 mb-3">
+                          <span class="text-xs font-medium text-slate-600">Shares for {{ cal.name }}</span>
+                          <span class="flex-1"></span>
+                          <admin-button (pressed)="openCalendarShares(wg, cal)">
+                            Close
+                          </admin-button>
+                        </div>
+                        @let shares = calendarShares().get(cal.id) ?? [];
+                        @if (shares.length > 0) {
+                          <table class="w-full">
+                            <thead class="border-b border-slate-200 bg-slate-50">
+                              <tr>
+                                <th class="{{ head }}">Who</th>
+                                <th class="{{ head }}">Level</th>
+                                <th class="{{ head }} text-right">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100">
+                              @for (share of shares; track share.id) {
+                                <tr>
+                                  <td class="{{ cell }} font-medium text-slate-900">{{ shareLabel(share) }}</td>
+                                  <td class="{{ cell }}">
+                                    <select
+                                      class="{{ inputClass }} py-1 text-sm"
+                                      [ngModel]="share.level"
+                                      (ngModelChange)="changeCalendarShareLevel(wg, cal, share, $event)"
+                                      [disabled]="busy()">
+                                      <option value="read">Read</option>
+                                      <option value="write">Write</option>
+                                    </select>
+                                  </td>
+                                  <td class="{{ cell }} text-right">
+                                    <admin-button variant="danger" [disabled]="busy()" (pressed)="removeCalendarShare(wg, cal, share)">
+                                      Remove
+                                    </admin-button>
+                                  </td>
+                                </tr>
+                              }
+                            </tbody>
+                          </table>
+                        } @else {
+                          <p class="text-slate-500 text-sm py-2">No shares yet.</p>
+                        }
+                        <form class="flex flex-wrap items-end gap-3 mt-3" (ngSubmit)="addCalendarShare(wg, cal)">
+                          <admin-field label="Share with">
+                            <select class="{{ inputClass }}" [(ngModel)]="calendarShareSubject" name="shareSubject" required>
+                              <option value="">— Choose person or group —</option>
+                              @for (c of calendarShareCandidates(wg, cal); track c) {
+                                <option [value]="c">{{ c }}</option>
+                              }
+                            </select>
+                          </admin-field>
+                          <admin-field label="Level">
+                            <select class="{{ inputClass }}" [(ngModel)]="calendarShareLevel" name="shareLevel">
+                              <option value="read">Read</option>
+                              <option value="write">Write</option>
+                            </select>
+                          </admin-field>
+                          <admin-button variant="primary" type="submit" [disabled]="busy() || !calendarShareSubject">
+                            Share
+                          </admin-button>
+                        </form>
+                      </div>
+                    }
+                  }
                 }
 
                 <!-- Groups are the sets this organization addresses: invite one

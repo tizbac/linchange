@@ -115,6 +115,70 @@ func (s *Service) DeleteWorkgroupCalendar(ctx context.Context, actor policy.Prin
 	})
 }
 
+// WorkgroupCalendarShares lists the shares on an organization's calendar.
+func (s *Service) WorkgroupCalendarShares(ctx context.Context, actor policy.Principal, workgroupID, calendarID int64) ([]store.CalendarShare, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
+	_, err := s.workgroupCalendar(ctx, workgroupID, calendarID)
+	if err != nil {
+		return nil, err
+	}
+	return store.NewCalendarShares().List(ctx, s.db, calendarID)
+}
+
+// ShareWorkgroupCalendar grants a user or group access to an organization's
+// calendar with the given level ("read" or "write").
+func (s *Service) ShareWorkgroupCalendar(ctx context.Context, actor policy.Principal, workgroupID, calendarID int64, req store.CalendarShare) (store.CalendarShare, error) {
+	if err := requireAdmin(actor); err != nil {
+		return store.CalendarShare{}, err
+	}
+	_, err := s.workgroupCalendar(ctx, workgroupID, calendarID)
+	if err != nil {
+		return store.CalendarShare{}, err
+	}
+	req.CalendarID = calendarID
+	created, err := store.NewCalendarShares().Put(ctx, s.db, req)
+	if err != nil {
+		return store.CalendarShare{}, mapStore(err)
+	}
+	if err := s.record(ctx, s.db, actor, change{
+		action:     "calendar.share",
+		targetType: "calendar_share",
+		targetID:   fmt.Sprintf("%d", created.ID),
+		target:     created.SubjectKind,
+		detail: map[string]any{
+			"calendar_id":  calendarID,
+			"workgroup_id": workgroupID,
+			"subject_kind": created.SubjectKind,
+			"level":        created.Level,
+		},
+	}); err != nil {
+		return store.CalendarShare{}, err
+	}
+	return created, nil
+}
+
+// UnshareWorkgroupCalendar removes a share from an organization's calendar.
+func (s *Service) UnshareWorkgroupCalendar(ctx context.Context, actor policy.Principal, workgroupID, calendarID, shareID int64) error {
+	if err := requireAdmin(actor); err != nil {
+		return err
+	}
+	_, err := s.workgroupCalendar(ctx, workgroupID, calendarID)
+	if err != nil {
+		return err
+	}
+	if err := store.NewCalendarShares().Delete(ctx, s.db, shareID); err != nil {
+		return mapStore(err)
+	}
+	return s.record(ctx, s.db, actor, change{
+		action:     "calendar.unshare",
+		targetType: "calendar_share",
+		targetID:   fmt.Sprintf("%d", shareID),
+		detail:     map[string]any{"calendar_id": calendarID, "workgroup_id": workgroupID},
+	})
+}
+
 // workgroupCalendar loads a calendar and refuses everything that is not one
 // belonging to the named organization.
 //
