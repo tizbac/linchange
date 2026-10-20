@@ -50,7 +50,18 @@ export class AdminDomainsComponent implements OnInit {
   protected readonly error = signal('');
   protected readonly ok = signal('');
 
-  protected draft = { name: '', description: '', quotaMiB: null, isLocal: true };
+  protected draft = { name: '', description: '', quotaMiB: null as number | null, isLocal: true };
+
+  // Editing state
+  protected editing = signal<string | null>(null);
+  protected editDraft = {
+    name: '',
+    description: '',
+    quotaMiB: null as number | null,
+    isLocal: true,
+    dailySendLimit: null as number | null,
+    dkimSelector: '',
+  };
 
   ngOnInit(): void {
     this.reload();
@@ -132,6 +143,55 @@ export class AdminDomainsComponent implements OnInit {
         return 'bg-amber-50 text-amber-800 ring-amber-200';
       default:
         return 'bg-slate-100 text-slate-600 ring-slate-200';
+    }
+  }
+
+  protected openEdit(d: Domain): void {
+    this.editDraft = {
+      name: d.name,
+      description: d.description ?? '',
+      quotaMiB: d.default_quota_bytes ? Math.round(d.default_quota_bytes / 1024 / 1024) : null,
+      isLocal: d.is_local,
+      dailySendLimit: d.daily_send_limit ?? null,
+      dkimSelector: d.dkim_selector ?? '',
+    };
+    this.editing.set(d.name);
+    this.error.set('');
+    this.ok.set('');
+  }
+
+  protected cancelEdit(): void {
+    this.editing.set(null);
+    this.error.set('');
+    this.ok.set('');
+  }
+
+  protected async saveEdit(): Promise<void> {
+    const name = this.editing();
+    if (!name) return;
+
+    this.busy.set(true);
+    this.error.set('');
+    this.ok.set('');
+    try {
+      const quota = this.editDraft.quotaMiB === null || this.editDraft.quotaMiB === undefined
+        ? undefined
+        : Math.round(this.editDraft.quotaMiB * 1024 * 1024);
+
+      await this.api.updateDomain(name, {
+        description: this.editDraft.description.trim(),
+        is_local: this.editDraft.isLocal,
+        default_quota_bytes: quota,
+        daily_send_limit: this.editDraft.dailySendLimit ?? undefined,
+        dkim_selector: this.editDraft.dkimSelector.trim() || undefined,
+      });
+      this.ok.set(`${name} was updated.`);
+      this.editing.set(null);
+      await this.reload();
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
     }
   }
 }

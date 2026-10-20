@@ -37,6 +37,10 @@ export class AuthService {
   readonly impersonationRequiresGrant = computed(
     () => this._me()?.impersonation_requires_grant ?? false,
   );
+  // organization is the name of the workgroup the signed-in address belongs to.
+  // It is empty when the domain belongs to no organization, which is the
+  // ordinary case for a deployment that never created one.
+  readonly organization = computed(() => this._me()?.organization ?? '');
 
   // loadMe refreshes the session description. It is awaited after a sign-in and
   // after a restore so a guard never decides on a stale answer, and it is also

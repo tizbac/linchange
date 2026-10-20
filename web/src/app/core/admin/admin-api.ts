@@ -11,6 +11,8 @@ import {
   SharedMailbox,
   SharedMailboxGrant,
   User,
+  Workgroup,
+  WorkgroupMember,
 } from './admin.models';
 import { ImportJob, ImportJobRequest } from '../mail/mail.models';
 
@@ -261,6 +263,47 @@ export class AdminApi {
 
   deleteContactGroup(id: number): Promise<void> {
     return this.request('delete', `/contact-groups/${id}`, null) as Promise<void>;
+  }
+
+  // --- workgroups ---
+
+  listWorkgroups(): Promise<{ workgroups: Workgroup[] }> {
+    return this.get('/workgroups');
+  }
+
+  getWorkgroup(id: number): Promise<Workgroup> {
+    return this.get(`/workgroups/${id}`);
+  }
+
+  createWorkgroup(body: {
+    name: string;
+    domain: string;
+    display_name?: string;
+    description?: string;
+    open_booking?: boolean;
+    members?: Array<{ address: string; role?: 'member' | 'admin' }>;
+  }): Promise<Workgroup> {
+    return this.post('/workgroups', body);
+  }
+
+  updateWorkgroup(id: number, body: Partial<Workgroup>): Promise<Workgroup> {
+    return this.patch(`/workgroups/${id}`, body);
+  }
+
+  deleteWorkgroup(id: number): Promise<void> {
+    return this.request('delete', `/workgroups/${id}`, null) as Promise<void>;
+  }
+
+  listWorkgroupMembers(id: number): Promise<{ members: WorkgroupMember[] }> {
+    return this.get(`/workgroups/${id}/members`);
+  }
+
+  addWorkgroupMember(id: number, body: { address: string; role?: 'member' | 'admin' }): Promise<void> {
+    return this.request('post', `/workgroups/${id}/members`, body) as Promise<void>;
+  }
+
+  removeWorkgroupMember(id: number, address: string): Promise<void> {
+    return this.request('delete', `/workgroups/${id}/members/${encodeURIComponent(address)}`, null) as Promise<void>;
   }
 
   private get<T>(path: string): Promise<T> {

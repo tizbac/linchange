@@ -91,6 +91,11 @@ export class CalendarApi {
     return this.blob(`/${calendarId}/events/${eventId}.ics`);
   }
 
+  // Generate an iTIP REQUEST (invitation) for an event
+  eventInvite(calendarId: number, eventId: number): Promise<Blob> {
+    return this.blob(`/${calendarId}/events/${eventId}/invite.ics`);
+  }
+
   private fetch<T>(path: string): Promise<T> {
     return firstValueFrom(this.http.get<T>(`${API}${path}`));
   }

@@ -1,10 +1,10 @@
-import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { AuthService } from '../core/auth/auth.service';
 import { MailApi } from '../core/mail/mail-api';
 import { ComposeTarget } from '../core/mail/compose-target';
-import { Address, ComposeRequest } from '../core/mail/mail.models';
+import { Address, ComposeRequest, SharedMailbox } from '../core/mail/mail.models';
 import { errorMessage } from '../core/http-error';
 import { MailIcon, addressLabel, formatBytes, parseAddresses } from '../core/mail/ui';
 import {
@@ -12,6 +12,10 @@ import {
   htmlHasContent,
   htmlToText,
 } from '../core/mail/rich-text';
+import { CalendarApi } from '../core/calendar/calendar-api';
+import { Calendar as CalendarModel } from '../core/calendar/calendar.models';
+import { formatDateTime } from '../core/calendar/ui';
+import { Contact, OrganizationApi } from '../core/organization/organization-api';
 
 // escapeHtml turns the characters that are markup into text, for wrapping a
 // plain-text body as HTML.
@@ -35,6 +39,38 @@ interface AttachmentItem {
   size: number;
   mime: string;
   content: string;
+}
+
+// InviteCandidate is one event offered in the invitation picker: enough to
+// fetch its invitation and to say who is already going.
+interface InviteCandidate {
+  calendarId: number;
+  eventId: number;
+  summary: string;
+  start: string;
+  attendees: string[];
+}
+
+// blobToDataUrl renders a fetched file the way a chosen file arrives, so an
+// invitation attachment travels through the same path as every other one.
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result));
+    fr.onerror = () => reject(fr.error ?? new Error('could not read the invitation'));
+    fr.readAsDataURL(blob);
+  });
+}
+
+// inviteFileName keeps a title that may contain punctuation or non-Latin
+// letters out of the filename, without losing the part that identifies it.
+function inviteFileName(summary: string): string {
+  const base = summary
+    .replace(/[\\/:*?"<>|]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60);
+  return `${base || 'invitation'}.ics`;
 }
 
 // The composer: From (the user plus their send-as aliases), To/Cc/Bcc with a
@@ -67,7 +103,7 @@ interface AttachmentItem {
               class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-brand-500 focus:outline-none"
               [(ngModel)]="from"
             >
-              @for (a of identities(); track a) {
+              @for (a of sendableAddresses(); track a) {
                 <option [value]="a">{{ a }}</option>
               }
             </select>
@@ -123,6 +159,55 @@ interface AttachmentItem {
                 <p class="mt-1 text-xs text-rose-600">
                   Every entry needs an @ — some entries above are not addresses.
                 </p>
+              }
+            </div>
+          </div>
+
+          <!-- The address book: everyone with an address in the organization's
+               domains. A list rather than a typeahead, because the point of an
+               organization is that you should not have to remember who is in
+               it. -->
+          <div class="flex flex-wrap items-start gap-3 text-sm">
+            <span class="w-20 shrink-0 pt-1.5 text-right font-medium text-slate-600">Contacts</span>
+            <div class="min-w-0 flex-1">
+              <button
+                type="button"
+                class="text-sm font-medium text-blue-600 hover:underline"
+                (click)="openContacts()"
+              >
+                {{ showContacts() ? 'Hide contacts' : 'People in your organization' }}
+              </button>
+              @if (showContacts()) {
+                <div class="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <input
+                    type="search"
+                    name="contactFilter"
+                    class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-brand-500 focus:outline-none"
+                    placeholder="Filter by name or address"
+                    [ngModel]="contactFilter()"
+                    (ngModelChange)="contactFilter.set($event)"
+                  />
+                  @if (contactsLoading()) {
+                    <p class="mt-2 text-sm text-slate-500">Loading contacts…</p>
+                  } @else if (matchingContacts().length === 0) {
+                    <p class="mt-2 text-sm text-slate-500">Nobody matches that.</p>
+                  } @else {
+                    <ul class="mt-2 max-h-56 space-y-1 overflow-auto">
+                      @for (c of matchingContacts(); track c.address) {
+                        <li>
+                          <button
+                            type="button"
+                            class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-slate-700 transition hover:bg-white"
+                            (click)="addRecipient(c.address)"
+                          >
+                            <span class="min-w-0 flex-1 truncate">{{ c.display_name || c.address }}</span>
+                            <span class="shrink-0 truncate text-xs text-slate-400">{{ c.address }}</span>
+                          </button>
+                        </li>
+                      }
+                    </ul>
+                  }
+                </div>
               }
             </div>
           </div>
@@ -210,10 +295,57 @@ interface AttachmentItem {
           }
 
           <div>
-            <label class="cursor-pointer text-sm font-medium text-blue-600 hover:underline">
-              Attach file(s)
-              <input type="file" class="hidden" multiple (change)="addFiles($event)" />
-            </label>
+            <div class="flex flex-wrap items-center gap-4">
+              <label class="cursor-pointer text-sm font-medium text-blue-600 hover:underline">
+                Attach file(s)
+                <input type="file" class="hidden" multiple (change)="addFiles($event)" />
+              </label>
+              <!-- An invitation is a file whose content the composer cannot
+                   write itself: the server builds it from the stored event so
+                   that the organizer, the sequence and the UID match what every
+                   calendar client already holds. -->
+              <button
+                type="button"
+                class="text-sm font-medium text-blue-600 hover:underline"
+                (click)="openInvitePicker()"
+              >
+                {{ showInvite() ? 'Close invites' : 'Insert invite' }}
+              </button>
+            </div>
+            @if (showInvite()) {
+              <div class="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                @if (inviteLoading()) {
+                  <p class="text-sm text-slate-500">
+                    {{ inviteEvents().length ? 'Preparing the invitation…' : 'Loading your upcoming events…' }}
+                  </p>
+                } @else if (inviteEvents().length === 0) {
+                  <p class="text-sm text-slate-500">
+                    Nothing is coming up in the next two months. Create the event in your calendar
+                    first, then insert the invitation here.
+                  </p>
+                } @else {
+                  <p class="mb-2 text-xs font-medium text-slate-500">
+                    Attach an event as an invitation. Recipients whose mail client understands it
+                    will be able to accept.
+                  </p>
+                  <ul class="max-h-64 space-y-1 overflow-auto">
+                    @for (ev of inviteEvents(); track ev.eventId) {
+                      <li>
+                        <button
+                          type="button"
+                          class="flex w-full items-center gap-3 rounded px-2 py-1.5 text-left text-sm text-slate-700 transition hover:bg-white"
+                          (click)="insertInvite(ev)"
+                        >
+                          <span class="w-40 shrink-0 text-xs text-slate-500">{{ formatWhen(ev.start) }}</span>
+                          <span class="min-w-0 flex-1 truncate">{{ ev.summary }}</span>
+                          <span class="shrink-0 text-xs text-slate-400">{{ ev.attendees.length }} invited</span>
+                        </button>
+                      </li>
+                    }
+                  </ul>
+                }
+              </div>
+            }
             @if (attachments().length > 0) {
               <div class="mt-2 flex flex-wrap gap-2">
                 @for (a of attachments(); track a.name) {
@@ -279,6 +411,8 @@ export class MailComposeComponent implements OnInit {
   private readonly router = inject(Router);
   private readonly auth = inject(AuthService);
   private readonly composeTarget = inject(ComposeTarget);
+  private readonly calendarApi = inject(CalendarApi);
+  private readonly organizationApi = inject(OrganizationApi);
 
   from = '';
   toRaw = '';
@@ -297,6 +431,10 @@ export class MailComposeComponent implements OnInit {
   readonly showPlainText = signal(false);
 
   readonly aliases = signal<string[]>([]);
+  readonly sharedMailboxes = signal<SharedMailbox[]>([]);
+  // mailbox is the shared mailbox this message is being written from. It is the
+  // mailbox the sent copy is filed in, which is not the signed-in user's own.
+  mailbox = '';
   readonly attachments = signal<AttachmentItem[]>([]);
   readonly busy = signal(false);
   readonly saving = signal(false);
@@ -332,9 +470,14 @@ export class MailComposeComponent implements OnInit {
       // text it answers already in the body rather than an empty editor.
       if (pre.quoted_html) this.bodyHtml.set(pre.quoted_html);
       if (pre.quoted_text) this.body = pre.quoted_text;
+      if (pre.mailbox) {
+        this.mailbox = pre.mailbox;
+        this.from = pre.mailbox;
+      }
       this.composeTarget.set(null);
     }
     void this.loadAliases();
+    void this.loadSharedMailboxes();
     void this.loadSignature();
   }
 
@@ -351,8 +494,32 @@ export class MailComposeComponent implements OnInit {
 
   // --- fields -----------------------------------------------------------------
 
-  protected identities(): string[] {
-    return this.aliases();
+  private async loadSharedMailboxes(): Promise<void> {
+    try {
+      const res = await this.api.shared();
+      this.sharedMailboxes.set(res.shared ?? []);
+    } catch {
+      // Shared mailboxes are optional; the own address and aliases still work.
+    }
+  }
+
+  // Addresses this user may write from: their own address, the aliases pointed
+  // at it, and every shared mailbox they hold a grant on that allows writing.
+  protected sendableAddresses(): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    const add = (address: string): void => {
+      const key = address.toLowerCase();
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      out.push(address);
+    };
+    add(this.from);
+    for (const a of this.aliases()) add(a);
+    for (const s of this.sharedMailboxes()) {
+      if (s.writable) add(s.address);
+    }
+    return out;
   }
 
   // --- format -------------------------------------------------------------------
@@ -413,6 +580,62 @@ export class MailComposeComponent implements OnInit {
       .some((p) => !p.includes('@'));
   }
 
+  // --- organization contacts ---------------------------------------------------
+
+  protected readonly showContacts = signal(false);
+  protected readonly contactsLoading = signal(false);
+  protected readonly people = signal<Contact[]>([]);
+  protected readonly contactFilter = signal('');
+
+  // matchingContacts is the filtered list as it is typed, capped so that an
+  // organization with hundreds of people does not render hundreds of rows into
+  // a composer that is being read for what it says, not for who it can reach.
+  protected readonly matchingContacts = computed(() => {
+    const q = this.contactFilter().trim().toLowerCase();
+    const all = this.people();
+    const hits = q
+      ? all.filter(
+          (c) =>
+            c.address.toLowerCase().includes(q) ||
+            (c.display_name ?? '').toLowerCase().includes(q),
+        )
+      : all;
+    return hits.slice(0, 50);
+  });
+
+  // openContacts fetches the list the first time it is opened rather than with
+  // the page: most messages do not need an address book, and those that do are
+  // a click away from having one.
+  protected async openContacts(): Promise<void> {
+    if (this.showContacts()) {
+      this.showContacts.set(false);
+      return;
+    }
+    this.showContacts.set(true);
+    if (this.people().length > 0 || this.contactsLoading()) return;
+    this.contactsLoading.set(true);
+    try {
+      const res = await this.organizationApi.people();
+      this.people.set(res.people ?? []);
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.contactsLoading.set(false);
+    }
+  }
+
+  // addRecipient appends an address to To without disturbing what is already
+  // there: a picker that replaced the field would throw away a recipient the
+  // user picked for a reason.
+  protected addRecipient(address: string): void {
+    const parts = this.toRaw
+      .split(/[,;]/)
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (parts.some((p) => p.toLowerCase() === address.toLowerCase())) return;
+    this.toRaw = [...parts, address].join(', ');
+  }
+
   // --- attachments -------------------------------------------------------------
 
   protected addFiles(event: Event): void {
@@ -450,6 +673,84 @@ export class MailComposeComponent implements OnInit {
 
   protected removeAttachment(a: AttachmentItem): void {
     this.attachments.update((cur) => cur.filter((x) => x !== a));
+  }
+
+  // --- invitations -------------------------------------------------------------
+
+  protected readonly showInvite = signal(false);
+  protected readonly inviteLoading = signal(false);
+  protected readonly inviteEvents = signal<InviteCandidate[]>([]);
+
+  protected readonly formatWhen = formatDateTime;
+
+  // openInvitePicker lists what is coming up in the next two months across every
+  // calendar the user has, because an invitation belongs to one event and the
+  // composer has no idea which calendar that event was written in.
+  protected async openInvitePicker(): Promise<void> {
+    if (this.showInvite()) {
+      this.showInvite.set(false);
+      return;
+    }
+    this.showInvite.set(true);
+    this.inviteLoading.set(true);
+    this.error.set('');
+    try {
+      const { calendars } = await this.calendarApi.list();
+      const start = new Date().toISOString();
+      const end = new Date(Date.now() + 60 * 24 * 3600 * 1000).toISOString();
+      const perCalendar = await Promise.all(
+        (calendars ?? []).map(async (cal: CalendarModel) => {
+          const res = await this.calendarApi.listEvents(cal.id, start, end);
+          return (res.events ?? []).map((ev) => ({
+            calendarId: ev.calendarId,
+            eventId: ev.eventId,
+            summary: ev.summary,
+            start: ev.start,
+            attendees: (ev.attendees ?? []).map((a) => a.address),
+          }));
+        }),
+      );
+      this.inviteEvents.set(
+        perCalendar.flat().sort((a, b) => a.start.localeCompare(b.start)).slice(0, 100),
+      );
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.inviteLoading.set(false);
+    }
+  }
+
+  // insertInvite attaches the event's iTIP REQUEST.
+  //
+  // The bytes come from the server rather than from the client because the
+  // invitation has to agree with the entry the organiser's calendar already
+  // holds — same UID, same sequence, same organiser — and only the server is
+  // looking at that entry.
+  protected async insertInvite(ev: InviteCandidate): Promise<void> {
+    this.inviteLoading.set(true);
+    this.error.set('');
+    try {
+      const blob = await this.calendarApi.eventInvite(ev.calendarId, ev.eventId);
+      const content = await blobToDataUrl(blob);
+      const name = inviteFileName(ev.summary);
+      this.attachments.update((cur) => [
+        ...cur.filter((a) => a.name !== name),
+        { name, size: blob.size, mime: 'text/calendar; charset=utf-8; method=REQUEST', content },
+      ]);
+      // An invitation with nobody addressed to it goes nowhere, so the
+      // attendees are filled in while the fields are still untouched. Once the
+      // user has typed anything the list is theirs to edit, not ours.
+      if (!this.toRaw && !this.ccRaw && !this.bccRaw) {
+        this.toRaw = ev.attendees.join(', ');
+      }
+      if (!this.subject) this.subject = `Invitation: ${ev.summary}`;
+      this.showInvite.set(false);
+      this.inviteEvents.set([]);
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.inviteLoading.set(false);
+    }
   }
 
   // --- submitting ----------------------------------------------------------------
@@ -497,13 +798,23 @@ export class MailComposeComponent implements OnInit {
     };
   }
 
+  // mailboxForSend is the mailbox the sent copy is filed in. Sending as an alias
+  // keeps the copy in the sender's own mailbox; sending as a shared mailbox puts
+  // it in that mailbox, which is where the rest of the team will look for it.
+  private mailboxForSend(req: ComposeRequest): string | undefined {
+    const from = (req.from ?? '').toLowerCase();
+    const me = (this.auth.user() ?? '').toLowerCase();
+    if (!from || from === me) return undefined;
+    return this.sharedMailboxes().some((s) => s.address.toLowerCase() === from) ? from : undefined;
+  }
+
   protected async send(): Promise<void> {
     const req = this.buildRequest(true);
     if (!req) return;
     this.busy.set(true);
     this.error.set('');
     try {
-      await this.api.send(req);
+      await this.api.send(req, this.mailboxForSend(req));
       await this.router.navigate(['/mail']);
     } catch (err) {
       this.error.set(errorMessage(err));
@@ -530,7 +841,7 @@ export class MailComposeComponent implements OnInit {
     this.saving.set(true);
     this.error.set('');
     try {
-      await this.api.saveDraft(req);
+      await this.api.saveDraft(req, this.mailboxForSend(req));
       await this.router.navigate(['/mail']);
     } catch (err) {
       this.error.set(errorMessage(err));

@@ -35,4 +35,7 @@ export interface Me {
   // administration page reads it rather than assuming: with it on the grant
   // list is the allowlist, with it off the same list is only a record.
   impersonation_requires_grant?: boolean;
+  // The organization the signed-in address belongs to, by domain. Empty when
+  // the domain belongs to no organization.
+  organization?: string;
 }

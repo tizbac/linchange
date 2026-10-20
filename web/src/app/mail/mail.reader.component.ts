@@ -115,7 +115,7 @@ export type MailSelection =
               <button class="mail-btn" (click)="trash()" [disabled]="busy()">
                 <app-mail-icon name="trash" /> Trash
               </button>
-              <button class="mail-btn mail-btn-danger" (click)="deleteForever()" [disabled]="busy()">
+              <button class="mail-btn mail-btn-danger" (click)="deleteForever($event)" [disabled]="busy()">
                 <app-mail-icon name="x" /> Delete
               </button>
               <span class="mx-1 h-5 w-px bg-slate-200"></span>
@@ -257,6 +257,9 @@ export class MailReaderComponent {
 
   readonly selection = input.required<MailSelection>();
   readonly folders = input.required<Folder[]>();
+  // mailboxOwner is the shared mailbox the opened message lives in. It is
+  // undefined for the user's own mail, and the server ignores it then.
+  readonly mailboxOwner = input<string | undefined>(undefined);
   readonly changed = output<void>();
   readonly closed = output<void>();
 
@@ -307,7 +310,7 @@ export class MailReaderComponent {
     this.loading.set(true);
     try {
       if (sel.kind === 'message') {
-        const d = await this.api.get(sel.id);
+        const d = await this.api.get(sel.id, this.mailboxOwner());
         if (seq !== this.loadSeq) return;
         this.detail.set(d);
         this.thread.set([]);
@@ -316,12 +319,12 @@ export class MailReaderComponent {
         // Opening is what marks it read; the server does not, and the list
         // learns about it through changed.
         if (!hasFlag(d.flags, FLAG_SEEN)) {
-          await this.api.markRead(sel.id, true).catch(() => undefined);
+          await this.api.markRead(sel.id, true, this.mailboxOwner()).catch(() => undefined);
           this.changed.emit();
         }
         void this.renderBody(d);
       } else if (sel.kind === 'thread') {
-        const res = await this.api.thread(sel.key);
+        const res = await this.api.thread(sel.key, this.mailboxOwner());
         if (seq !== this.loadSeq) return;
         this.thread.set(res.messages);
         this.detail.set(null);
@@ -350,7 +353,7 @@ export class MailReaderComponent {
     await Promise.all(
       images.map(async (img) => {
         try {
-          const blob = await this.api.inlineImage(d.id, img.content_id);
+          const blob = await this.api.inlineImage(d.id, img.content_id, this.mailboxOwner());
           swapped.push([img.content_id, await this.toDataUrl(blob)]);
         } catch {
           // A part that will not load degrades to a broken reference inside
@@ -427,6 +430,7 @@ export class MailReaderComponent {
       reply_label: `in reply to ${(d.from ?? []).map(addressLabel).join(', ')}`,
       quoted_html: quote.quoted_html,
       quoted_text: quote.quoted_text,
+      mailbox: this.mailboxOwner(),
     });
     void this.router.navigate(['/mail/compose']);
   }
@@ -479,7 +483,7 @@ export class MailReaderComponent {
     this.busy.set(true);
     this.error.set('');
     try {
-      await this.api.move([d.id], id);
+      await this.api.move([d.id], id, this.mailboxOwner());
       this.moveTarget.set('');
       this.changed.emit();
     } catch (err) {
@@ -495,7 +499,7 @@ export class MailReaderComponent {
     this.busy.set(true);
     this.error.set('');
     try {
-      await this.api.trash([d.id]);
+      await this.api.trash([d.id], this.mailboxOwner());
       this.changed.emit();
       this.closed.emit();
     } catch (err) {
@@ -505,14 +509,19 @@ export class MailReaderComponent {
     }
   }
 
-  protected async deleteForever(): Promise<void> {
+  protected async deleteForever(event: MouseEvent): Promise<void> {
     const d = this.detail();
     if (!d) return;
+    // Require Shift+Click to prevent accidental deletions.
+    if (!event.shiftKey) {
+      alert('Hold Shift and click again to delete permanently.');
+      return;
+    }
     if (!confirm('Delete this message permanently? This cannot be undone.')) return;
     this.busy.set(true);
     this.error.set('');
     try {
-      await this.api.delete([d.id]);
+      await this.api.delete([d.id], this.mailboxOwner());
       this.changed.emit();
       this.closed.emit();
     } catch (err) {
@@ -529,7 +538,7 @@ export class MailReaderComponent {
     this.busy.set(true);
     this.error.set('');
     try {
-      await this.api.markRead(d.id, read);
+      await this.api.markRead(d.id, read, this.mailboxOwner());
       this.changed.emit();
       await this.reload();
     } catch (err) {
@@ -546,7 +555,7 @@ export class MailReaderComponent {
     this.busy.set(true);
     this.error.set('');
     try {
-      await this.api.setFlag(d.id, FLAG_FLAGGED, set);
+      await this.api.setFlag(d.id, FLAG_FLAGGED, set, this.mailboxOwner());
       await this.reload();
     } catch (err) {
       this.error.set(errorMessage(err));
@@ -558,7 +567,7 @@ export class MailReaderComponent {
   private async reload(): Promise<void> {
     const d = this.detail();
     if (!d) return;
-    const fresh = await this.api.get(d.id);
+    const fresh = await this.api.get(d.id, this.mailboxOwner());
     this.detail.set(fresh);
   }
 
@@ -568,7 +577,7 @@ export class MailReaderComponent {
     this.busy.set(true);
     this.error.set('');
     try {
-      await this.download(await this.api.raw(d.id), `${d.subject || String(d.id)}.eml`);
+      await this.download(await this.api.raw(d.id, this.mailboxOwner()), `${d.subject || String(d.id)}.eml`);
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {
@@ -582,7 +591,7 @@ export class MailReaderComponent {
     this.busy.set(true);
     this.error.set('');
     try {
-      await this.download(await this.api.attachment(d.id, a.index), a.filename);
+      await this.download(await this.api.attachment(d.id, a.index, this.mailboxOwner()), a.filename);
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {

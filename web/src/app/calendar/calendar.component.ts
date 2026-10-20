@@ -234,7 +234,9 @@ import { CalIcon } from '../core/calendar/ui';
                   class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500"
                 >
                   @for (cal of calendars(); track cal.id) {
-                    <option [value]="cal.id">{{ cal.display_name || cal.name }}</option>
+                    <option [value]="cal.id">
+                      {{ cal.display_name || cal.name }}{{ cal.workgroup_id ? ' · organization' : '' }}
+                    </option>
                   }
                 </select>
               </div>

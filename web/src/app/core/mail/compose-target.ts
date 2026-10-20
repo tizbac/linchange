@@ -17,6 +17,10 @@ export interface ComposePrefill {
   // attribution line ("On <date>, <sender> wrote:") ahead of the citation.
   quoted_html?: string;
   quoted_text?: string;
+  // mailbox is the shared mailbox the message being answered lives in. The
+  // composer uses it as the From address and as the mailbox the sent copy is
+  // filed in, so a reply to a team address comes back from the team address.
+  mailbox?: string;
 }
 
 @Injectable({ providedIn: 'root' })

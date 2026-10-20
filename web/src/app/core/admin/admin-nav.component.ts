@@ -8,6 +8,7 @@ interface Tab {
 
 const TABS: Tab[] = [
   { label: 'Domains', path: '/admin/domains' },
+  { label: 'Organizations', path: '/admin/workgroups' },
   { label: 'Users', path: '/admin/users' },
   { label: 'Aliases', path: '/admin/aliases' },
   { label: 'Shared mailboxes', path: '/admin/shared-mailboxes' },

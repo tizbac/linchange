@@ -1,0 +1,205 @@
+
+    <admin-page>
+      <admin-nav />
+      <div class="space-y-6">
+        <admin-page-header
+          title="Organizations"
+          hint="A workgroup is the organization an address belongs to. It owns one or more
+            domains, and everyone with an address in one of them is part of it — that is
+            where the name in the top bar, the organization-wide contacts and the shared
+            calendars come from."
+        >
+          <admin-button variant="primary" (pressed)="creating.set(!creating())">
+            {{ creating() ? 'Cancel' : 'Create an organization' }}
+          </admin-button>
+          <admin-button (pressed)="reload()">Refresh</admin-button>
+        </admin-page-header>
+
+        <admin-notice [message]="error()" tone="error" />
+        <admin-notice [message]="ok()" tone="ok" />
+
+        @if (creating()) {
+          <admin-panel title="New organization">
+            <form class="grid gap-4 sm:grid-cols-2" (ngSubmit)="create()">
+              <admin-field label="Name" hint="Lowercase, no spaces: it is the address the group is reached by.">
+                <input
+                  class="{{ inputClass }}"
+                  name="name"
+                  [(ngModel)]="draft.name"
+                  required
+                  placeholder="engineering"
+                />
+              </admin-field>
+              <admin-field label="Home domain" hint="The domain the group's own address lives in.">
+                <select class="{{ inputClass }}" name="domain" [(ngModel)]="draft.domain" required>
+                  @for (d of domains(); track d.name) {
+                    <option [value]="d.name">{{ d.name }}</option>
+                  }
+                </select>
+              </admin-field>
+              <admin-field label="Display name" hint="Shown in the top bar and in lists. Defaults to the name.">
+                <input class="{{ inputClass }}" name="displayName" [(ngModel)]="draft.displayName" />
+              </admin-field>
+              <admin-field label="Description">
+                <input class="{{ inputClass }}" name="description" [(ngModel)]="draft.description" />
+              </admin-field>
+              <label class="flex items-center gap-2 self-end pb-1.5 text-sm text-slate-700">
+                <input type="checkbox" name="openBooking" [(ngModel)]="draft.openBooking" />
+                Anyone may book its calendars
+              </label>
+              <div class="sm:col-span-2 flex items-center gap-3">
+                <admin-button variant="primary" type="submit" [disabled]="busy()">
+                  Create it
+                </admin-button>
+                <admin-busy [busy]="busy()" label="Creating…" />
+              </div>
+            </form>
+          </admin-panel>
+        }
+
+        @if (loading()) {
+          <admin-panel><admin-busy [busy]="true" label="Loading organizations…" /></admin-panel>
+        } @else if (workgroups().length === 0) {
+          <admin-panel [bodyClass]="'p-0'">
+            <admin-empty text="No organizations yet. Create one to give the domain an organization name and a shared calendar." />
+          </admin-panel>
+        } @else {
+          @for (wg of workgroups(); track wg.id) {
+            <admin-panel [title]="wg.display_name || wg.name" [hint]="wg.description || wg.domain">
+              <div class="space-y-4">
+                <div class="flex flex-wrap items-center gap-3">
+                  <span class="text-xs text-slate-500">{{ wg.name }}@{{ wg.domain }}</span>
+                  @if (!wg.open_booking) {
+                    <span
+                      class="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 ring-1 ring-amber-200"
+                    >
+                      booking restricted to members
+                    </span>
+                  }
+                  <span class="text-xs text-slate-500">
+                    {{ wg.domain }}
+                    @if (ownedDomains(wg).length > 0) {
+                      + {{ ownedDomains(wg).length }} more domain{{ ownedDomains(wg).length === 1 ? '' : 's' }}
+                    }
+                  </span>
+                  <span class="flex-1"></span>
+                  <admin-button (pressed)="openEdit(wg)">Edit</admin-button>
+                  <admin-button (pressed)="openMembers(wg)">Add a member</admin-button>
+                  <admin-button variant="danger" [disabled]="busy()" (pressed)="remove(wg)">
+                    Delete
+                  </admin-button>
+                </div>
+
+                @if (editing() === wg.id) {
+                  <form class="grid gap-4 sm:grid-cols-2" (ngSubmit)="save(wg)">
+                    <admin-field label="Name">
+                      <input class="{{ inputClass }}" name="name" [(ngModel)]="wg.name" required />
+                    </admin-field>
+                    <admin-field label="Home domain">
+                      <select class="{{ inputClass }}" name="domain" [(ngModel)]="wg.domain" required>
+                        @for (d of domains(); track d.name) {
+                          <option [value]="d.name">{{ d.name }}</option>
+                        }
+                      </select>
+                    </admin-field>
+                    <admin-field label="Display name">
+                      <input class="{{ inputClass }}" name="displayName" [(ngModel)]="wg.display_name" />
+                    </admin-field>
+                    <admin-field label="Description">
+                      <input class="{{ inputClass }}" name="description" [(ngModel)]="wg.description" />
+                    </admin-field>
+                    <label class="flex items-center gap-2 self-end pb-1.5 text-sm text-slate-700">
+                      <input type="checkbox" name="openBooking" [(ngModel)]="wg.open_booking" />
+                      Anyone may book its calendars
+                    </label>
+                    <div class="sm:col-span-2 flex items-center gap-3">
+                      <admin-button variant="primary" type="submit" [disabled]="busy()">Save</admin-button>
+                      <admin-button (pressed)="editing.set(null)">Cancel</admin-button>
+                      <admin-busy [busy]="busy()" label="Saving…" />
+                    </div>
+                  </form>
+                }
+
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-xs font-medium text-slate-600">Domains</span>
+                  @for (d of ownedDomains(wg); track d.name) {
+                    <span
+                      class="inline-flex items-center gap-1 rounded bg-brand-100 text-brand-700 px-2 py-0.5 text-xs"
+                    >
+                      {{ d.name }}
+                      <button type="button" class="hover:text-brand-900" (click)="detachDomain(wg, d.name)">×</button>
+                    </span>
+                  }
+                  @if (unownedDomains(wg).length > 0) {
+                    <select
+                      class="rounded-lg border border-slate-300 px-2 py-1 text-xs text-slate-700"
+                      (change)="onAttachDomain(wg, $event)"
+                    >
+                      <option value="">Add a domain…</option>
+                      @for (d of unownedDomains(wg); track d.name) {
+                        <option [value]="d.name">{{ d.name }}</option>
+                      }
+                    </select>
+                  }
+                </div>
+
+                @if (wg.members && wg.members.length > 0) {
+                  <table class="w-full">
+                    <thead class="border-b border-slate-200 bg-slate-50">
+                      <tr>
+                        <th class="{{ head }}">Member</th>
+                        <th class="{{ head }}">Role</th>
+                        <th class="{{ head }} text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100">
+                      @for (m of wg.members; track m.address) {
+                        <tr>
+                          <td class="{{ cell }} font-medium text-slate-900">{{ m.address }}</td>
+                          <td class="{{ cell }}">{{ m.role }}</td>
+                          <td class="{{ cell }} text-right">
+                            <admin-button variant="danger" [disabled]="busy()" (pressed)="removeMember(wg, m)">
+                              Remove
+                            </admin-button>
+                          </td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                } @else {
+                  <admin-empty text="No named members. Everyone in the organization's domains is still part of it." />
+                }
+
+                @if (memberFor() === wg.id) {
+                  <form class="flex flex-wrap items-end gap-3" (ngSubmit)="addMembers(wg)">
+                    <admin-field
+                      label="Member addresses"
+                      hint="Named members administer the group. Booking a calendar is open to anyone in the organization unless it is restricted."
+                      class="min-w-64 flex-1"
+                    >
+                      <admin-multiselect
+                        [model]="memberAddresses"
+                        [options]="users()"
+                        placeholder="Select users…"
+                        (add)="memberAddresses = [...memberAddresses, $event]"
+                        (removeItem)="memberAddresses = memberAddresses.filter(a => a !== $event)"
+                      />
+                    </admin-field>
+                    <admin-field label="Role">
+                      <select class="{{ inputClass }}" name="role" [(ngModel)]="memberRole">
+                        <option value="member">member</option>
+                        <option value="admin">admin</option>
+                      </select>
+                    </admin-field>
+                    <admin-button variant="primary" type="submit" [disabled]="busy() || memberAddresses.length === 0">
+                      Add
+                    </admin-button>
+                    <admin-button (pressed)="memberFor.set(null)">Cancel</admin-button>
+                  </form>
+                }
+              </div>
+            </admin-panel>
+          }
+        }
+      </div>
+    </admin-page>

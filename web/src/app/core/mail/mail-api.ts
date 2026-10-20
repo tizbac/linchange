@@ -22,6 +22,12 @@ const API = '/api/v1/mail';
 // MailApi is the only place in the app that names a mail endpoint. Components
 // ask for a resource and get the server's own shape back, so a renamed field
 // fails the build in the model file rather than rendering an empty pane.
+//
+// Almost every method takes an optional owner. Without it the request acts on
+// the signed-in user's own mailbox; with it it acts on a shared mailbox, and
+// the server decides from the grant whether that is allowed. The owner travels
+// as a query parameter on every verb, including the ones that also carry a
+// body, so there is one rule for the client rather than one per method.
 @Injectable({ providedIn: 'root' })
 export class MailApi {
   private readonly http = inject(HttpClient);
@@ -29,31 +35,30 @@ export class MailApi {
   // --- folders ---
 
   listFolders(owner?: string): Promise<{ folders: Folder[] }> {
-    const query = owner ? `?owner=${encodeURIComponent(owner)}` : '';
-    return this.fetch(`/folders${query}`);
+    return this.fetch(`/folders${query({ owner })}`);
   }
 
-  createFolder(name: string): Promise<Folder> {
-    return this.post('/folders', { name });
+  createFolder(name: string, owner?: string): Promise<Folder> {
+    return this.post(`/folders${query({ owner })}`, { name });
   }
 
-  renameFolder(id: number, name: string): Promise<Folder> {
-    return this.patch(`/folders/${id}`, { name });
+  renameFolder(id: number, name: string, owner?: string): Promise<Folder> {
+    return this.patch(`/folders/${id}${query({ owner })}`, { name });
   }
 
-  deleteFolder(id: number): Promise<void> {
-    return this.del(`/folders/${id}`);
+  deleteFolder(id: number, owner?: string): Promise<void> {
+    return this.del(`/folders/${id}${query({ owner })}`);
   }
 
-  emptyFolder(id: number): Promise<{ moved: number }> {
-    return this.post(`/folders/${id}/empty`, {});
+  emptyFolder(id: number, owner?: string): Promise<{ moved: number }> {
+    return this.post(`/folders/${id}/empty${query({ owner })}`, {});
   }
 
   // --- messages ---
 
   listMessages(
     folderId: number,
-    opts: { limit?: number; unread?: boolean; flagged?: boolean; cursor?: Cursor } = {},
+    opts: { limit?: number; unread?: boolean; flagged?: boolean; cursor?: Cursor; owner?: string } = {},
   ): Promise<Page> {
     const q = new URLSearchParams();
     if (opts.limit) q.set('limit', String(opts.limit));
@@ -63,73 +68,77 @@ export class MailApi {
       q.set('before', opts.cursor.date);
       q.set('before_id', String(opts.cursor.id));
     }
+    if (opts.owner) q.set('owner', opts.owner);
     const s = q.toString();
     return this.fetch(`/folders/${folderId}/messages${s ? `?${s}` : ''}`);
   }
 
-  listThreads(folderId: number, limit = 50): Promise<{ threads: Thread[] }> {
-    return this.fetch(`/folders/${folderId}/threads?limit=${limit}`);
+  listThreads(folderId: number, limit = 50, owner?: string): Promise<{ threads: Thread[] }> {
+    return this.fetch(`/folders/${folderId}/threads${query({ owner, limit })}`);
   }
 
-  search(q: string, folderId = 0, limit = 50): Promise<{ messages: MessageSummary[] }> {
+  search(q: string, folderId = 0, limit = 50, owner?: string): Promise<{ messages: MessageSummary[] }> {
     const parts = [`q=${encodeURIComponent(q)}`];
     if (folderId) parts.push(`folder_id=${folderId}`);
     parts.push(`limit=${limit}`);
+    if (owner) parts.push(`owner=${encodeURIComponent(owner)}`);
     return this.fetch(`/messages/search?${parts.join('&')}`);
   }
 
-  get(id: number): Promise<MessageDetail> {
-    return this.fetch(`/messages/${id}`);
+  get(id: number, owner?: string): Promise<MessageDetail> {
+    return this.fetch(`/messages/${id}${query({ owner })}`);
   }
 
-  raw(id: number): Promise<Blob> {
-    return this.blob(`/messages/${id}/raw`);
+  raw(id: number, owner?: string): Promise<Blob> {
+    return this.blob(`/messages/${id}/raw${query({ owner })}`);
   }
 
-  attachment(id: number, index: number): Promise<Blob> {
-    return this.blob(`/messages/${id}/attachments/${index}`);
+  attachment(id: number, index: number, owner?: string): Promise<Blob> {
+    return this.blob(`/messages/${id}/attachments/${index}${query({ owner })}`);
   }
 
-  inlineImage(id: number, contentID: string): Promise<Blob> {
-    return this.blob(`/messages/${id}/inline/${encodeURIComponent(contentID)}`);
+  inlineImage(id: number, contentID: string, owner?: string): Promise<Blob> {
+    return this.blob(`/messages/${id}/inline/${encodeURIComponent(contentID)}${query({ owner })}`);
   }
 
-  markRead(id: number, read: boolean): Promise<void> {
-    return this.post(`/messages/${id}/read`, { read });
+  markRead(id: number, read: boolean, owner?: string): Promise<void> {
+    return this.post(`/messages/${id}/read${query({ owner })}`, { read });
   }
 
-  setFlag(id: number, flag: string, set: boolean): Promise<void> {
-    return this.post(`/messages/${id}/flags`, { flag, set });
+  setFlag(id: number, flag: string, set: boolean, owner?: string): Promise<void> {
+    return this.post(`/messages/${id}/flags${query({ owner })}`, { flag, set });
   }
 
-  move(ids: number[], folderId: number): Promise<{ moved: number }> {
-    return this.post('/messages/move', { ids, folder_id: folderId });
+  move(ids: number[], folderId: number, owner?: string): Promise<{ moved: number }> {
+    return this.post(`/messages/move${query({ owner })}`, { ids, folder_id: folderId });
   }
 
-  trash(ids: number[]): Promise<{ moved: number }> {
-    return this.post('/messages/trash', { ids });
+  trash(ids: number[], owner?: string): Promise<{ moved: number }> {
+    return this.post(`/messages/trash${query({ owner })}`, { ids });
   }
 
-  archive(ids: number[]): Promise<{ moved: number }> {
-    return this.post('/messages/archive', { ids });
+  archive(ids: number[], owner?: string): Promise<{ moved: number }> {
+    return this.post(`/messages/archive${query({ owner })}`, { ids });
   }
 
-  delete(ids: number[]): Promise<{ deleted: number; used_bytes: number; message_count: number }> {
-    return this.post('/messages/delete', { ids });
+  delete(ids: number[], owner?: string): Promise<{ deleted: number; used_bytes: number; message_count: number }> {
+    return this.post(`/messages/delete${query({ owner })}`, { ids });
   }
 
-  thread(key: string): Promise<{ messages: MessageDetail[] }> {
-    return this.fetch(`/threads/${encodeURIComponent(key)}`);
+  thread(key: string, owner?: string): Promise<{ messages: MessageDetail[] }> {
+    return this.fetch(`/threads/${encodeURIComponent(key)}${query({ owner })}`);
   }
 
   // --- composing ---
 
-  send(req: ComposeRequest): Promise<SendResult> {
-    return this.post('/compose/send', req);
+  // The owner is the mailbox the sent copy is filed in. For a message written
+  // from a shared mailbox that is the shared mailbox, not the sender's own.
+  send(req: ComposeRequest, owner?: string): Promise<SendResult> {
+    return this.post(`/compose/send${query({ owner })}`, req);
   }
 
-  saveDraft(req: ComposeRequest): Promise<{ message_id: number }> {
-    return this.post('/compose/draft', req);
+  saveDraft(req: ComposeRequest, owner?: string): Promise<{ message_id: number }> {
+    return this.post(`/compose/draft${query({ owner })}`, req);
   }
 
   // --- signature ---
@@ -231,4 +240,15 @@ export class MailApi {
   private blob(path: string): Promise<Blob> {
     return firstValueFrom(this.http.get(`${API}${path}`, { responseType: 'blob' as const }));
   }
+}
+
+// query builds the query string for the parameters that are actually present,
+// so a call that names no owner sends no query at all.
+function query(values: Record<string, string | number | undefined>): string {
+  const q = new URLSearchParams();
+  for (const [key, value] of Object.entries(values)) {
+    if (value !== undefined && value !== '') q.set(key, String(value));
+  }
+  const s = q.toString();
+  return s ? `?${s}` : '';
 }

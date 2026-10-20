@@ -63,6 +63,10 @@ export const routes: Routes = [
     children: [
       { path: '', pathMatch: 'full', redirectTo: 'domains' },
       {
+        path: 'workgroups',
+        loadComponent: () => import('./admin/admin-workgroups.component').then((m) => m.AdminWorkgroupsComponent),
+      },
+      {
         path: 'domains',
         loadComponent: () => import('./admin/admin-domains.component').then((m) => m.AdminDomainsComponent),
       },

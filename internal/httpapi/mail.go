@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +37,7 @@ const maxMailBody = 32 << 20
 func (s *Server) mountMail(r chi.Router) {
 	r.Route("/mail", func(r chi.Router) {
 		r.Use(s.requireAuth)
+		r.Use(s.sharedMailbox)
 		r.Get("/folders", s.handleListFolders)
 		r.Post("/folders", s.handleCreateFolder)
 		r.Patch("/folders/{id}", s.handleRenameFolder)
@@ -256,9 +258,56 @@ func (s *Server) handleUploadComposeImage(w http.ResponseWriter, r *http.Request
 //
 // It is the authenticated address, always. The only exception is a shared
 // mailbox, which is named explicitly and checked against the caller's grants by
-// the service.
+// the sharedMailbox middleware before the handler runs.
 func mailOwner(r *http.Request) string {
+	if owner, ok := r.Context().Value(mailOwnerKey).(string); ok && owner != "" {
+		return owner
+	}
 	return Principal(r.Context()).Address
+}
+
+// sharedMailbox resolves the ?owner= query on the mail routes.
+//
+// Without it every mail request acts on the caller's own mailbox. With it the
+// request acts on a shared mailbox, and the caller's grant decides whether that
+// is allowed at all: reading needs read access, anything that changes mail needs
+// editor, since a member who could move or delete messages in somebody else's
+// mailbox is effectively administering it.
+//
+// Doing this once, in middleware, is what keeps a new route from forgetting the
+// check. Handlers below pass mailOwner(r) straight to services that are scoped
+// by owner, and they are correct only because this ran first.
+func (s *Server) sharedMailbox(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		caller := Principal(r.Context()).Address
+		requested := r.URL.Query().Get("owner")
+		if requested == "" || strings.EqualFold(requested, caller) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Reading a shared mailbox needs a read grant. Changing mail in it needs
+		// editor, since a member who can move or delete messages in somebody
+		// else's mailbox is effectively administering it. Sending from it is the
+		// exception: that is what a team address is for, so contribute is enough.
+		want := policy.GrantRead
+		switch {
+		case r.Method == http.MethodGet:
+		case strings.HasPrefix(r.URL.Path, "/api/v1/mail/compose/") ||
+			strings.HasPrefix(r.URL.Path, "/api/v1/mail/images/"):
+			want = policy.GrantContribute
+		default:
+			want = policy.GrantEditor
+		}
+		access, err := s.grants.Access(r.Context(), s.db, requested, caller)
+		if err != nil || !access.AtLeast(want) {
+			s.writeError(w, http.StatusForbidden, "you do not have access to that mailbox")
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), mailOwnerKey, requested)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 // writeMailError maps a service error onto a status.
@@ -354,17 +403,9 @@ func queryTime(r *http.Request, name string) time.Time {
 // ---------------------------------------------------------------------------
 
 func (s *Server) handleListFolders(w http.ResponseWriter, r *http.Request) {
-	owner := mailOwner(r)
-	if v := r.URL.Query().Get("owner"); v != "" {
-		// Caller requests folders of a shared mailbox. Check they have access.
-		access, err := s.grants.Access(r.Context(), s.db, v, owner)
-		if err != nil || !access.AtLeast(policy.GrantRead) {
-			s.writeMailError(w, r, webmail.ErrDenied)
-			return
-		}
-		owner = v
-	}
-	folders, err := s.mail.Folders(r.Context(), owner)
+	// The ?owner= query, when present, was already resolved and checked by the
+	// sharedMailbox middleware, so mailOwner is the mailbox this caller may read.
+	folders, err := s.mail.Folders(r.Context(), mailOwner(r))
 	if err != nil {
 		s.writeMailError(w, r, err)
 		return
@@ -939,6 +980,28 @@ func (s *Server) handleAccessibleShared(w http.ResponseWriter, r *http.Request) 
 			Level:    string(access.Level),
 			Writable: access.AtLeast(policy.GrantContribute),
 		})
+	}
+	// An open mailbox has no grant row, so nothing above would ever name it even
+	// though reading it is allowed. It is listed here for the same reason the
+	// policy allows reading it: a mailbox open to everybody that never appears in
+	// anybody's picker is not open in any way a member can use. It is never
+	// writable without a grant, which is what stops "open" from being a way
+	// around the grant list.
+	if boxes, err := s.shared.List(r.Context(), s.db); err != nil {
+		s.log.Warn("could not list shared mailboxes", "error", err)
+	} else {
+		for _, box := range boxes {
+			if !box.OpenAccess || seen[box.Address] {
+				continue
+			}
+			seen[box.Address] = true
+			out = append(out, shared{
+				Address:  box.Address,
+				Name:     box.DisplayName,
+				Level:    string(policy.GrantRead),
+				Writable: false,
+			})
+		}
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"shared": out})
 }

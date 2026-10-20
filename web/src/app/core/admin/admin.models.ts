@@ -12,6 +12,7 @@ export interface Domain {
   default_quota_bytes: number;
   daily_send_limit?: number | null;
   dkim_selector?: string | null;
+  contact_group_id?: number | null;
   workgroup_id?: number | null;
 }
 
@@ -119,5 +120,26 @@ export interface ContactGroup {
   id: number;
   name: string;
   description: string;
+  created_at: string;
+}
+
+export interface Workgroup {
+  id: number;
+  name: string;
+  domain: string;
+  display_name: string;
+  description: string;
+  open_booking: boolean;
+  created_at: string;
+  updated_at: string;
+  // Named members come back with the group. Everyone in the organization's
+  // domains belongs to it regardless; these are the people who administer it.
+  members?: WorkgroupMember[];
+}
+
+export interface WorkgroupMember {
+  workgroup_id: number;
+  address: string;
+  role: 'member' | 'admin';
   created_at: string;
 }

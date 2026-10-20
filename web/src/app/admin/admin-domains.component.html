@@ -100,11 +100,77 @@
                       : d.daily_send_limit + ' / day' }}
                   </td>
                   <td class="{{ cell }} text-right">
+                    <admin-button (pressed)="openEdit(d)" variant="secondary">
+                      Edit
+                    </admin-button>
                     <admin-button (pressed)="toggleStatus(d)">
                       {{ nextStatusLabel(d) }}
                     </admin-button>
                   </td>
                 </tr>
+                @if (editing() === d.name) {
+                  <tr class="bg-slate-50">
+                    <td class="{{ cell }}" colspan="6" [attr.colspan]="6">
+                      <admin-panel [bodyClass]="'p-4'">
+                        <form class="grid gap-4 sm:grid-cols-2" (ngSubmit)="saveEdit()">
+                          <admin-field label="Domain name" hint="The domain name cannot be changed.">
+                            <input class="{{ inputClass }}" value="{{ editDraft.name }}" disabled />
+                          </admin-field>
+                          <admin-field label="Description">
+                            <input class="{{ inputClass }}" name="editDescription" [(ngModel)]="editDraft.description" />
+                          </admin-field>
+                          <admin-field
+                            label="Default quota (MiB)"
+                            hint="Applied to new mailboxes in this domain. Leave empty for the schema default."
+                          >
+                            <input
+                              class="{{ inputClass }}"
+                              name="editQuota"
+                              type="number"
+                              min="0"
+                              [(ngModel)]="editDraft.quotaMiB"
+                              placeholder="unlimited"
+                            />
+                          </admin-field>
+                          <admin-field
+                            label="Daily send limit"
+                            hint="Per-user override of the submission cap. Leave empty to inherit."
+                          >
+                            <input
+                              class="{{ inputClass }}"
+                              name="editSendLimit"
+                              type="number"
+                              min="0"
+                              [(ngModel)]="editDraft.dailySendLimit"
+                              placeholder="unlimited"
+                            />
+                          </admin-field>
+                          <admin-field label="DKIM selector">
+                            <input
+                              class="{{ inputClass }}"
+                              name="editDkimSelector"
+                              [(ngModel)]="editDraft.dkimSelector"
+                              placeholder="mail"
+                            />
+                          </admin-field>
+                          <label class="flex items-center gap-2 self-end pb-1.5 text-sm text-slate-700">
+                            <input type="checkbox" name="editLocal" [(ngModel)]="editDraft.isLocal" />
+                            Delivered locally rather than by a relay
+                          </label>
+                          <div class="sm:col-span-2 flex items-center gap-3">
+                            <admin-button variant="primary" type="submit" [disabled]="busy()">
+                              Save changes
+                            </admin-button>
+                            <admin-button variant="secondary" (pressed)="cancelEdit()" [disabled]="busy()">
+                              Cancel
+                            </admin-button>
+                            <admin-busy [busy]="busy()" label="Saving…" />
+                          </div>
+                        </form>
+                      </admin-panel>
+                    </td>
+                  </tr>
+                }
               }
             </tbody>
           </table>
