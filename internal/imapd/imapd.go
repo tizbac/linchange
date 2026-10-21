@@ -158,12 +158,13 @@ func New(db *sqlx.DB, blobs *blobstore.Store,
 			}
 			if cfg.TLS.CertFile != "" && cfg.TLS.KeyFile != "" {
 				cert, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile)
-				if err == nil {
-					tlsCfg.Certificates = []tls.Certificate{cert}
-				} else {
-					log.Warn("failed to load TLS cert", "cert", cfg.TLS.CertFile, "err", err)
+				if err != nil {
+					return nil, fmt.Errorf("imapd: failed to load TLS cert %s: %w", cfg.TLS.CertFile, err)
 				}
-			}
+				tlsCfg.Certificates = []tls.Certificate{cert}
+				} else {
+					return nil, fmt.Errorf("imapd: TLS listener configured but no cert_file/key_file provided")
+				}
 		}
 
 		tlsServer = imapserver.New(&imapserver.Options{

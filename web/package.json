@@ -40,6 +40,7 @@
     "@angular/compiler-cli": "^22.2.0",
     "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.3.3",
+    "imapflow": "^2.5.9",
     "jsdom": "^30.0.0",
     "postcss": "^8.5.28",
     "prettier": "^3.8.1",

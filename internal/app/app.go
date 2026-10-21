@@ -248,6 +248,8 @@ func New(ctx context.Context, opts Options) (*App, error) {
 			blobs,
 			log,
 			store.NewSendCounters(),
+			store.NewSharedMailboxes(),
+			store.NewSharedMailboxGrants(),
 		)
 		smtpSrv, err := smtpd.New(*cfg, backend, log, a.ACMEManager)
 		if err != nil {

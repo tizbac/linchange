@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/emersion/go-sasl"
@@ -40,6 +41,8 @@ type Backend struct {
 	logger         *slog.Logger
 	dailySendLimit int
 	sendRepo       *store.SendCounters
+	sharedMailboxes *store.SharedMailboxes
+	sharedGrants    *store.SharedMailboxGrants
 }
 
 // NewBackend creates the SMTP backend from the application configuration.
@@ -52,17 +55,21 @@ func NewBackend(
 	blobStore *blobstore.Store,
 	log *slog.Logger,
 	sendRepo *store.SendCounters,
+	sharedMailboxes *store.SharedMailboxes,
+	sharedGrants *store.SharedMailboxGrants,
 ) *Backend {
 	return &Backend{
-		db:             db,
-		cfg:            cfg,
-		aliasStore:     aliases,
-		auth:           auth,
-		outboxRepo:     outboxRepo,
-		blobStore:      blobStore,
-		logger:         log,
-		dailySendLimit: cfg.DailySendLimit,
-		sendRepo:       sendRepo,
+		db:               db,
+		cfg:              cfg,
+		aliasStore:       aliases,
+		auth:             auth,
+		outboxRepo:       outboxRepo,
+		blobStore:        blobStore,
+		logger:           log,
+		dailySendLimit:   cfg.DailySendLimit,
+		sendRepo:         sendRepo,
+		sharedMailboxes:  sharedMailboxes,
+		sharedGrants:     sharedGrants,
 	}
 }
 
@@ -73,6 +80,7 @@ type session struct {
 	authenticated bool
 	from          string
 	recipients    []string
+	sharedTarget  string
 }
 
 // NewSession is called when a new connection is established.
@@ -135,14 +143,22 @@ func (s *session) Auth(mech string) (sasl.Server, error) {
 }
 
 // authenticate validates credentials against the user store.
+//
+// Some SMTP clients (notably Outlook) use the "user#shared" syntax in the
+// username to submit mail on behalf of a shared mailbox. We parse this,
+// authenticate the base user, and verify they have write access to the
+// shared mailbox. The shared mailbox address becomes the sender identity.
 func (s *session) authenticate(username string, password string) error {
+	// Parse "user#shared" syntax for shared mailbox submission.
+	sharedTarget := ""
+	if idx := strings.Index(username, "#"); idx >= 0 {
+		sharedTarget = username[idx+1:]
+		username = username[:idx]
+	}
+
 	principal, err := s.backend.auth.Authenticate(
 		s.context(), username, password, policy.ActionSMTP)
 	if err != nil {
-		// Every failure is reported the same way. An SMTP client is told only
-		// that the authentication failed; the reason belongs in the server log,
-		// and reporting it here would let a caller map refusals to account
-		// state.
 		if !errors.Is(err, mailauth.ErrRejected) && !errors.Is(err, mailauth.ErrUnavailable) {
 			s.backend.logger.Error("smtp login failed unexpectedly",
 				"user", username, "error", err)
@@ -150,10 +166,30 @@ func (s *session) authenticate(username string, password string) error {
 		return errors.New("invalid credentials")
 	}
 
+	// If a shared target was given, verify the user has write access to it.
+	if sharedTarget != "" {
+		// Verify the shared mailbox exists.
+		_, err := s.backend.sharedMailboxes.Get(s.context(), s.backend.db, sharedTarget)
+		if err != nil {
+			s.backend.logger.Warn("smtp login: shared mailbox not found",
+				"user", principal.Address, "target", sharedTarget)
+			return errors.New("invalid credentials")
+		}
+		access, err := s.backend.sharedGrants.Access(s.context(), s.backend.db, sharedTarget, principal.Address)
+		if err != nil || !access.AtLeast(policy.GrantContribute) {
+			s.backend.logger.Warn("smtp login: shared mailbox access denied",
+				"user", principal.Address, "target", sharedTarget)
+			return errors.New("invalid credentials")
+		}
+		s.from = sharedTarget
+		s.sharedTarget = sharedTarget
+	} else {
+		s.from = principal.Address
+	}
+
+	// Only mark as authenticated after all checks pass.
 	s.authenticated = true
-	// The canonical address, not what the client typed: the sender-identity
-	// check below compares against this, and it must be the stored spelling.
-	s.from = principal.Address
+	s.backend.logger.Info("smtp login", "user", principal.Address, "shared_target", sharedTarget)
 	return nil
 }
 
@@ -402,7 +438,11 @@ func (sv *Server) StartHTTP(ctx context.Context) error {
 	return sv.httpServer.Serve(ln)
 }
 
-// StartTLS starts the TLS submission listener.
+// StartTLS starts the implicit TLS submission listener (SMTPS on 465).
+//
+// This is implicit TLS: the connection is TLS from the first byte, not
+// STARTTLS on a plain connection. We wrap the listener with tls.NewListener
+// using the same TLSConfig the server was built with.
 func (sv *Server) StartTLS(ctx context.Context) error {
 	if sv.tlsServer == nil {
 		return nil
@@ -411,7 +451,10 @@ func (sv *Server) StartTLS(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("smtp submission-tls: %w", err)
 	}
-	return sv.tlsServer.Serve(ln)
+	// The server was created with TLSConfig for implicit TLS. Wrap the
+	// listener so the server sees TLS connections from the start.
+	tlsLn := tls.NewListener(ln, sv.tlsServer.TLSConfig)
+	return sv.tlsServer.Serve(tlsLn)
 }
 
 // Enabled reports whether any SMTP submission listener is configured.

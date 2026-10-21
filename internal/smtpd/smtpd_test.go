@@ -10,12 +10,15 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/linchange/linchange/config"
+	"github.com/linchange/linchange/internal/auth/login"
 	"github.com/linchange/linchange/internal/auth/mailauth"
-	pwd "github.com/linchange/linchange/internal/auth/password"
+	"github.com/linchange/linchange/internal/auth/password"
 	"github.com/linchange/linchange/internal/auth/policy"
 	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/testdb"
 )
+
+func boolPtr(b bool) *bool { return &b }
 
 // These tests drive the session's own authenticate method rather than a
 // listener over a socket. What is under test is the rule the submission
@@ -35,7 +38,8 @@ func (s *stubDirectory) Authenticate(_ context.Context, address, _ string) (bool
 	return s.ok, s.err
 }
 
-func newBackend(t *testing.T, dir mailauth.Directory) (*Backend, *sqlx.DB) {
+// newBackend creates a backend for testing with the given directory stub.
+func newBackend(t *testing.T, dir login.Directory) (*Backend, *sqlx.DB) {
 	t.Helper()
 	db := testdb.Migrated(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -48,6 +52,8 @@ func newBackend(t *testing.T, dir mailauth.Directory) (*Backend, *sqlx.DB) {
 		nil, // nor the blobstore
 		log,
 		store.NewSendCounters(),
+		store.NewSharedMailboxes(),
+		store.NewSharedMailboxGrants(),
 	), db
 }
 
@@ -62,7 +68,7 @@ func createUser(t *testing.T, db *sqlx.DB, address string, source policy.Source)
 
 func setPassword(t *testing.T, db *sqlx.DB, address, plaintext string) {
 	t.Helper()
-	hash, err := pwd.Hash(plaintext, config.Argon2Params{
+	hash, err := password.Hash(plaintext, config.Argon2Params{
 		MemoryKib: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 	})
 	if err != nil {
@@ -209,5 +215,104 @@ func TestAuthenticateUnreadableCredentialIsRefused(t *testing.T) {
 	}
 	if s.authenticated {
 		t.Error("a corrupt stored hash must leave the session unauthenticated")
+	}
+}
+
+// TestAuthenticateSharedMailbox proves that "user#shared" syntax works for
+// submitting on behalf of a shared mailbox.
+func TestAuthenticateSharedMailbox(t *testing.T) {
+	dir := &stubDirectory{ok: false}
+	backend, db := newBackend(t, dir)
+	createUser(t, db, "user@example.com", policy.SourceLocal)
+	setPassword(t, db, "user@example.com", "password")
+
+	// Create the shared mailbox principal with source='shared'.
+	if err := store.NewUsers().Create(context.Background(), db, store.CreateUserRequest{
+		Address: "shared@example.com", Source: policy.SourceShared, DisplayName: "Shared", MailboxEnabled: boolPtr(true),
+	}); err != nil {
+		t.Fatalf("creating shared principal: %v", err)
+	}
+	sharedHash, err := password.Hash("shared-password", config.Argon2Params{
+		MemoryKib: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
+	})
+	if err != nil {
+		t.Fatalf("hashing shared password: %v", err)
+	}
+	if err := store.NewCredentials().Set(context.Background(), db, "shared@example.com", sharedHash); err != nil {
+		t.Fatalf("setting shared credential: %v", err)
+	}
+
+	// Create a shared mailbox and grant write access.
+	if err := store.NewSharedMailboxes().Declare(context.Background(), db, store.CreateSharedMailboxRequest{
+		Address:     "shared@example.com",
+		DisplayName: "Shared",
+		UpdatedBy:   &[]string{"user@example.com"}[0],
+	}); err != nil {
+		t.Fatalf("declaring shared mailbox: %v", err)
+	}
+	if err := store.NewSharedMailboxGrants().Grant(context.Background(), db, "shared@example.com", "user@example.com", policy.GrantEditor, &[]string{"user@example.com"}[0]); err != nil {
+		t.Fatalf("granting shared access: %v", err)
+	}
+
+	s := &session{backend: backend}
+	// Authenticate as user with #shared target
+	if err := s.authenticate("user@example.com#shared@example.com", "password"); err != nil {
+		t.Fatalf("authenticate with shared target: %v", err)
+	}
+	if !s.authenticated {
+		t.Error("login must succeed")
+	}
+	// The sender identity should be the shared mailbox
+	if s.from != "shared@example.com" {
+		t.Errorf("sender identity = %q, want shared@example.com", s.from)
+	}
+	if s.sharedTarget != "shared@example.com" {
+		t.Errorf("sharedTarget = %q, want shared@example.com", s.sharedTarget)
+	}
+}
+
+// TestAuthenticateSharedMailboxAccessDenied proves that a user without
+// write access to a shared mailbox cannot use the #shared syntax.
+func TestAuthenticateSharedMailboxAccessDenied(t *testing.T) {
+	dir := &stubDirectory{ok: false}
+	backend, db := newBackend(t, dir)
+	createUser(t, db, "user@example.com", policy.SourceLocal)
+	setPassword(t, db, "user@example.com", "password")
+
+	// Create the shared mailbox principal with source='shared'.
+	if err := store.NewUsers().Create(context.Background(), db, store.CreateUserRequest{
+		Address: "shared@example.com", Source: policy.SourceShared, DisplayName: "Shared", MailboxEnabled: boolPtr(true),
+	}); err != nil {
+		t.Fatalf("creating shared principal: %v", err)
+	}
+	sharedHash, err := password.Hash("shared-password", config.Argon2Params{
+		MemoryKib: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
+	})
+	if err != nil {
+		t.Fatalf("hashing shared password: %v", err)
+	}
+	if err := store.NewCredentials().Set(context.Background(), db, "shared@example.com", sharedHash); err != nil {
+		t.Fatalf("setting shared credential: %v", err)
+	}
+
+	// Create a shared mailbox but grant only read access.
+	if err := store.NewSharedMailboxes().Declare(context.Background(), db, store.CreateSharedMailboxRequest{
+		Address:     "shared@example.com",
+		DisplayName: "Shared",
+		UpdatedBy:   &[]string{"user@example.com"}[0],
+	}); err != nil {
+		t.Fatalf("declaring shared mailbox: %v", err)
+	}
+	if err := store.NewSharedMailboxGrants().Grant(context.Background(), db, "shared@example.com", "user@example.com", policy.GrantRead, &[]string{"user@example.com"}[0]); err != nil {
+		t.Fatalf("granting shared access: %v", err)
+	}
+
+	s := &session{backend: backend}
+	err = s.authenticate("user@example.com#shared@example.com", "password")
+	if err == nil {
+		t.Fatal("login must fail when user only has read access")
+	}
+	if s.authenticated {
+		t.Error("login must not succeed")
 	}
 }
