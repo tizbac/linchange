@@ -312,7 +312,7 @@ export class Multiselect {
   selector: 'admin-dropdown',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="relative inline-block text-left" (clickOutside)="close.emit()">
+    <div class="relative inline-block text-left">
       <button
         type="button"
         class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100"
@@ -324,7 +324,13 @@ export class Multiselect {
       </button>
       @if (open()) {
         <div class="absolute right-0 z-10 mt-1 w-48 origin-top-right rounded-lg bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none animate-in fade-in-0 zoom-in-95 duration-100">
-          <div class="py-1" role="menu" aria-orientation="vertical" aria-labelledby="menu-heading">
+          <div
+            class="py-1"
+            role="menu"
+            aria-orientation="vertical"
+            aria-labelledby="menu-heading"
+            (click)="closeMenu()"
+          >
             <ng-content />
           </div>
         </div>
@@ -346,9 +352,20 @@ export class Dropdown {
     this.open.update(v => !v);
   }
 
+  // closeMenu is the single place the menu goes away. Whoever pressed an item
+  // is about to do something else — open a panel, disable a row — and a menu
+  // that stays on screen afterwards covers it and cannot be dismissed, because
+  // the outside-click path below only ever told the parent, which had nothing
+  // listening. The state lives here, so it is cleared here.
+  protected closeMenu(): void {
+    if (!this.open()) return;
+    this.open.set(false);
+    this.close.emit();
+  }
+
   protected onDocumentClick(event: MouseEvent): void {
     if (this.open() && !this.elementRef.nativeElement.contains(event.target)) {
-      this.close.emit();
+      this.closeMenu();
     }
   }
 }

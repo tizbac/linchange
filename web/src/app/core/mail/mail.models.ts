@@ -16,6 +16,10 @@ export interface Folder {
   unread: number;
   flagged: number;
   deletable: boolean;
+  // owner is the mailbox address this folder belongs to. It is empty for the
+  // signed-in user's own mailbox, and set when the folder is in a shared
+  // mailbox.
+  owner?: string;
 }
 
 export interface Attachment {

@@ -28,6 +28,29 @@ const (
 	CalendarShareWrite = "write"
 )
 
+// Calendar share statuses.
+//
+// The difference is one of who decided: a share the organization's
+// administrator made is the organization sharing its own calendar, and it
+// grants the moment it is written. A share a colleague made through their own
+// calendar is an offer, and it grants nothing until the person it names has
+// said yes.
+const (
+	// CalendarSharePending is an offer nobody has answered yet.
+	CalendarSharePending = "pending"
+	// CalendarShareActive grants the level it names.
+	CalendarShareActive = "active"
+)
+
+// ShareDecisions a subject can give an offer.
+const (
+	// ShareDecisionAccepted grants the share's level from then on.
+	ShareDecisionAccepted = "accepted"
+	// ShareDecisionDeclined leaves the share granting nothing, and closes the
+	// offer so it stops asking.
+	ShareDecisionDeclined = "declined"
+)
+
 // ShareLevelAtLeast reports whether one level includes another.
 //
 // The comparison is by rank rather than alphabetically, so that reordering the
@@ -52,14 +75,18 @@ func ShareLevelAtLeast(level, want string) bool {
 // schema enforces that, and this struct carries pointers so that the row shape
 // survives the trip to the client unchanged.
 type CalendarShare struct {
-	ID             int64     `db:"id"`
-	CalendarID     int64     `db:"calendar_id"`
-	SubjectKind    string    `db:"subject_kind"`
-	SubjectAddress *string   `db:"subject_address"`
-	SubjectGroupID *int64    `db:"subject_group_id"`
-	Level          string    `db:"level"`
-	CreatedAt      time.Time `db:"created_at"`
-	UpdatedAt      time.Time `db:"updated_at"`
+	ID             int64   `db:"id"`
+	CalendarID     int64   `db:"calendar_id"`
+	SubjectKind    string  `db:"subject_kind"`
+	SubjectAddress *string `db:"subject_address"`
+	SubjectGroupID *int64  `db:"subject_group_id"`
+	Level          string  `db:"level"`
+	// Status is pending until a share made by a person has been accepted by
+	// the subject it names. An administrator's share is active from the
+	// moment it is written.
+	Status    string    `db:"status"`
+	CreatedAt time.Time `db:"created_at"`
+	UpdatedAt time.Time `db:"updated_at"`
 }
 
 // IsUser reports whether this share names a person.
@@ -80,7 +107,26 @@ type CalendarShares struct{}
 func NewCalendarShares() *CalendarShares { return &CalendarShares{} }
 
 const calendarShareColumns = `id, calendar_id, subject_kind, subject_address,
-	subject_group_id, level, created_at, updated_at`
+	subject_group_id, level, status, created_at, updated_at`
+
+// grantedClause decides whether a share is worth granting its subject: it is
+// active, or the person it names accepted an offer that was pending.
+//
+// Every lookup that answers "may this address use this calendar" asks it, so
+// the list of shared calendars, the access level on one calendar, and the
+// events inside it cannot come to different answers about a share that is
+// still waiting for its answer.
+//
+// The address placeholder is passed in because the two queries that use it
+// count their parameters differently: one asks about a calendar and an
+// address, the other only about an address.
+func grantedClause(addressParam string) string {
+	return fmt.Sprintf(`(cs.status = 'active'
+	OR EXISTS (
+		SELECT 1 FROM calendar_share_decisions d
+		WHERE d.share_id = cs.id AND d.address = %[1]s::citext
+		  AND d.decision = 'accepted'))`, addressParam)
+}
 
 // List returns the shares on one calendar, people first and then groups, each
 // by name or address so a dialog renders them in a stable order.
@@ -103,11 +149,39 @@ func (c *CalendarShares) List(ctx context.Context, q Querier, calendarID int64) 
 // Re-sharing is an edit rather than a second row: two rows naming the same
 // subject would make "who can see this" a question with two answers, and the
 // stronger of the two would be invisible in the list that is meant to show it.
+//
+// An edit that makes a share pending again also forgets the answers to the
+// offer it replaces. What somebody accepted was the thing offered to them
+// then — a different level, from a calendar that may since have been renamed
+// or emptied — and carrying that yes over would mean the share they accepted
+// is not the share they are now using.
 func (c *CalendarShares) Put(ctx context.Context, q Querier, share CalendarShare) (CalendarShare, error) {
 	level, err := validShareLevel(share.Level)
 	if err != nil {
 		return CalendarShare{}, err
 	}
+	status, err := validShareStatus(share.Status)
+	if err != nil {
+		return CalendarShare{}, err
+	}
+
+	// The decision reset rides in the same statement as the upsert: sharing
+	// and forgetting the old answers are one act, and a caller that does one
+	// without the other would leave an accepted share pending on somebody's
+	// screen while already granting.
+	const upsertInto = `
+		WITH upsert AS (
+			INSERT INTO calendar_shares (calendar_id, subject_kind, subject_address, subject_group_id, level, status)
+			VALUES (%s)
+			ON CONFLICT %s
+			DO UPDATE SET level = EXCLUDED.level, status = EXCLUDED.status, updated_at = now()
+			RETURNING *, (xmax = 0) AS is_new
+		), reset AS (
+			DELETE FROM calendar_share_decisions d
+			USING upsert u
+			WHERE d.share_id = u.id AND NOT u.is_new
+		)
+		SELECT ` + calendarShareColumns + ` FROM upsert`
 
 	var (
 		out   CalendarShare
@@ -119,24 +193,16 @@ func (c *CalendarShares) Put(ctx context.Context, q Querier, share CalendarShare
 		if share.SubjectAddress == nil || strings.TrimSpace(*share.SubjectAddress) == "" {
 			return CalendarShare{}, fmt.Errorf("store: a user share needs an address")
 		}
-		query = `
-			INSERT INTO calendar_shares (calendar_id, subject_kind, subject_address, level)
-			VALUES ($1, $2, $3, $4)
-			ON CONFLICT (calendar_id, subject_address) WHERE subject_address IS NOT NULL
-			DO UPDATE SET level = EXCLUDED.level, updated_at = now()
-			RETURNING ` + calendarShareColumns
-		args = []any{share.CalendarID, ShareSubjectUser, *share.SubjectAddress, level}
+		query = fmt.Sprintf(upsertInto, "$1, $2, $3, NULL, $4, $5",
+			"(calendar_id, subject_address) WHERE subject_address IS NOT NULL")
+		args = []any{share.CalendarID, ShareSubjectUser, *share.SubjectAddress, level, status}
 	case ShareSubjectGroup:
 		if share.SubjectGroupID == nil || *share.SubjectGroupID == 0 {
 			return CalendarShare{}, fmt.Errorf("store: a group share needs a group id")
 		}
-		query = `
-			INSERT INTO calendar_shares (calendar_id, subject_kind, subject_group_id, level)
-			VALUES ($1, $2, $3, $4)
-			ON CONFLICT (calendar_id, subject_group_id) WHERE subject_group_id IS NOT NULL
-			DO UPDATE SET level = EXCLUDED.level, updated_at = now()
-			RETURNING ` + calendarShareColumns
-		args = []any{share.CalendarID, ShareSubjectGroup, *share.SubjectGroupID, level}
+		query = fmt.Sprintf(upsertInto, "$1, $2, NULL, $3, $4, $5",
+			"(calendar_id, subject_group_id) WHERE subject_group_id IS NOT NULL")
+		args = []any{share.CalendarID, ShareSubjectGroup, *share.SubjectGroupID, level, status}
 	default:
 		return CalendarShare{}, fmt.Errorf("store: unknown share subject kind %q", share.SubjectKind)
 	}
@@ -216,6 +282,7 @@ func (c *CalendarShares) AccessLevel(ctx context.Context, q Querier, calendarID 
 		    OR (cs.subject_kind = 'group'
 		        AND workgroup_group_has_address(cs.subject_group_id, $2::citext))
 		  )
+		  AND `+grantedClause("$2")+`
 		GROUP BY cs.calendar_id`,
 		calendarID, address)
 	if err != nil {
@@ -243,14 +310,116 @@ func (c *CalendarShares) SharedCalendars(ctx context.Context, q Querier, address
 		       c.created_at, c.updated_at
 		FROM calendars c
 		JOIN calendar_shares cs ON cs.calendar_id = c.id
-		WHERE (cs.subject_kind = 'user' AND cs.subject_address = $1::citext)
-		   OR (cs.subject_kind = 'group'
-		       AND workgroup_group_has_address(cs.subject_group_id, $1::citext))
+		WHERE ((cs.subject_kind = 'user' AND cs.subject_address = $1::citext)
+		       OR (cs.subject_kind = 'group'
+		           AND workgroup_group_has_address(cs.subject_group_id, $1::citext)))
+		  AND `+grantedClause("$1")+`
 		ORDER BY c.name`, address)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing calendars shared with an address: %w", err)
 	}
 	return out, nil
+}
+
+// Get reads one share by its id.
+func (c *CalendarShares) Get(ctx context.Context, q Querier, id int64) (CalendarShare, error) {
+	var out CalendarShare
+	if err := q.GetContext(ctx, &out, `
+		SELECT `+calendarShareColumns+`
+		FROM calendar_shares WHERE id = $1`, id); err != nil {
+		if IsNotFound(err) {
+			return CalendarShare{}, ErrNotFound
+		}
+		return CalendarShare{}, fmt.Errorf("store: reading calendar share: %w", err)
+	}
+	return out, nil
+}
+
+// CalendarShareOffer is a share that is waiting for the person it names.
+//
+// The calendar comes along with it because an offer that says only "share
+// #47, read" is not something anybody can answer: the name and the owner are
+// what the answer is about.
+type CalendarShareOffer struct {
+	CalendarShare
+	CalendarName  string  `db:"name"`
+	CalendarOwner *string `db:"owner"`
+}
+
+// Offers returns the shares waiting for an address to accept them.
+//
+// A share is listed once per address it reaches, so a group offer appears in
+// each member's own list and nowhere else: the answer is theirs alone, and
+// one that was already given is not an offer any more.
+func (c *CalendarShares) Offers(ctx context.Context, q Querier, address string) ([]CalendarShareOffer, error) {
+	out := make([]CalendarShareOffer, 0, 4)
+	err := q.SelectContext(ctx, &out, `
+		SELECT cs.id, cs.calendar_id, cs.subject_kind, cs.subject_address,
+		       cs.subject_group_id, cs.level, cs.status, cs.created_at, cs.updated_at,
+		       c.name, c.owner
+		FROM calendar_shares cs
+		JOIN calendars c ON c.id = cs.calendar_id
+		WHERE cs.status = 'pending'
+		  AND (
+		    (cs.subject_kind = 'user' AND cs.subject_address = $1::citext)
+		    OR (cs.subject_kind = 'group'
+		        AND workgroup_group_has_address(cs.subject_group_id, $1::citext))
+		  )
+		  AND NOT EXISTS (
+		    SELECT 1 FROM calendar_share_decisions d
+		    WHERE d.share_id = cs.id AND d.address = $1::citext)
+		ORDER BY cs.created_at, cs.id`, address)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing calendar share offers: %w", err)
+	}
+	return out, nil
+}
+
+// Decide records a person's answer to a share that names them.
+//
+// The whole question — is this share pending, and does it name this address,
+// directly or through a group — is asked in the insert itself rather than in a
+// read followed by a write. A share deleted, or raised to active by an
+// administrator, between the two would leave a decision about a thing that no
+// longer exists; and a share offered to somebody else would otherwise be
+// answerable by guessing its id.
+//
+// An answer can be changed: accepting after declining is somebody making up
+// their mind, which is not the same as deciding something new, so it updates
+// the row that is there.
+func (c *CalendarShares) Decide(ctx context.Context, q Querier, id int64, address, decision string) (CalendarShare, error) {
+	switch decision {
+	case ShareDecisionAccepted, ShareDecisionDeclined:
+	default:
+		return CalendarShare{}, fmt.Errorf("store: unknown share decision %q", decision)
+	}
+
+	res, err := q.ExecContext(ctx, `
+		INSERT INTO calendar_share_decisions (share_id, address, decision)
+		SELECT s.id, $2::citext, $3
+		FROM calendar_shares s
+		WHERE s.id = $1
+		  AND s.status = 'pending'
+		  AND (
+		    (s.subject_kind = 'user' AND s.subject_address = $2::citext)
+		    OR (s.subject_kind = 'group'
+		        AND workgroup_group_has_address(s.subject_group_id, $2::citext))
+		  )
+		ON CONFLICT (share_id, address)
+		DO UPDATE SET decision = EXCLUDED.decision, decided_at = now()`,
+		id, address, decision)
+	if err != nil {
+		return CalendarShare{}, fmt.Errorf("store: deciding on calendar share: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// Either the share is gone or it is not this person's to answer.
+		// Both are "there is no such thing here for you", which is what the
+		// caller reports rather than which of the two it was: the difference
+		// is not the caller's business, and saying which would let an
+		// address probe which shares exist.
+		return CalendarShare{}, ErrNotFound
+	}
+	return c.Get(ctx, q, id)
 }
 
 // validShareLevel rejects an unknown level at the store boundary, where the
@@ -267,5 +436,22 @@ func validShareLevel(level string) (string, error) {
 		return CalendarShareRead, nil
 	default:
 		return "", fmt.Errorf("store: unknown calendar share level %q", level)
+	}
+}
+
+// validShareStatus rejects an unknown status at the store boundary, and
+// defaults the empty one to active.
+//
+// Active is the default because that is what every share was before offers
+// existed: a caller that does not say which of the two it means is asking for
+// the behaviour it had, and a caller that wants an offer says so.
+func validShareStatus(status string) (string, error) {
+	switch status {
+	case CalendarSharePending, CalendarShareActive:
+		return status, nil
+	case "":
+		return CalendarShareActive, nil
+	default:
+		return "", fmt.Errorf("store: unknown calendar share status %q", status)
 	}
 }

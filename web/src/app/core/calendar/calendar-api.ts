@@ -7,6 +7,8 @@ import {
   UpdateCalendarRequest,
   CalendarShare,
   ShareCalendarRequest,
+  ShareOffer,
+  ShareOfferDecision,
   Event,
   ListEventsResponse,
   CreateEventRequest,
@@ -69,6 +71,31 @@ export class CalendarApi {
   // says which row on which calendar was shown to the caller.
   unshare(calendarId: number, shareId: number): Promise<void> {
     return this.del(`/${calendarId}/shares/${shareId}`);
+  }
+
+  // --- offers ---
+
+  // listOffers lists the calendars offered to the signed-in address that have
+  // not yet been answered. These are not calendars the caller has access to;
+  // they are questions waiting for an answer, and the share's id is what the
+  // answer uses.
+  listOffers(): Promise<{ offers: ShareOffer[] }> {
+    return this.fetch('/offers');
+  }
+
+  // acceptOffer records that the caller takes the calendar that was offered to
+  // them. From here on it lists with their own and opens with their own access
+  // level.
+  acceptOffer(shareId: number): Promise<ShareOfferDecision> {
+    return this.post(`/offers/${shareId}/accept`, {});
+  }
+
+  // declineOffer records that the caller does not want the calendar that was
+  // offered to them. The share stays where it is — the owner may ask again —
+  // but it stops appearing as an offer, which is the whole of what declining
+  // is asked to do.
+  declineOffer(shareId: number): Promise<ShareOfferDecision> {
+    return this.post(`/offers/${shareId}/decline`, {});
   }
 
   // --- events ---

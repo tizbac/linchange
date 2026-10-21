@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -249,6 +250,67 @@ func TestAdminUserLifecycle(t *testing.T) {
 	}
 }
 
+// An address in a path is escaped by any client that follows the usual rule
+// for path segments — Angular's HttpClient does it for every address it puts in
+// a URL — and chi reports the segment as it arrived in the route path. Read
+// raw, the account the path names is "bob%40example.com", which exists for
+// nobody, so a password change on the account sitting on screen came back 404
+// "no such thing". Every string parameter goes through pathParam now, which
+// leaves an unescaped value alone and reaches the same row either way.
+func TestAdminPathsDecodeEscapedAddresses(t *testing.T) {
+	srv, db := newAdminServer(t)
+	_, headers := seedAdmin(t, srv, db)
+	seedUser(t, db, "bob@example.com", "local", true, true)
+	setPassword(t, db, "bob@example.com", "correct horse battery staple")
+
+	const user = "/api/v1/admin/users/bob%40example.com"
+
+	code, body := do(t, srv, http.MethodGet, user, nil, headers)
+	if code != http.StatusOK {
+		t.Fatalf("reading a user through an escaped address = %d %v, want 200", code, body)
+	}
+	if got := str(body, "address"); got != "bob@example.com" {
+		t.Fatalf("address = %q, want bob@example.com", got)
+	}
+
+	// The reported request: a password change on an account that exists.
+	code, body = do(t, srv, http.MethodPut, user+"/password",
+		map[string]any{"password": "a different horse battery staple"}, headers)
+	if code != http.StatusNoContent {
+		t.Fatalf("setting a password through an escaped address = %d %v, want 204", code, body)
+	}
+
+	// The password is the account's afterwards, so the change changed
+	// something rather than being a request that went nowhere.
+	code, body = do(t, srv, http.MethodPost, "/api/v1/auth/login",
+		map[string]string{"login": "bob@example.com", "password": "a different horse battery staple"}, nil)
+	if code != http.StatusOK {
+		t.Fatalf("signing in after the password change = %d %v, want 200", code, body)
+	}
+
+	// Enabled is the same path shape and the same decode.
+	code, body = do(t, srv, http.MethodPut, user+"/enabled",
+		map[string]any{"enabled": false}, headers)
+	if code != http.StatusNoContent {
+		t.Fatalf("disabling through an escaped address = %d %v, want 204", code, body)
+	}
+
+	// An alias is the other address-bearing family of routes.
+	code, body = do(t, srv, http.MethodPost, "/api/v1/admin/aliases", map[string]any{
+		"address":      "b.bob@example.com",
+		"targets":      []map[string]any{{"target_kind": "user", "target_address": "bob@example.com", "position": 0}},
+		"display_name": "Bob's alias",
+	}, headers)
+	if code != http.StatusCreated {
+		t.Fatalf("creating an alias = %d %v, want 201", code, body)
+	}
+	code, body = do(t, srv, http.MethodPut, "/api/v1/admin/aliases/b.bob%40example.com/enabled",
+		map[string]any{"enabled": false}, headers)
+	if code != http.StatusNoContent {
+		t.Fatalf("disabling an alias through an escaped address = %d %v, want 204", code, body)
+	}
+}
+
 func TestAdminSharedMailboxAndMembers(t *testing.T) {
 	srv, db := newAdminServer(t)
 	_, headers := seedAdmin(t, srv, db)
@@ -416,10 +478,10 @@ func TestAdminAliasLifecycle(t *testing.T) {
 	seedUser(t, db, "bob@example.com", "local", true, true)
 
 	code, body := do(t, srv, http.MethodPost, "/api/v1/admin/aliases", map[string]any{
-		"address": "b.bob@example.com",
-		"targets": []map[string]any{{"target_kind": "user", "target_address": "bob@example.com", "position": 0}},
+		"address":      "b.bob@example.com",
+		"targets":      []map[string]any{{"target_kind": "user", "target_address": "bob@example.com", "position": 0}},
 		"display_name": "Bob's alias",
-		"description": "Test alias",
+		"description":  "Test alias",
 	}, headers)
 	if code != http.StatusCreated {
 		t.Fatalf("creating an alias = %d %v, want 201", code, body)
@@ -427,10 +489,10 @@ func TestAdminAliasLifecycle(t *testing.T) {
 
 	// An alias pointing at somebody who does not exist is a conflict.
 	code, body = do(t, srv, http.MethodPost, "/api/v1/admin/aliases", map[string]any{
-		"address": "b.nobody@example.com",
-		"targets": []map[string]any{{"target_kind": "user", "target_address": "nobody@example.com", "position": 0}},
+		"address":      "b.nobody@example.com",
+		"targets":      []map[string]any{{"target_kind": "user", "target_address": "nobody@example.com", "position": 0}},
 		"display_name": "Nobody's alias",
-		"description": "Test alias to unknown user",
+		"description":  "Test alias to unknown user",
 	}, headers)
 	if code != http.StatusConflict {
 		t.Fatalf("an alias to an unknown user = %d %v, want 409", code, body)
@@ -719,4 +781,80 @@ func mustField(t *testing.T, body map[string]any, key string) string {
 		t.Fatalf("response has no %q: %v", key, body)
 	}
 	return v
+}
+
+// An organization's calendar is shared from the administration page, whose
+// picker offers groups by name. A share the response can describe only as
+// "group 7" leaves the administrator reading a number where they chose a name,
+// so the group is named back in both directions: on the row that is created
+// and in the list the page shows afterwards.
+func TestAdminCalendarSharesNameTheGroup(t *testing.T) {
+	srv, db := newAdminServer(t)
+	_, headers := seedAdmin(t, srv, db)
+
+	code, wg := do(t, srv, http.MethodPost, "/api/v1/admin/workgroups",
+		map[string]any{"name": "Example", "domain": "example.com"}, headers)
+	if code != http.StatusCreated {
+		t.Fatalf("creating the organization = %d %v, want 201", code, wg)
+	}
+	wgID := int(wg["id"].(float64))
+
+	code, group := do(t, srv, http.MethodPost,
+		fmt.Sprintf("/api/v1/admin/workgroups/%d/groups", wgID),
+		map[string]any{"name": "Sales"}, headers)
+	if code != http.StatusCreated {
+		t.Fatalf("creating the group = %d %v, want 201", code, group)
+	}
+	groupID := int(group["id"].(float64))
+
+	code, cal := do(t, srv, http.MethodPost,
+		fmt.Sprintf("/api/v1/admin/workgroups/%d/calendars", wgID),
+		map[string]any{"name": "Team"}, headers)
+	if code != http.StatusCreated {
+		t.Fatalf("creating the organization's calendar = %d %v, want 201", code, cal)
+	}
+	calID := int(cal["id"].(float64))
+
+	shares := fmt.Sprintf("/api/v1/admin/workgroups/%d/calendars/%d/shares", wgID, calID)
+	code, created := do(t, srv, http.MethodPost, shares, map[string]any{
+		"subject_kind": "group", "subject_group_id": groupID, "level": "write",
+	}, headers)
+	if code != http.StatusCreated {
+		t.Fatalf("sharing the calendar = %d %v, want 201", code, created)
+	}
+	if got := str(created, "subject_name"); got != "Sales" {
+		t.Errorf("subject_name = %q, want Sales", got)
+	}
+	if got := str(created, "level"); got != "write" {
+		t.Errorf("level = %q, want write", got)
+	}
+
+	code, listed := do(t, srv, http.MethodGet, shares, nil, headers)
+	if code != http.StatusOK {
+		t.Fatalf("listing the shares = %d %v, want 200", code, listed)
+	}
+	rows, _ := listed["shares"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("got %d shares, want 1: %v", len(rows), listed)
+	}
+	row, _ := rows[0].(map[string]any)
+	if got := str(row, "subject_name"); got != "Sales" {
+		t.Errorf("the listed share is named %q, want Sales", got)
+	}
+	if int(row["subject_group_id"].(float64)) != groupID {
+		t.Errorf("subject_group_id = %v, want %d", row["subject_group_id"], groupID)
+	}
+
+	// The share the page shows is the share that governs: taking it away takes
+	// the write access with it, and the row goes.
+	shareID := int(row["id"].(float64))
+	code, body := do(t, srv, http.MethodDelete,
+		fmt.Sprintf("%s/%d", shares, shareID), nil, headers)
+	if code != http.StatusNoContent {
+		t.Fatalf("removing the share = %d %v, want 204", code, body)
+	}
+	code, listed = do(t, srv, http.MethodGet, shares, nil, headers)
+	if code != http.StatusOK || len(listed["shares"].([]any)) != 0 {
+		t.Errorf("after removing the share, the list is %d %v, want an empty 200", code, listed)
+	}
 }

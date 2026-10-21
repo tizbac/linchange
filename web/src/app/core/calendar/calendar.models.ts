@@ -52,7 +52,8 @@ export interface Attendee {
 
 // CalendarShare grants one subject — a person or one of the organization's
 // groups — access to a calendar. SubjectName comes back resolved for groups so
-// a dialog can show "Sales" rather than a group id.
+// a dialog can show "Sales" rather than a group id. Status tells the owner's
+// side whether the share is an offer waiting for the subject to answer it.
 export interface CalendarShare {
   id: number;
   subject_kind: 'user' | 'group';
@@ -60,6 +61,7 @@ export interface CalendarShare {
   subject_group_id?: number;
   subject_name?: string;
   level: 'read' | 'write';
+  status: 'pending' | 'active';
 }
 
 export interface ShareCalendarRequest {
@@ -67,6 +69,26 @@ export interface ShareCalendarRequest {
   subject_address?: string;
   subject_group_id?: number;
   level: 'read' | 'write';
+}
+
+// ShareOffer is a share that is waiting for the caller to answer it. It comes
+// with the calendar it names so the recipient knows what they are being offered.
+export interface ShareOffer {
+  id: number;
+  subject_kind: 'user' | 'group';
+  subject_address?: string;
+  subject_group_id?: number;
+  subject_name?: string;
+  level: 'read' | 'write';
+  status: 'pending';
+  calendar_id: number;
+  calendar_name: string;
+  calendar_owner?: string;
+}
+
+export interface ShareOfferDecision {
+  decision: 'accepted' | 'declined';
+  share: CalendarShare;
 }
 
 export interface EventDraft {

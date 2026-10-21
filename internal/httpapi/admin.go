@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -237,7 +236,7 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getDomain(w http.ResponseWriter, r *http.Request) {
-	domain, err := s.admin.GetDomain(r.Context(), Principal(r.Context()), chi.URLParam(r, "name"))
+	domain, err := s.admin.GetDomain(r.Context(), Principal(r.Context()), pathParam(r, "name"))
 	if err != nil {
 		adminErrors(w, s, err)
 		return
@@ -262,7 +261,7 @@ func (s *Server) updateDomain(w http.ResponseWriter, r *http.Request) {
 	// read first and anything the caller omitted is carried over. Without this
 	// an omitted quota would be written as zero and every mailbox in the domain
 	// would suddenly be unlimited.
-	name := chi.URLParam(r, "name")
+	name := pathParam(r, "name")
 	current, err := s.admin.GetDomain(r.Context(), Principal(r.Context()), name)
 	if err != nil {
 		adminErrors(w, s, err)
@@ -299,7 +298,7 @@ func (s *Server) setDomainStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.admin.SetDomainStatus(r.Context(), Principal(r.Context()),
-		chi.URLParam(r, "name"), in.Status); err != nil {
+		pathParam(r, "name"), in.Status); err != nil {
 		adminErrors(w, s, err)
 		return
 	}
@@ -360,7 +359,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getUser(w http.ResponseWriter, r *http.Request) {
-	user, err := s.admin.GetUser(r.Context(), Principal(r.Context()), chi.URLParam(r, "address"))
+	user, err := s.admin.GetUser(r.Context(), Principal(r.Context()), pathParam(r, "address"))
 	if err != nil {
 		adminErrors(w, s, err)
 		return
@@ -384,7 +383,7 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
 		return
 	}
-	user, err := s.admin.UpdateUser(r.Context(), Principal(r.Context()), chi.URLParam(r, "address"),
+	user, err := s.admin.UpdateUser(r.Context(), Principal(r.Context()), pathParam(r, "address"),
 		admin.UpdateUserRequest{
 			DisplayName:    in.DisplayName,
 			QuotaBytes:     in.QuotaBytes,
@@ -409,7 +408,7 @@ func (s *Server) setUserEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.admin.SetUserEnabled(r.Context(), Principal(r.Context()),
-		chi.URLParam(r, "address"), in.Enabled); err != nil {
+		pathParam(r, "address"), in.Enabled); err != nil {
 		adminErrors(w, s, err)
 		return
 	}
@@ -425,7 +424,7 @@ func (s *Server) setUserQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.admin.SetUserQuota(r.Context(), Principal(r.Context()),
-		chi.URLParam(r, "address"), in.QuotaBytes); err != nil {
+		pathParam(r, "address"), in.QuotaBytes); err != nil {
 		adminErrors(w, s, err)
 		return
 	}
@@ -441,7 +440,7 @@ func (s *Server) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.admin.ResetUserPassword(r.Context(), Principal(r.Context()),
-		chi.URLParam(r, "address"), in.Password); err != nil {
+		pathParam(r, "address"), in.Password); err != nil {
 		adminErrors(w, s, err)
 		return
 	}
@@ -449,7 +448,7 @@ func (s *Server) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
-	if err := s.admin.DeleteUser(r.Context(), Principal(r.Context()), chi.URLParam(r, "address")); err != nil {
+	if err := s.admin.DeleteUser(r.Context(), Principal(r.Context()), pathParam(r, "address")); err != nil {
 		adminErrors(w, s, err)
 		return
 	}
@@ -524,7 +523,7 @@ func (s *Server) setAliasEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.admin.SetAliasEnabled(r.Context(), Principal(r.Context()),
-		chi.URLParam(r, "address"), in.Enabled); err != nil {
+		pathParam(r, "address"), in.Enabled); err != nil {
 		adminErrors(w, s, err)
 		return
 	}
@@ -532,7 +531,7 @@ func (s *Server) setAliasEnabled(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteAlias(w http.ResponseWriter, r *http.Request) {
-	if err := s.admin.DeleteAlias(r.Context(), Principal(r.Context()), chi.URLParam(r, "address")); err != nil {
+	if err := s.admin.DeleteAlias(r.Context(), Principal(r.Context()), pathParam(r, "address")); err != nil {
 		adminErrors(w, s, err)
 		return
 	}
@@ -561,7 +560,7 @@ func (s *Server) updateAliasTargets(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.admin.UpdateAliasTargets(r.Context(), Principal(r.Context()),
-		chi.URLParam(r, "address"), req); err != nil {
+		pathParam(r, "address"), req); err != nil {
 		adminErrors(w, s, err)
 		return
 	}
@@ -629,10 +628,7 @@ func (s *Server) updateSharedMailbox(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "auto_reply_expires_at is not a timestamp")
 		return
 	}
-	shared, err := url.PathUnescape(chi.URLParam(r, "address"))
-	if err != nil {
-		shared = chi.URLParam(r, "address")
-	}
+	shared := pathParam(r, "address")
 	box, err := s.admin.UpdateSharedMailbox(r.Context(), Principal(r.Context()), shared,
 		store.UpdateSharedMailboxRequest{
 			DisplayName:        in.DisplayName,
@@ -652,10 +648,7 @@ func (s *Server) updateSharedMailbox(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) undeclareSharedMailbox(w http.ResponseWriter, r *http.Request) {
-	shared, err := url.PathUnescape(chi.URLParam(r, "address"))
-	if err != nil {
-		shared = chi.URLParam(r, "address")
-	}
+	shared := pathParam(r, "address")
 	if err := s.admin.UndeclareSharedMailbox(r.Context(), Principal(r.Context()),
 		shared); err != nil {
 		adminErrors(w, s, err)
@@ -670,10 +663,7 @@ func (s *Server) listSharedMailboxMembers(w http.ResponseWriter, r *http.Request
 		adminErrors(w, s, err)
 		return
 	}
-	address, err := url.PathUnescape(chi.URLParam(r, "address"))
-	if err != nil {
-		address = chi.URLParam(r, "address")
-	}
+	address := pathParam(r, "address")
 	for _, box := range boxes {
 		if box.Address == address {
 			s.writeJSON(w, http.StatusOK, map[string]any{"members": viewSharedMailbox(box).Members})
@@ -696,10 +686,7 @@ func (s *Server) grantSharedMailboxAccess(w http.ResponseWriter, r *http.Request
 		s.writeError(w, http.StatusBadRequest, "member is required")
 		return
 	}
-	shared, err := url.PathUnescape(chi.URLParam(r, "address"))
-	if err != nil {
-		shared = chi.URLParam(r, "address")
-	}
+	shared := pathParam(r, "address")
 	if err := s.admin.GrantSharedMailboxAccess(r.Context(), Principal(r.Context()),
 		shared, in.Member, in.Level); err != nil {
 		adminErrors(w, s, err)
@@ -720,10 +707,7 @@ func (s *Server) revokeSharedMailboxAccess(w http.ResponseWriter, r *http.Reques
 		s.writeError(w, http.StatusBadRequest, "member is required")
 		return
 	}
-	shared, err := url.PathUnescape(chi.URLParam(r, "address"))
-	if err != nil {
-		shared = chi.URLParam(r, "address")
-	}
+	shared := pathParam(r, "address")
 	if err := s.admin.RevokeSharedMailboxAccess(r.Context(), Principal(r.Context()),
 		shared, in.Member); err != nil {
 		adminErrors(w, s, err)
@@ -778,7 +762,7 @@ func (s *Server) grantImpersonation(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) revokeImpersonation(w http.ResponseWriter, r *http.Request) {
 	if err := s.admin.RevokeImpersonation(r.Context(), Principal(r.Context()),
-		chi.URLParam(r, "actor"), chi.URLParam(r, "target")); err != nil {
+		pathParam(r, "actor"), pathParam(r, "target")); err != nil {
 		adminErrors(w, s, err)
 		return
 	}
@@ -786,7 +770,7 @@ func (s *Server) revokeImpersonation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) whoCanImpersonate(w http.ResponseWriter, r *http.Request) {
-	who, err := s.admin.WhoCanImpersonate(r.Context(), Principal(r.Context()), chi.URLParam(r, "target"))
+	who, err := s.admin.WhoCanImpersonate(r.Context(), Principal(r.Context()), pathParam(r, "target"))
 	if err != nil {
 		adminErrors(w, s, err)
 		return
@@ -1544,7 +1528,7 @@ func (s *Server) removeWorkgroupMember(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
 		return
 	}
-	address := chi.URLParam(r, "address")
+	address := pathParam(r, "address")
 	if err := s.admin.RemoveWorkgroupMember(r.Context(), Principal(r.Context()), id, address); err != nil {
 		adminErrors(w, s, err)
 		return
@@ -1692,7 +1676,7 @@ func (s *Server) removeWorkgroupGroupMember(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	address := chi.URLParam(r, "address")
+	address := pathParam(r, "address")
 	removed, err := s.admin.RemoveWorkgroupGroupMember(r.Context(), Principal(r.Context()), id, groupID, address)
 	if err != nil {
 		adminErrors(w, s, err)

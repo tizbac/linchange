@@ -51,6 +51,14 @@ func (s *Server) mountCalendar(r chi.Router) {
 		r.Post("/{id}/shares", s.handleShareCalendar)
 		r.Delete("/{id}/shares/{shareID}", s.handleUnshareCalendar)
 
+		// An offer made to the caller, which is theirs before the calendar it
+		// names is: until they accept, they have no access to that calendar at
+		// all, so its id would be of no use to them. These routes answer for
+		// the signed-in address rather than for a calendar in the path.
+		r.Get("/offers", s.handleListShareOffers)
+		r.Post("/offers/{shareID}/accept", s.handleAcceptShareOffer)
+		r.Post("/offers/{shareID}/decline", s.handleDeclineShareOffer)
+
 		// ICS download for an event
 		r.Get("/{id}/events/{eventID}.ics", s.handleEventICS)
 		// Generate an iTIP REQUEST (invitation) for an event
@@ -629,6 +637,10 @@ type shareView struct {
 	SubjectGroupID *int64  `json:"subject_group_id,omitempty"`
 	SubjectName    string  `json:"subject_name,omitempty"`
 	Level          string  `json:"level"`
+	// Status tells the owner's own side that a share is still an offer:
+	// "waiting for acceptance" is a line the list can only print if it knows
+	// which of the two it is looking at.
+	Status string `json:"status"`
 }
 
 func viewCalendarShare(share store.CalendarShare, groupName string) shareView {
@@ -639,6 +651,7 @@ func viewCalendarShare(share store.CalendarShare, groupName string) shareView {
 		SubjectGroupID: share.SubjectGroupID,
 		SubjectName:    groupName,
 		Level:          share.Level,
+		Status:         share.Status,
 	}
 }
 
@@ -702,11 +715,19 @@ func (s *Server) handleShareCalendar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A share made here is the calendar's own side offering its diary to a
+	// colleague, so it starts out pending and grants nothing: the person it
+	// names has to say yes first. An administrator sharing a team calendar
+	// does that through the organization's own page, where there is nobody in
+	// particular to ask, and those shares are active from the moment they are
+	// written.
 	share := store.CalendarShare{
 		CalendarID:  cal.ID,
 		SubjectKind: in.SubjectKind,
 		Level:       in.Level,
+		Status:      store.CalendarSharePending,
 	}
+	var recipients []string
 	switch in.SubjectKind {
 	case store.ShareSubjectUser:
 		address := strings.TrimSpace(in.SubjectAddress)
@@ -719,12 +740,43 @@ func (s *Server) handleShareCalendar(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		share.SubjectAddress = &address
+		recipients = []string{address}
 	case store.ShareSubjectGroup:
 		if in.SubjectGroupID == 0 {
 			s.writeError(w, http.StatusBadRequest, "subject_group_id is required")
 			return
 		}
+		group, err := store.NewGroups().Get(r.Context(), s.db, in.SubjectGroupID)
+		if err != nil {
+			s.writeError(w, mapErrorCode(err), err.Error())
+			return
+		}
+		// A group in somebody else's organization is not this calendar's to
+		// reach: reporting it as absent rather than as forbidden is the answer
+		// that does not confirm the group exists. The check comes before the
+		// one below because it is about a group the caller has no way to name
+		// at all, and that is the whole of what is true about it here.
+		if wg, ok := s.organizationFor(r.Context(), Principal(r.Context()).Address); !ok || wg.ID != group.WorkgroupID {
+			s.writeError(w, http.StatusNotFound, "no such thing")
+			return
+		}
+		// Sharing with everybody in the organization is the one share this
+		// route refuses. It is what an administrator does for a team calendar
+		// — the organization's own page, an act on behalf of the organization
+		// — and for a colleague's diary it would hand the whole company an
+		// answer to an offer that was never addressed to them.
+		if group.Everyone {
+			s.writeError(w, http.StatusBadRequest,
+				"a personal calendar cannot be shared with everyone; choose a group or a person")
+			return
+		}
+		members, err := store.NewGroups().Members(r.Context(), s.db, in.SubjectGroupID)
+		if err != nil {
+			s.writeError(w, mapErrorCode(err), err.Error())
+			return
+		}
 		share.SubjectGroupID = &in.SubjectGroupID
+		recipients = members
 	default:
 		s.writeError(w, http.StatusBadRequest, "subject_kind must be user or group")
 		return
@@ -739,7 +791,54 @@ func (s *Server) handleShareCalendar(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.log.Warn("could not name the group on a calendar share", "error", err)
 	}
+	// The offer is only real once its recipients know there is one waiting:
+	// an offer nobody is told about is a share that simply does not grant,
+	// and the owner is left to explain in person what the calendar said.
+	s.notifyShareOffer(r, cal, recipients)
 	s.writeJSON(w, http.StatusCreated, viewCalendarShare(created, names[created.GroupID()]))
+}
+
+// notifyShareOffer files a short internal note into each recipient's inbox
+// saying that a calendar is waiting for them to answer.
+//
+// It is filed directly rather than mailed through the outbound queue: the
+// sender and the recipient are both on this server, and a message that left
+// and came back would be scored as inbound mail, greylisted for a few minutes
+// and sometimes bounced to nobody. A failure here is logged, never reported as
+// a failure of the share — the share has already been written, and the client
+// would otherwise be told that a thing it can see on screen did not happen.
+func (s *Server) notifyShareOffer(r *http.Request, cal store.Calendar, recipients []string) {
+	ctx := r.Context()
+	from := Principal(ctx).Address
+	if cal.Owner != nil && *cal.Owner != "" {
+		from = *cal.Owner
+	}
+
+	body := fmt.Sprintf("%s has shared the calendar %q with you.\n\n"+
+		"Open your calendars to accept or decline the offer.\n", from, cal.Name)
+
+	notified := make([]string, 0, len(recipients))
+	seen := make(map[string]bool, len(recipients))
+	for _, to := range recipients {
+		address := strings.ToLower(strings.TrimSpace(to))
+		if address == "" || seen[address] {
+			continue
+		}
+		seen[address] = true
+		// Nobody needs a note that they offered themselves something.
+		if address == strings.ToLower(from) || (cal.Owner != nil && address == strings.ToLower(*cal.Owner)) {
+			continue
+		}
+		notified = append(notified, address)
+	}
+	if len(notified) == 0 {
+		return
+	}
+	if err := s.mail.SendInternal(r.Context(), from, notified,
+		"Calendar shared with you: "+cal.Name, body); err != nil {
+		s.log.Warn("could not notify the recipients of a calendar share",
+			"calendar_id", cal.ID, "error", err)
+	}
 }
 
 // handleUnshareCalendar takes one subject's access away. The share's own id is
@@ -765,6 +864,93 @@ func (s *Server) handleUnshareCalendar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// shareOfferView is a share that is waiting for the caller to answer it, with
+// enough of the calendar behind it to be answerable: an offer that says only
+// "share #47, read" is not a question anybody can decide about.
+type shareOfferView struct {
+	shareView
+	CalendarID    int64   `json:"calendar_id"`
+	CalendarName  string  `json:"calendar_name"`
+	CalendarOwner *string `json:"calendar_owner,omitempty"`
+}
+
+// handleListShareOffers lists the calendars offered to the caller and not yet
+// answered.
+//
+// It is the one listing on this router that is not about a calendar in the
+// path, because at this point the caller may have no access to the calendar at
+// all — that is what the offer is. The share's id is what they answer with.
+func (s *Server) handleListShareOffers(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	address := Principal(ctx).Address
+
+	offers, err := store.NewCalendarShares().Offers(ctx, s.db, address)
+	if err != nil {
+		s.writeError(w, mapErrorCode(err), err.Error())
+		return
+	}
+	shares := make([]store.CalendarShare, 0, len(offers))
+	for _, offer := range offers {
+		shares = append(shares, offer.CalendarShare)
+	}
+	names, err := s.groupNames(r, shares)
+	if err != nil {
+		s.log.Warn("could not name the groups on a calendar offer", "error", err)
+	}
+	out := make([]shareOfferView, 0, len(offers))
+	for _, offer := range offers {
+		out = append(out, shareOfferView{
+			shareView:     viewCalendarShare(offer.CalendarShare, names[offer.GroupID()]),
+			CalendarID:    offer.CalendarID,
+			CalendarName:  offer.CalendarName,
+			CalendarOwner: offer.CalendarOwner,
+		})
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"offers": out})
+}
+
+// handleAcceptShareOffer records that the caller takes the calendar that was
+// offered to them. From here on it lists with their own and opens with their
+// own access level.
+func (s *Server) handleAcceptShareOffer(w http.ResponseWriter, r *http.Request) {
+	s.decideShareOffer(w, r, store.ShareDecisionAccepted)
+}
+
+// handleDeclineShareOffer records that the caller does not want it. The share
+// stays where it is — the owner may ask again — but it stops appearing as an
+// offer, which is the whole of what declining is asked to do.
+func (s *Server) handleDeclineShareOffer(w http.ResponseWriter, r *http.Request) {
+	s.decideShareOffer(w, r, store.ShareDecisionDeclined)
+}
+
+// decideShareOffer writes the caller's answer to one offer.
+//
+// The store decides whether this address may answer this share at all, so an
+// id that is somebody else's, or a share that is not pending, comes back as
+// the same "no such thing" as an id that never existed. Saying which it was
+// would let an address map the shares of the whole server by guessing ids.
+func (s *Server) decideShareOffer(w http.ResponseWriter, r *http.Request, decision string) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "shareID"), 10, 64)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid share id")
+		return
+	}
+	share, err := store.NewCalendarShares().Decide(r.Context(), s.db, id,
+		Principal(r.Context()).Address, decision)
+	if err != nil {
+		s.writeError(w, mapErrorCode(err), err.Error())
+		return
+	}
+	names, err := s.groupNames(r, []store.CalendarShare{share})
+	if err != nil {
+		s.log.Warn("could not name the group on a calendar share", "error", err)
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"decision": decision,
+		"share":    viewCalendarShare(share, names[share.GroupID()]),
+	})
 }
 
 // groupNames resolves the group ids a set of shares name, for display. A share

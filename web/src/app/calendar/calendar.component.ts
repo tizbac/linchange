@@ -1,7 +1,9 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   effect,
+  HostListener,
   inject,
   signal,
   viewChild,
@@ -31,6 +33,7 @@ import {
   Calendar as CalendarModel,
   CalendarShare,
   ShareCalendarRequest,
+  ShareOffer,
   Event as EventModel,
   ListEventsResponse,
   CreateEventRequest,
@@ -96,6 +99,43 @@ import { CalIcon } from '../core/calendar/ui';
             <option value="timeGridDay">Day</option>
             <option value="listWeek">List</option>
           </select>
+
+          <!-- Calendar visibility picker -->
+          <div class="relative" #calPicker>
+            <button
+              type="button"
+              class="px-3 py-1.5 text-sm border rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500 flex items-center gap-1.5"
+              (click)="toggleCalendarPicker()"
+              aria-label="Calendars"
+              aria-expanded="calendarPickerOpen()"
+            >
+              <app-cal-icon name="calendar" [size]="16" />
+              <span class="hidden sm:inline">{{ visibleCalendars().length }} / {{ calendars().length }}</span>
+              <app-cal-icon name="chevron_down" [size]="14" />
+            </button>
+            @if (calendarPickerOpen()) {
+              <div class="absolute right-0 top-full mt-1 z-50 w-64 bg-white dark:bg-gray-900 rounded-lg shadow-lg ring-1 ring-gray-200 dark:ring-gray-700 py-1">
+                @for (cal of calendars(); track cal.id) {
+                  <label class="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      [checked]="isCalendarVisible(cal.id)"
+                      (change)="toggleCalendarVisibility(cal.id, $event)"
+                      class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span
+                      class="flex-1 truncate text-sm text-gray-900 dark:text-gray-100"
+                      [style.color]="cal.color"
+                      [title]="cal.display_name || cal.name"
+                    >
+                      {{ cal.display_name || cal.name }}
+                    </span>
+                  </label>
+                }
+              </div>
+            }
+          </div>
+
           <button
             type="button"
             class="px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
@@ -107,6 +147,14 @@ import { CalIcon } from '../core/calendar/ui';
           <button
             type="button"
             class="px-4 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+            (click)="openCreateCalendar()"
+          >
+            <app-cal-icon name="plus" [size]="16" class="mr-1 inline" />
+            New calendar
+          </button>
+          <button
+            type="button"
+            class="px-4 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
             (click)="openSharing()"
           >
             <app-cal-icon name="share" [size]="16" class="mr-1 inline" />
@@ -114,6 +162,43 @@ import { CalIcon } from '../core/calendar/ui';
           </button>
         </div>
       </div>
+
+      <!-- Offers Banner: calendars waiting for this person to answer -->
+      @if (offers().length > 0) {
+        <div class="bg-amber-50 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800">
+          <div class="max-w-7xl mx-auto px-4 py-3">
+            <div class="flex flex-wrap items-center gap-3 text-sm text-amber-900 dark:text-amber-100">
+              <app-cal-icon name="users" [size]="18" class="flex-shrink-0" />
+              <span class="font-medium">You have {{ offers().length }} calendar offer{{ offers().length === 1 ? '' : 's' }} waiting for your answer:</span>
+              @for (offer of offers(); track offer.id) {
+                <span class="flex items-center gap-2 bg-white dark:bg-gray-800 px-3 py-1.5 rounded-lg border border-amber-200 dark:border-amber-800">
+                  <span class="font-medium">{{ offer.calendar_name }}</span>
+                  <span class="text-xs text-gray-500 dark:text-gray-400">from {{ offer.calendar_owner }}</span>
+                  <span class="px-2 py-0.5 text-xs bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200 rounded">
+                    {{ offer.level === 'write' ? 'edit' : 'view' }}
+                  </span>
+                  <button
+                    type="button"
+                    class="px-2 py-0.5 text-xs font-medium text-white bg-green-600 rounded hover:bg-green-700 transition-colors"
+                    (click)="acceptOffer(offer)"
+                    [disabled]="offersBusy()"
+                  >
+                    Accept
+                  </button>
+                  <button
+                    type="button"
+                    class="px-2 py-0.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                    (click)="declineOffer(offer)"
+                    [disabled]="offersBusy()"
+                  >
+                    Decline
+                  </button>
+                </span>
+              }
+            </div>
+          </div>
+        </div>
+      }
 
       <!-- Calendar -->
       <div class="flex-1 overflow-hidden relative min-h-0">
@@ -213,6 +298,88 @@ import { CalIcon } from '../core/calendar/ui';
                 </p>
               }
             </div>
+          </div>
+        </div>
+      }
+
+      <!-- Create calendar: a personal calendar is made the same way an event
+           is, and it lands in the pickers the moment it exists. -->
+      @if (createCalendarModal()) {
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" (click)="closeCreateCalendar()">
+          <div
+            class="bg-white dark:bg-gray-900 rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto text-gray-900 dark:text-gray-100"
+            (click)="$event.stopPropagation()"
+          >
+            <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">New calendar</h2>
+              <button
+                type="button"
+                class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                (click)="closeCreateCalendar()"
+                aria-label="Close"
+              >
+                <app-cal-icon name="x" [size]="20" />
+              </button>
+            </div>
+            <form class="p-4 space-y-4" (ngSubmit)="createCalendar()">
+              @if (calendarError()) {
+                <p class="text-sm text-rose-600 dark:text-rose-400">{{ calendarError() }}</p>
+              }
+              <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="calendar-name">
+                  Name
+                </label>
+                <input
+                  id="calendar-name"
+                  name="calendarName"
+                  class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500"
+                  [(ngModel)]="calendarDraft.name"
+                  required
+                  maxlength="120"
+                  placeholder="Trips, the second job, the household…"
+                />
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="calendar-description">
+                  Description <span class="font-normal text-gray-400">(optional)</span>
+                </label>
+                <input
+                  id="calendar-description"
+                  name="calendarDescription"
+                  class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500"
+                  [(ngModel)]="calendarDraft.description"
+                  maxlength="500"
+                />
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="calendar-colour">
+                  Colour
+                </label>
+                <input
+                  id="calendar-colour"
+                  name="calendarColour"
+                  type="color"
+                  class="w-full h-10 px-1 py-1 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800"
+                  [(ngModel)]="calendarDraft.color"
+                />
+              </div>
+              <div class="flex gap-2">
+                <button
+                  type="submit"
+                  class="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                  [disabled]="calendarBusy() || !calendarDraft.name.trim()"
+                >
+                  {{ calendarBusy() ? 'Creating…' : 'Create calendar' }}
+                </button>
+                <button
+                  type="button"
+                  class="flex-1 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                  (click)="closeCreateCalendar()"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       }
@@ -607,6 +774,50 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
   readonly orgPeople = signal<Contact[]>([]);
   readonly orgGroups = signal<OrganizationGroup[]>([]);
 
+  // Offers are shares made to this caller that are waiting for an answer.
+  // They are not calendars the caller has access to; they are questions
+  // about calendars the caller may or may not want.
+  readonly offers = signal<ShareOffer[]>([]);
+  readonly offersBusy = signal(false);
+
+  // Calendar visibility picker state
+  readonly calendarPickerOpen = signal(false);
+  readonly hiddenCalendarIds = signal<number[]>([]);
+
+  // visibleCalendars returns the calendars that should be shown in the view.
+  // By default all calendars are visible; the user can hide individual ones
+  // using the picker in the toolbar.
+  readonly visibleCalendars = computed(() => {
+    const hidden = new Set(this.hiddenCalendarIds());
+    return this.calendars().filter((c) => !hidden.has(c.id));
+  });
+
+  toggleCalendarPicker(): void {
+    this.calendarPickerOpen.update((v) => !v);
+  }
+
+  isCalendarVisible(id: number): boolean {
+    return !this.hiddenCalendarIds().includes(id);
+  }
+
+  toggleCalendarVisibility(id: number, event: Event): void {
+    const checked = (event.target as HTMLInputElement).checked;
+    this.hiddenCalendarIds.update((hidden) =>
+      checked ? hidden.filter((x) => x !== id) : [...hidden, id]
+    );
+    // Also update FullCalendar's event sources
+    this.updateFullCalendarEvents();
+  }
+
+  // Close the calendar picker when clicking outside of it
+  @HostListener('document:click', ['$event'])
+  onDocumentClick(event: MouseEvent): void {
+    const picker = document.querySelector('#calPicker');
+    if (this.calendarPickerOpen() && picker && !picker.contains(event.target as Node)) {
+      this.calendarPickerOpen.set(false);
+    }
+  }
+
   // The subject select carries "user:address" or "group:id" in one value. Two
   // controls where only one may be filled is a rule somebody has to be told;
   // one control with both kinds in it is not.
@@ -629,6 +840,51 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
   // Helper to update editForm and trigger change detection
   private updateEditForm(partial: Partial<typeof this.editForm>): void {
     this.editForm = { ...this.editForm, ...partial };
+  }
+
+  // --- calendars ---
+  //
+  // A personal calendar is something a person makes for themselves — a trip, a
+  // second job, the household — and the server has always been willing to
+  // store one; what was missing was anywhere to ask for it. The dialog posts
+  // to the same API the event form picks its calendars from, so the calendar
+  // is there in the pickers, in the colours and in the sharing dialog as soon
+  // as it is made, with no second step.
+  readonly createCalendarModal = signal(false);
+  readonly calendarBusy = signal(false);
+  readonly calendarError = signal('');
+
+  calendarDraft = { name: '', description: '', color: '#2563eb' };
+
+  openCreateCalendar(): void {
+    this.calendarDraft = { name: '', description: '', color: '#2563eb' };
+    this.calendarError.set('');
+    this.createCalendarModal.set(true);
+  }
+
+  closeCreateCalendar(): void {
+    this.createCalendarModal.set(false);
+  }
+
+  async createCalendar(): Promise<void> {
+    const name = this.calendarDraft.name.trim();
+    if (!name || this.calendarBusy()) return;
+
+    this.calendarBusy.set(true);
+    this.calendarError.set('');
+    try {
+      await this.api.create({
+        name,
+        color: this.calendarDraft.color,
+        description: this.calendarDraft.description.trim(),
+      });
+      this.createCalendarModal.set(false);
+      await this.loadCalendars();
+    } catch (err) {
+      this.calendarError.set(errorMessage(err));
+    } finally {
+      this.calendarBusy.set(false);
+    }
   }
 
   // --- sharing ---
@@ -763,14 +1019,48 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
   }
 
   // shareLabel reads what a share names, in the words a person recognizes.
+  // For pending shares it also notes that the offer is waiting for an answer.
   shareLabel(share: CalendarShare): string {
-    if (share.subject_kind === 'group') {
-      return share.subject_name || 'a group';
+    const base =
+      share.subject_kind === 'group'
+        ? share.subject_name || 'a group'
+        : share.subject_address || 'somebody';
+    if (share.status === 'pending') {
+      return `${base} (waiting for acceptance)`;
     }
-    return share.subject_address || 'somebody';
+    return base;
   }
 
-  // canEditSelected is whether the event pane should offer its controls. An
+  // acceptOffer records that the caller takes a calendar that was offered to
+  // them. The offer disappears and the calendar appears in their list.
+  async acceptOffer(offer: ShareOffer): Promise<void> {
+    this.offersBusy.set(true);
+    try {
+      await this.api.acceptOffer(offer.id);
+      await this.loadOffers();
+      await this.loadCalendars();
+    } catch (err) {
+      console.error('Failed to accept offer:', err);
+    } finally {
+      this.offersBusy.set(false);
+    }
+  }
+
+  // declineOffer records that the caller does not want the calendar. The offer
+  // stops asking, but the owner may offer it again later.
+  async declineOffer(offer: ShareOffer): Promise<void> {
+    this.offersBusy.set(true);
+    try {
+      await this.api.declineOffer(offer.id);
+      await this.loadOffers();
+    } catch (err) {
+      console.error('Failed to decline offer:', err);
+    } finally {
+      this.offersBusy.set(false);
+    }
+  }
+
+  // canEditSelected is whether the event pane should offer its controls.
   // event on a calendar shared as view only would only learn it cannot be
   // edited when the save came back refused, so the offer is not made. A
   // calendar whose level is unknown — the server omits nothing today, but a
@@ -831,6 +1121,7 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
     // asks each calendar in turn, so starting it first would only ever load the
     // first range of calendars to arrive.
     await this.loadCalendars();
+    await this.loadOffers();
     await this.loadEvents();
   }
 
@@ -844,6 +1135,22 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
       this.calendars.set(res.calendars);
     } catch (err) {
       console.error('Failed to load calendars:', err);
+    }
+  }
+
+  // loadOffers fetches the calendars offered to this caller that are still
+  // waiting for an answer. It is called once on startup so the banner is
+  // ready when the first calendar is drawn.
+  private async loadOffers(): Promise<void> {
+    this.offersBusy.set(true);
+    try {
+      const res = await this.api.listOffers();
+      this.offers.set(res.offers ?? []);
+    } catch (err) {
+      console.error('Failed to load calendar offers:', err);
+      this.offers.set([]);
+    } finally {
+      this.offersBusy.set(false);
     }
   }
 
@@ -878,8 +1185,11 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
     const cal = this.calendarApi;
     if (!cal) return;
     cal.removeAllEvents();
+    const visibleIds = new Set(this.visibleCalendars().map((c: CalendarModel) => c.id));
     for (const ev of this.events()) {
-      cal.addEvent(this.toFullCalendarEvent(ev));
+      if (visibleIds.has(ev.calendarId)) {
+        cal.addEvent(this.toFullCalendarEvent(ev));
+      }
     }
   }
 

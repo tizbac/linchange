@@ -338,8 +338,8 @@
                           <admin-field label="Share with">
                             <select class="{{ inputClass }}" [(ngModel)]="calendarShareSubject" name="shareSubject" required>
                               <option value="">— Choose person or group —</option>
-                              @for (c of calendarShareCandidates(wg, cal); track c) {
-                                <option [value]="c">{{ c }}</option>
+                              @for (c of calendarShareCandidates(wg, cal); track c.value) {
+                                <option [value]="c.value">{{ c.label }}</option>
                               }
                             </select>
                           </admin-field>

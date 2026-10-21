@@ -77,16 +77,26 @@ type Pool struct {
 	done    chan struct{}
 	active  atomic.Int64
 	stopped atomic.Bool
+
+	// lookupMX and lookupHost are the DNS the exchanger search asks. They are
+	// fields rather than calls made in place so that a test can answer with
+	// records it wrote itself: which exchanger is tried first, and what happens
+	// when the first cannot be reached, are the parts worth testing, and both
+	// would otherwise be left to whatever resolver the machine happens to use.
+	lookupMX   func(ctx context.Context, name string) ([]*net.MX, error)
+	lookupHost func(ctx context.Context, name string) ([]string, error)
 }
 
 // NewPool creates a new delivery worker pool.
 func NewPool(cfg Config, logger *slog.Logger, db *sqlx.DB) *Pool {
 	return &Pool{
-		cfg:    cfg,
-		logger: logger,
-		db:     db,
-		quit:   make(chan struct{}),
-		done:   make(chan struct{}),
+		cfg:        cfg,
+		logger:     logger,
+		db:         db,
+		quit:       make(chan struct{}),
+		done:       make(chan struct{}),
+		lookupMX:   net.DefaultResolver.LookupMX,
+		lookupHost: net.DefaultResolver.LookupHost,
 	}
 }
 
@@ -474,7 +484,7 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 			sort.Strings(domains)
 			for _, domain := range domains {
 				group := byDomain[domain]
-				exchanger, err := p.mailExchanger(ctx, domain)
+				exchangers, err := p.mailExchangers(ctx, domain)
 				if err != nil {
 					if IsPermanent(err) {
 						// The destination exists nowhere: nothing will change
@@ -496,13 +506,28 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 					}
 					continue
 				}
-				out := (&smtpClient{cfg: exchanger}).SendEach(
-					sendCtx, msg.EnvelopeFrom, addresses(group), blob)
+				// Walk the exchangers the domain published, stopping at the
+				// first that takes the connection. One address that cannot be
+				// reached — a route this host has no way out on, an address
+				// family that is advertised but not usable — must not defer
+				// the mail that the next published exchanger would take.
+				out := p.deliverToExchangers(sendCtx, msg.ID, domain, exchangers,
+					msg.EnvelopeFrom, addresses(group), blob)
 				mark(out.Delivered, RecipientDelivered, nil, "")
 				mark(out.Permanent, RecipientFailed, out.Reasons,
 					"the destination mail exchanger rejected the message")
-				if len(out.Transient) > 0 && lastErr == nil {
-					lastErr = fmt.Errorf("%s: the mail exchanger could not be reached", domain)
+				if len(out.Transient) > 0 {
+					// The reasons are logged and carried in the error rather
+					// than swallowed: "could not be reached" on its own sent
+					// whoever was told that to guess at the address family, the
+					// port or the peer, and guessing at what the exchanger
+					// actually said is not a question they could answer.
+					p.logger.Warn("mail exchanger deferred recipients",
+						"message_id", msg.ID, "domain", domain, "reasons", out.Reasons)
+					if lastErr == nil {
+						lastErr = fmt.Errorf("%s: the mail exchanger could not be reached: %s",
+							domain, transientReason(out))
+					}
 				}
 			}
 		}
@@ -511,48 +536,111 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 	return p.settle(ctx, msg, lastErr)
 }
 
-// mailExchanger answers where to deliver mail for a domain when no smart host
-// is configured: its MX record, lowest preference first, falling back to the
-// domain's own address as the RFC allows. This is what the SMTP configuration
-// documents for an empty smtp_host, and without it a single-server deployment
-// can only ever talk to itself.
+// deliverToExchangers sends one message to one domain's recipients, trying the
+// exchangers that domain published in order until one takes the connection.
+//
+// An exchanger that cannot be dialled at all is the network's answer about
+// that address — a route, a filter, an address family this host cannot use —
+// and not about the domain, so the next published address gets its turn. An
+// exchanger that answers and then declines is the destination speaking: that
+// answer stands, and dialling its neighbours would only collect the same
+// refusal elsewhere.
+//
+// Nothing is settled here. The caller marks the recipients from what comes
+// back, because an attempt that never connected delivered to nobody, so
+// re-marking from an earlier, failed attempt cannot lose a delivery.
+func (p *Pool) deliverToExchangers(ctx context.Context, messageID int64, domain string,
+	exchangers []SMTPConfig, from string, to []string, blob []byte) RecipientOutcome {
+	if len(exchangers) == 0 {
+		// Unreachable rather than empty: a caller that passed nothing to try
+		// must not be answered with an outcome that looks like success, since
+		// a message with no transient recipient is settled as sent.
+		out := RecipientOutcome{Transient: append([]string(nil), to...), Reasons: map[string]string{}}
+		for _, address := range to {
+			out.Reasons[address] = fmt.Sprintf("no mail exchanger is published for %s", domain)
+		}
+		return out
+	}
+
+	var out RecipientOutcome
+	for _, exchanger := range exchangers {
+		out = (&smtpClient{cfg: exchanger}).SendEach(ctx, from, to, blob)
+		if out.Connected || len(out.Delivered) > 0 {
+			return out
+		}
+		p.logger.Warn("mail exchanger could not be reached; trying the next",
+			"message_id", messageID, "domain", domain,
+			"host", exchanger.Host, "reasons", out.Reasons)
+	}
+	return out
+}
+
+// mailExchangers answers where to deliver mail for a domain when no smart host
+// is configured: every mail exchanger it publishes, lowest preference first,
+// falling back to the domain's own address as the RFC allows. This is what the
+// SMTP configuration documents for an empty smtp_host, and without it a
+// single-server deployment can only ever talk to itself.
+//
+// All of them are returned rather than only the first. Taking the
+// lowest-preference record alone means one exchanger that cannot be reached —
+// a route that disappeared, an address family this host cannot use, a filter
+// that dropped port 25 to one address — defers the whole domain, although the
+// domain published four more that answer. The caller walks the list and stops
+// at the first that takes the connection.
 //
 // A domain that publishes no mail exchanger and resolves to no address at all
 // is reported as a permanent failure: it exists nowhere, and retrying it for a
 // week only delays the bounce that tells the sender so. A lookup that failed
 // for any other reason is transient, since DNS may come back.
-func (p *Pool) mailExchanger(ctx context.Context, domain string) (SMTPConfig, error) {
-	records, err := net.DefaultResolver.LookupMX(ctx, domain)
+func (p *Pool) mailExchangers(ctx context.Context, domain string) ([]SMTPConfig, error) {
+	records, err := p.lookupMX(ctx, domain)
 	if err != nil {
 		var dnsErr *net.DNSError
 		if !errors.As(err, &dnsErr) || !dnsErr.IsNotFound {
-			return SMTPConfig{}, fmt.Errorf("resolving MX for %s: %w", domain, err)
+			return nil, fmt.Errorf("resolving MX for %s: %w", domain, err)
 		}
 		// No MX published: many domains still accept mail at their address.
-		if _, err := net.DefaultResolver.LookupHost(ctx, domain); err != nil {
+		if _, err := p.lookupHost(ctx, domain); err != nil {
 			var hostErr *net.DNSError
 			if errors.As(err, &hostErr) && hostErr.IsNotFound {
-				return SMTPConfig{}, &ErrPermanent{
+				return nil, &ErrPermanent{
 					Err: fmt.Errorf("no mail exchanger or address is published for %s", domain),
 				}
 			}
-			return SMTPConfig{}, fmt.Errorf("resolving %s: %w", domain, err)
+			return nil, fmt.Errorf("resolving %s: %w", domain, err)
 		}
-		return p.directTo(domain), nil
+		return []SMTPConfig{p.directTo(domain)}, nil
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].Pref < records[j].Pref })
+
+	out := make([]SMTPConfig, 0, len(records))
+	seen := make(map[string]bool, len(records))
+	nullMX := false
 	for _, mx := range records {
 		host := strings.TrimSuffix(mx.Host, ".")
 		if host == "" {
 			// RFC 7505: a mail exchanger of "." means the domain says it
 			// accepts no mail at all. Dialing its web address would be a guess.
-			return SMTPConfig{}, &ErrPermanent{
+			nullMX = true
+			continue
+		}
+		if seen[strings.ToLower(host)] {
+			continue
+		}
+		seen[strings.ToLower(host)] = true
+		out = append(out, p.directTo(host))
+	}
+	if len(out) == 0 {
+		if nullMX {
+			return nil, &ErrPermanent{
 				Err: fmt.Errorf("%s publishes that it accepts no mail", domain),
 			}
 		}
-		return p.directTo(host), nil
+		// Every record was empty of anything dialable, which is the null-MX
+		// case wearing a different shape.
+		return []SMTPConfig{p.directTo(domain)}, nil
 	}
-	return p.directTo(domain), nil
+	return out, nil
 }
 
 // directTo builds the SMTP configuration for talking straight to a mail
@@ -832,4 +920,24 @@ func IsPermanent(err error) bool {
 		}
 	}
 	return false
+}
+
+// transientReason is the one line a deferred delivery carries into the log and
+// into the queue's last-error column: what the exchanger actually said rather
+// than that something did not work.
+//
+// The connection-level key wins when it is set, because one of those covers
+// every recipient of the attempt; otherwise the first recipient with a reason
+// stands for the rest. Every address in an outcome that never connected was
+// refused by the same dial, so they are one reason repeated.
+func transientReason(out RecipientOutcome) string {
+	if reason := out.Reasons["*"]; reason != "" {
+		return reason
+	}
+	for _, address := range out.Transient {
+		if reason := out.Reasons[address]; reason != "" {
+			return reason
+		}
+	}
+	return "the exchanger gave no reason"
 }

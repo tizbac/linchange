@@ -156,6 +156,11 @@ type Folder struct {
 	// name. The UI uses it to hide the delete affordance rather than to decide
 	// whether a request is allowed.
 	Deletable bool `json:"deletable"`
+	// Owner is the mailbox address this folder belongs to. It is empty for the
+	// signed-in user's own mailbox, and set when the folder is in a shared
+	// mailbox. The client uses it to know which mailbox a folder operation
+	// should target.
+	Owner string `json:"owner,omitempty"`
 }
 
 // standardFolders are the names a client addresses by role rather than by
@@ -194,6 +199,7 @@ func (s *Service) Folders(ctx context.Context, owner string) ([]Folder, error) {
 			Unread:     counts.Unread,
 			Flagged:    counts.Flagged,
 			Deletable:  !standardFolders[mb.Name],
+			Owner:      owner,
 		}
 	}
 	return out, nil

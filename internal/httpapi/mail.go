@@ -186,7 +186,7 @@ func (s *Server) handleUploadSignatureImage(w http.ResponseWriter, r *http.Reque
 // handleInlineSignatureImage serves a signature/compose image by CID.
 // The CID has the format "sig-<sha256>" and the image is retrieved from the blobstore via the mail service.
 func (s *Server) handleInlineSignatureImage(w http.ResponseWriter, r *http.Request) {
-	cid := chi.URLParam(r, "cid")
+	cid := pathParam(r, "cid")
 	if cid == "" || !strings.HasPrefix(cid, "sig-") {
 		s.writeError(w, http.StatusBadRequest, "invalid CID")
 		return
@@ -370,6 +370,28 @@ func pathID(r *http.Request, name string) (int64, bool) {
 		return 0, false
 	}
 	return id, true
+}
+
+// pathParam is a path parameter with its percent-escapes decoded.
+//
+// A client that escapes its path segments correctly — Angular's HttpClient does
+// it for every address it puts in a URL — sends "root%40example.com", and chi
+// reports the segment exactly as it arrived in the route path. Read raw, the
+// address that reaches the service is one nobody has, so a perfectly ordinary
+// request (change the password of an account that is right there on screen) is
+// answered with 404 "no such thing".
+//
+// The meeting and CalDAV routes already decode for this reason. Doing it per
+// handler is how half of them came to be right and half wrong, so every string
+// parameter is read through here instead: an unescaped value passes through
+// unchanged, and both spellings reach the same row.
+func pathParam(r *http.Request, name string) string {
+	raw := chi.URLParam(r, name)
+	if decoded, err := url.PathUnescape(raw); err == nil {
+		return decoded
+	}
+	// Not a decodable escape, so what arrived is what it says.
+	return raw
 }
 
 // decodeMailBody reads a compose-sized JSON body.
@@ -843,7 +865,7 @@ func (s *Server) handleDeleteMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetThread(w http.ResponseWriter, r *http.Request) {
-	key := chi.URLParam(r, "key")
+	key := pathParam(r, "key")
 	if strings.TrimSpace(key) == "" {
 		s.writeError(w, http.StatusBadRequest, "a thread needs a key")
 		return

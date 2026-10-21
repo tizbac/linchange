@@ -388,13 +388,31 @@ export class AdminWorkgroupsComponent implements OnInit {
     }
   }
 
-  protected calendarShareCandidates(wg: Workgroup, cal: OrgCalendar): string[] {
-    // Build candidates from organization people and groups
-    const candidates: string[] = [];
+  // calendarShareCandidates is what the picker offers: every organization
+  // person and group the calendar is not already shared with, labelled the way
+  // a person would say it. The value stays the address or group id the request
+  // needs; showing `group:7` makes an administrator guess which group that is,
+  // and guessing wrong shares a calendar with the wrong half of the
+  // organization.
+  protected calendarShareCandidates(
+    wg: Workgroup,
+    cal: OrgCalendar,
+  ): { value: string; label: string }[] {
+    const candidates: { value: string; label: string }[] = [];
     const people = this.users().filter((address) => !this.isAlreadyShared(cal, 'user', address));
-    candidates.push(...people.map((a) => `user:${a}`));
-    const groups = this.groups().get(wg.id) ?? [];
-    candidates.push(...groups.filter((g) => !this.isAlreadyShared(cal, 'group', '', g.id)).map((g) => `group:${g.id}`));
+    for (const address of people) {
+      candidates.push({ value: `user:${address}`, label: address });
+    }
+    for (const g of this.groups().get(wg.id) ?? []) {
+      if (this.isAlreadyShared(cal, 'group', '', g.id)) continue;
+      // The everybody group is named for what it is already, so it is not
+      // described twice; a named group says how wide it is, because "Sales"
+      // and "Sales, three of them" are different things to share a diary with.
+      const label = g.everyone
+        ? g.name
+        : `${g.name} · ${g.member_count} ${g.member_count === 1 ? 'person' : 'people'}`;
+      candidates.push({ value: `group:${g.id}`, label });
+    }
     return candidates;
   }
 

@@ -153,6 +153,29 @@ func run() error {
 		return fmt.Errorf("storing password for %s: %w", outsider, err)
 	}
 
+	// The organization the seeded domain belongs to, with a group inside it.
+	// Membership is by domain, so nobody is added by hand; the suites need the
+	// group because a calendar shared with one has to be offered by the name
+	// people say out loud rather than by the number its row carries.
+	wg, err := store.NewWorkgroups().Create(ctx, db, store.CreateWorkgroupRequest{
+		Name:        "Example",
+		Domain:      domain,
+		DisplayName: "Example",
+		Description: "Organization seeded for the end-to-end suites",
+	})
+	if err != nil {
+		return fmt.Errorf("creating organization: %w", err)
+	}
+	group, err := store.NewGroups().Create(ctx, db, wg.ID, "Team", "The seeded group")
+	if err != nil {
+		return fmt.Errorf("creating group: %w", err)
+	}
+	// One member, so the group reads as a set of people wherever it is offered
+	// rather than as an empty name with nothing behind it.
+	if err := store.NewGroups().AddMember(ctx, db, group.ID, outsider); err != nil {
+		return fmt.Errorf("adding %s to the seeded group: %w", outsider, err)
+	}
+
 	fmt.Printf("seeded %s in database %q (shared mailbox %s, outsider %s)\n",
 		*user, *name, shared, outsider)
 	return nil

@@ -183,7 +183,7 @@
       </admin-panel>
 
       @if (passwordFor(); as target) {
-        <admin-panel title="Set a new password for {{ target }}">
+        <admin-panel title="Set a new password for {{ target.address }}">
           <form class="flex flex-wrap items-end gap-3" (ngSubmit)="setPassword()">
             <admin-field
               label="New password"
@@ -206,7 +206,7 @@
       }
 
       @if (quotaFor(); as target) {
-        <admin-panel title="Quota for {{ target }}">
+        <admin-panel title="Quota for {{ target.address }}">
           <form class="grid gap-4 sm:grid-cols-2" (ngSubmit)="setQuota()">
             <admin-field label="Quota (MiB)" hint="Empty means unlimited.">
               <input

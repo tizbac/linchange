@@ -138,6 +138,11 @@ func (s *Service) ShareWorkgroupCalendar(ctx context.Context, actor policy.Princ
 		return store.CalendarShare{}, err
 	}
 	req.CalendarID = calendarID
+	// An administrator's share is the organization sharing its own calendar:
+	// there is nobody in particular to ask, and the calendar exists to be
+	// shared, so it grants the moment it is written. Only the shares people
+	// make for their own diaries are offers that wait for an answer.
+	req.Status = store.CalendarShareActive
 	created, err := store.NewCalendarShares().Put(ctx, s.db, req)
 	if err != nil {
 		return store.CalendarShare{}, mapStore(err)

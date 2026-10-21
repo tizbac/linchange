@@ -115,10 +115,18 @@ function inviteFileName(summary: string): string {
               <input
                 id="mc-to"
                 name="to"
+                list="contact-options"
                 class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-brand-500 focus:outline-none"
                 placeholder="name@example.com"
                 [(ngModel)]="toRaw"
+                (focus)="ensureContacts()"
+                (input)="onContactInput('to', $event)"
               />
+              <datalist id="contact-options">
+                @for (opt of contactOptions(); track opt) {
+                  <option [value]="opt"></option>
+                }
+              </datalist>
               @if (hasInvalid(toRaw)) {
                 <p class="mt-1 text-xs text-rose-600">
                   Every entry needs an @ — some entries above are not addresses.
@@ -133,10 +141,18 @@ function inviteFileName(summary: string): string {
               <input
                 id="mc-cc"
                 name="cc"
+                list="contact-options"
                 class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-brand-500 focus:outline-none"
                 placeholder="name@example.com"
                 [(ngModel)]="ccRaw"
+                (focus)="ensureContacts()"
+                (input)="onContactInput('cc', $event)"
               />
+              <datalist id="contact-options">
+                @for (opt of contactOptions(); track opt) {
+                  <option [value]="opt"></option>
+                }
+              </datalist>
               @if (hasInvalid(ccRaw)) {
                 <p class="mt-1 text-xs text-rose-600">
                   Every entry needs an @ — some entries above are not addresses.
@@ -151,10 +167,18 @@ function inviteFileName(summary: string): string {
               <input
                 id="mc-bcc"
                 name="bcc"
+                list="contact-options"
                 class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-brand-500 focus:outline-none"
                 placeholder="name@example.com"
                 [(ngModel)]="bccRaw"
+                (focus)="ensureContacts()"
+                (input)="onContactInput('bcc', $event)"
               />
+              <datalist id="contact-options">
+                @for (opt of contactOptions(); track opt) {
+                  <option [value]="opt"></option>
+                }
+              </datalist>
               @if (hasInvalid(bccRaw)) {
                 <p class="mt-1 text-xs text-rose-600">
                   Every entry needs an @ — some entries above are not addresses.
@@ -603,15 +627,18 @@ export class MailComposeComponent implements OnInit {
     return hits.slice(0, 50);
   });
 
-  // openContacts fetches the list the first time it is opened rather than with
-  // the page: most messages do not need an address book, and those that do are
-  // a click away from having one.
-  protected async openContacts(): Promise<void> {
-    if (this.showContacts()) {
-      this.showContacts.set(false);
-      return;
-    }
-    this.showContacts.set(true);
+  // contactOptions provides a flat list of addresses for the datalist autocomplete
+  // on the To/CC/BCC fields.
+  protected readonly contactOptions = computed(() => {
+    return this.people().map((c) => {
+      const name = c.display_name ? ` ${c.display_name}` : '';
+      return `${c.address}${name}`;
+    });
+  });
+
+  // ensureContacts loads the organization contacts if not already loaded.
+  // Called when the user focuses an address field or opens the contacts panel.
+  private async ensureContacts(): Promise<void> {
     if (this.people().length > 0 || this.contactsLoading()) return;
     this.contactsLoading.set(true);
     try {
@@ -624,6 +651,35 @@ export class MailComposeComponent implements OnInit {
     }
   }
 
+  // openContacts fetches the list the first time it is opened rather than with
+  // the page: most messages do not need an address book, and those that do are
+  // a click away from having one.
+  protected async openContacts(): Promise<void> {
+    if (this.showContacts()) {
+      this.showContacts.set(false);
+      return;
+    }
+    this.showContacts.set(true);
+    await this.ensureContacts();
+  }
+
+  // onContactSelect adds the selected address from the datalist to the field.
+  protected onContactSelect(field: 'to' | 'cc' | 'bcc', address: string): void {
+    // Extract just the email address from "email Name" format
+    const email = address.split(' ')[0];
+    const current = field === 'to' ? this.toRaw : field === 'cc' ? this.ccRaw : this.bccRaw;
+    const parts = current
+      .split(/[,;]/)
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (parts.some((p) => p.toLowerCase() === email.toLowerCase())) return;
+    if (field === 'to') this.toRaw = [...parts, email].join(', ');
+    else if (field === 'cc') this.ccRaw = [...parts, email].join(', ');
+    else this.bccRaw = [...parts, email].join(', ');
+    // Clear the datalist selection so it can be used again
+    this.contactFilter.set('');
+  }
+
   // addRecipient appends an address to To without disturbing what is already
   // there: a picker that replaced the field would throw away a recipient the
   // user picked for a reason.
@@ -634,6 +690,14 @@ export class MailComposeComponent implements OnInit {
       .filter(Boolean);
     if (parts.some((p) => p.toLowerCase() === address.toLowerCase())) return;
     this.toRaw = [...parts, address].join(', ');
+  }
+
+  // onContactInput is called when the user types in an address field.
+  // The datalist handles showing matching contacts automatically.
+  // This method can be extended to handle multi-recipient autocomplete.
+  protected onContactInput(_field: 'to' | 'cc' | 'bcc', _event: Event): void {
+    // The browser's native datalist handles autocomplete.
+    // We could add custom logic here for multi-recipient support.
   }
 
   // --- attachments -------------------------------------------------------------

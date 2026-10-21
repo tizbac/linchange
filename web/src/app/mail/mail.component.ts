@@ -557,8 +557,18 @@ export class MailComponent implements OnInit {
     void this.loadList(true);
   }
 
-  // owner is the mailbox the current folder belongs to. It is undefined when
-  // the folder is the signed-in user's own, which is the ordinary case.
+  // currentOwner is the mailbox address that should be used for operations
+  // on the currently selected folder. It returns the folder's owner if one
+  // is selected, otherwise falls back to the shared mailbox if one is
+  // explicitly selected, otherwise undefined (meaning the user's own mailbox).
+  protected currentOwner(): string | undefined {
+    const folder = this.currentFolders().find(f => f.id === this.selectedFolderId());
+    if (folder?.owner) return folder.owner;
+    return this.selectedShared() ?? undefined;
+  }
+
+  // owner is kept for backward compatibility with compose and other operations
+  // that don't have a specific folder context.
   protected owner(): string | undefined {
     return this.selectedShared() ?? undefined;
   }
@@ -635,7 +645,11 @@ export class MailComponent implements OnInit {
     const name = prompt('New folder name');
     if (!name || !name.trim()) return;
     try {
-      await this.api.createFolder(name.trim(), this.owner());
+      // Use the current folder's owner, which is already set by the server
+      // and correctly reflects whether we're in a shared mailbox or not.
+      const folder = this.currentFolders().find(f => f.id === this.selectedFolderId());
+      const owner = folder?.owner ?? this.owner();
+      await this.api.createFolder(name.trim(), owner);
       await this.refreshFolders();
       await this.refreshSharedFolders();
     } catch (err) {
@@ -647,7 +661,7 @@ export class MailComponent implements OnInit {
     const name = prompt('Rename folder', f.name);
     if (!name || !name.trim() || name === f.name) return;
     try {
-      await this.api.renameFolder(f.id, name.trim(), this.owner());
+      await this.api.renameFolder(f.id, name.trim(), f.owner);
       await this.refreshFolders();
       await this.refreshSharedFolders();
     } catch (err) {
@@ -656,9 +670,9 @@ export class MailComponent implements OnInit {
   }
 
   protected async emptyFolder(f: Folder): Promise<void> {
-    if (!confirm(`Empty “${f.name}”? Its ${f.total} message(s) move to Trash.`)) return;
+    if (!confirm(`Empty "${f.name}"? Its ${f.total} message(s) move to Trash.`)) return;
     try {
-      await this.api.emptyFolder(f.id, this.owner());
+      await this.api.emptyFolder(f.id, f.owner);
       await this.refreshFolders();
       await this.refreshSharedFolders();
     } catch (err) {
@@ -667,15 +681,15 @@ export class MailComponent implements OnInit {
   }
 
   protected async deleteFolder(f: Folder): Promise<void> {
-    if (!confirm(`Delete folder “${f.name}” and its ${f.total} message(s)?`)) return;
+    if (!confirm(`Delete folder "${f.name}" and its ${f.total} message(s)?`)) return;
     try {
-      await this.api.deleteFolder(f.id, this.owner());
+      await this.api.deleteFolder(f.id, f.owner);
       await this.refreshFolders();
       await this.refreshSharedFolders();
       if (this.selectedFolderId() === f.id) {
         const next = this.currentFolders()[0];
         if (next) {
-          this.selectFolder(next, this.owner());
+          this.selectFolder(next, next.owner);
         } else {
           this.selectedFolderId.set(null);
           this.selection.set({ kind: 'none' });
@@ -715,7 +729,7 @@ export class MailComponent implements OnInit {
       this.listLoading.set(true);
       this.error.set('');
       try {
-        const res = await this.api.search(q, folderId ?? 0, 50, this.owner());
+        const res = await this.api.search(q, folderId ?? 0, 50, this.currentOwner());
         const messages = res.messages ?? [];
         done(() => this.listData.set({ messages, total: messages.length, hasMore: false }));
       } catch (err) {
@@ -736,7 +750,7 @@ export class MailComponent implements OnInit {
       this.listLoading.set(true);
       this.error.set('');
       try {
-        const res = await this.api.listThreads(folderId, 50, this.owner());
+        const res = await this.api.listThreads(folderId, 50, this.currentOwner());
         done(() => this.threads.set(res.threads ?? []));
       } catch (err) {
         done(() => this.error.set(errorMessage(err)));
@@ -749,7 +763,7 @@ export class MailComponent implements OnInit {
     const opts = {
       unread: this.unreadOnly() || undefined,
       flagged: this.flaggedOnly() || undefined,
-      owner: this.owner(),
+      owner: this.currentOwner(),
     };
 
     if (!reset) {
@@ -827,7 +841,7 @@ export class MailComponent implements OnInit {
     event.stopPropagation();
     const set = !hasFlag(m.flags, FLAG_FLAGGED);
     try {
-      await this.api.setFlag(m.id, FLAG_FLAGGED, set, this.owner());
+      await this.api.setFlag(m.id, FLAG_FLAGGED, set, this.currentOwner());
       this.listData.update((cur) => ({
         ...cur,
         messages: cur.messages.map((x) =>
@@ -855,7 +869,7 @@ export class MailComponent implements OnInit {
     this.batchBusy.set(true);
     this.error.set('');
     try {
-      await this.api.move(ids, folderId, this.owner());
+      await this.api.move(ids, folderId, this.currentOwner());
       this.selectedIds.set([]);
       await this.refreshAll();
     } catch (err) {
@@ -877,9 +891,9 @@ export class MailComponent implements OnInit {
     this.batchBusy.set(true);
     this.error.set('');
     try {
-      if (kind === 'archive') await this.api.archive(ids, this.owner());
-      else if (kind === 'trash') await this.api.trash(ids, this.owner());
-      else await this.api.delete(ids, this.owner());
+      if (kind === 'archive') await this.api.archive(ids, this.currentOwner());
+      else if (kind === 'trash') await this.api.trash(ids, this.currentOwner());
+      else await this.api.delete(ids, this.currentOwner());
       this.selectedIds.set([]);
       await this.refreshAll();
     } catch (err) {
@@ -894,7 +908,7 @@ export class MailComponent implements OnInit {
     this.batchBusy.set(true);
     this.error.set('');
     try {
-      await Promise.all(ids.map((id) => this.api.markRead(id, read, this.owner())));
+      await Promise.all(ids.map((id) => this.api.markRead(id, read, this.currentOwner())));
       await this.refreshAll();
     } catch (err) {
       this.error.set(errorMessage(err));
@@ -908,7 +922,7 @@ export class MailComponent implements OnInit {
     this.batchBusy.set(true);
     this.error.set('');
     try {
-      await Promise.all(ids.map((id) => this.api.setFlag(id, FLAG_FLAGGED, set, this.owner())));
+      await Promise.all(ids.map((id) => this.api.setFlag(id, FLAG_FLAGGED, set, this.currentOwner())));
       await this.refreshAll();
     } catch (err) {
       this.error.set(errorMessage(err));

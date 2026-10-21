@@ -236,7 +236,7 @@ func (c *smtpClient) dialSession(ctx context.Context, dialer *net.Dialer, addr s
 		InsecureSkipVerify: c.cfg.InsecureSkipVerify,
 	}
 
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	conn, err := dialSMTP(ctx, dialer, addr)
 	if err != nil {
 		return nil, fmt.Errorf("dial: %w", err)
 	}
@@ -254,11 +254,33 @@ func (c *smtpClient) dialSession(ctx context.Context, dialer *net.Dialer, addr s
 	if !startTLSUnsupported(err) {
 		return nil, fmt.Errorf("STARTTLS: %w", err)
 	}
-	conn, err = dialer.DialContext(ctx, "tcp", addr)
+	conn, err = dialSMTP(ctx, dialer, addr)
 	if err != nil {
 		return nil, fmt.Errorf("dial: %w", err)
 	}
 	return startPlainSession(conn)
+}
+
+// dialSMTP opens the connection the system resolver prefers, and then again
+// over IPv4 alone when that attempt fails.
+//
+// A mail exchanger that publishes an AAAA record while this host has no IPv6
+// route that works is reported as unreachable although it answers on IPv4 all
+// day: the resolver offers the v6 address, the dial hangs or is refused, and a
+// whole domain of mail is deferred behind one address family. Dialling the v4
+// addresses afterwards costs one attempt next to that. When both attempts fail
+// the message says so, because an error naming only the second attempt would
+// hide the family the system actually chose first.
+func dialSMTP(ctx context.Context, dialer *net.Dialer, addr string) (net.Conn, error) {
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err == nil {
+		return conn, nil
+	}
+	v4, v4Err := dialer.DialContext(ctx, "tcp4", addr)
+	if v4Err == nil {
+		return v4, nil
+	}
+	return nil, fmt.Errorf("%v (and over IPv4: %w)", err, v4Err)
 }
 
 // startPlainSession greets a server that is being talked to in the clear.
@@ -375,6 +397,11 @@ type RecipientOutcome struct {
 	Delivered []string
 	Permanent []string
 	Transient []string
+	// Connected says the SMTP session opened at all. A failure before that
+	// point is an exchanger that could not be reached rather than one that
+	// declined the mail, and only the first kind is worth trying at the next
+	// address the destination published.
+	Connected bool
 	// Reasons explains the failures above, keyed by recipient address (or by
 	// "*" when a connection-level failure hit every recipient). Without it a
 	// deferred message says only that something did not work, which is not
@@ -418,6 +445,7 @@ func (c *smtpClient) SendEach(ctx context.Context, from string, to []string, dat
 		out.failTransient(to, fmt.Sprintf("connect %s: %v", addr, err))
 		return out
 	}
+	out.Connected = true
 	defer s.Close()
 	s.CommandTimeout = c.cfg.CommandTimeout
 

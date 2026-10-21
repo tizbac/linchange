@@ -3,7 +3,6 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
-	"net/url"
 
 	"github.com/go-chi/chi/v5"
 
@@ -48,15 +47,11 @@ func (s *Server) mountMeetings(r chi.Router) {
 
 // meetingUID reads the UID out of the path. A meeting's UID is an event UID,
 // which carries an "@", and clients that encode their path segments correctly
-// send that as %40; chi reports the segment as it arrived, so a raw "%40"
-// would look up a UID no meeting has. Decoding here means both spellings
-// reach the same meeting.
+// send that as %40; pathParam is the decoding rule every string parameter in
+// this package goes through, and this name just keeps its call sites saying
+// what they mean. Both spellings reach the same meeting.
 func meetingUID(r *http.Request) string {
-	uid := chi.URLParam(r, "uid")
-	if decoded, err := url.PathUnescape(uid); err == nil {
-		return decoded
-	}
-	return uid
+	return pathParam(r, "uid")
 }
 
 // decodeMeetingBody reads a meeting-sized JSON body with unknown fields
