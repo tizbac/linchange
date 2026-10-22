@@ -26,7 +26,8 @@ test('an organization logo replaces the wordmark and shows in the room', async (
   await signIn(page, USER);
   // Enter the admin area from the header, which already has the session
   // description loaded. A direct load of the route races the restore.
-  await page.getByRole('link', { name: 'Admin' }).click();
+  await page.getByTestId('account-menu').click();
+  await page.getByRole('link', { name: 'Administration' }).click();
   await page.waitForURL(/\/admin\/domains/);
   await page.getByRole('link', { name: 'Organizations' }).click();
   await page.waitForURL(/\/admin\/workgroups/);
@@ -53,13 +54,14 @@ test('an organization logo replaces the wordmark and shows in the room', async (
   await page.locator('textarea[name="attendees"]').fill(GUEST);
   await page.getByRole('button', { name: 'Create and invite' }).click();
   await page.waitForURL(/\/meetings\/[A-Za-z0-9_@-]+$/);
-  await page.getByRole('link', { name: 'Join meeting' }).click();
+  await page.goto((await page.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await page.waitForURL(/\/meetings\/[^/]+\/room/);
   await expect(page.getByTestId('room-org-logo')).toBeVisible({ timeout: 15000 });
 
   // Removing the logo restores the wordmark.
   await page.goto('/dashboard');
-  await page.getByRole('link', { name: 'Admin' }).click();
+  await page.getByTestId('account-menu').click();
+  await page.getByRole('link', { name: 'Administration' }).click();
   await page.waitForURL(/\/admin\/domains/);
   await page.getByRole('link', { name: 'Organizations' }).click();
   await page.waitForURL(/\/admin\/workgroups/);

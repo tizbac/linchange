@@ -13,7 +13,7 @@ import {
   OnInit,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthService } from '../core/auth/auth.service';
 import { ChatAccess, ChatMessage, ChatService, ChatSignal } from '../core/chat/chat.service';
 import { errorMessage } from '../core/http-error';
@@ -247,8 +247,9 @@ interface CallParticipant {
                 </p>
               </div>
               <a
-                [routerLink]="['/meetings', m.uid, 'room']"
-                [queryParams]="guestParams()"
+                [href]="roomUrl()"
+                target="_blank"
+                rel="noopener"
                 class="rounded-lg bg-brand-700 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-800 transition-colors"
                 i18n="@@meeting.join"
               >
@@ -265,6 +266,7 @@ export class MeetingRoomComponent implements OnInit, OnDestroy {
   private readonly route = inject(ActivatedRoute);
   private readonly api = inject(MeetingsApi);
   private readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
 
   readonly chat = inject(ChatService);
 
@@ -434,6 +436,18 @@ export class MeetingRoomComponent implements OnInit, OnDestroy {
   guestParams(): Record<string, string> {
     if (this.mode() !== 'invitee') return {};
     return { to: this.inviteeTo(), token: this.inviteeToken };
+  }
+
+  // roomUrl is the full-page room in the current locale. It is a real href so
+  // the Join button can open it in a new tab, leaving the invitation and its
+  // RSVP buttons in this one.
+  roomUrl(): string {
+    const m = this.meeting();
+    if (!m) return '';
+    const tree = this.router.createUrlTree(['/meetings', m.uid, 'room'], {
+      queryParams: this.guestParams(),
+    });
+    return this.router.serializeUrl(tree);
   }
 
   acceptedCount(m: Meeting): number {

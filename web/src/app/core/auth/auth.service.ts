@@ -276,6 +276,10 @@ export class AuthService {
   }
 
   private get storage(): Storage {
-    return sessionStorage;
+    // localStorage, not sessionStorage: the call room opens in a new tab and
+    // has to find the same session there. The refresh token is already a
+    // long-lived bearer credential, so the XSS exposure is the same; the
+    // difference is only whether a second tab works.
+    return localStorage;
   }
 }

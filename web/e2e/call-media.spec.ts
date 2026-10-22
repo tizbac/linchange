@@ -37,7 +37,7 @@ test('a participant without a camera keeps receiving the other video', async ({ 
   await page.waitForURL(/\/meetings\/[A-Za-z0-9_@-]+$/);
   const meetingUrl = page.url();
 
-  await page.getByRole('link', { name: 'Join meeting' }).click();
+  await page.goto((await page.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await page.waitForURL(/\/meetings\/[^/]+\/room/);
   await expect(page.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
 
@@ -56,7 +56,7 @@ test('a participant without a camera keeps receiving the other video', async ({ 
   });
   await signIn(guest, GUEST);
   await guest.goto(meetingUrl);
-  await guest.getByRole('link', { name: 'Join meeting' }).click();
+  await guest.goto((await guest.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await guest.waitForURL(/\/meetings\/[^/]+\/room/);
 
   await expect(guest.getByTestId('call-tile').filter({ hasText: USER })).toBeVisible({ timeout: 30000 });
@@ -120,17 +120,25 @@ test('a screen share is a separate view-only feed and stops cleanly', async ({ p
   await page.waitForURL(/\/meetings\/[A-Za-z0-9_@-]+$/);
   const meetingUrl = page.url();
 
-  await page.getByRole('link', { name: 'Join meeting' }).click();
+  await page.goto((await page.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await page.waitForURL(/\/meetings\/[^/]+\/room/);
 
   const guest = await browser.newPage();
   await signIn(guest, GUEST);
   await guest.goto(meetingUrl);
-  await guest.getByRole('link', { name: 'Join meeting' }).click();
+  await guest.goto((await guest.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await guest.waitForURL(/\/meetings\/[^/]+\/room/);
 
   await expect(guest.getByTestId('call-tile').filter({ hasText: USER })).toBeVisible({ timeout: 30000 });
   await expect(page.getByTestId('call-tile').filter({ hasText: GUEST })).toBeVisible({ timeout: 30000 });
+
+  // Both cameras must be flowing, not only the guest's view of the organiser.
+  const guestVideo = page.getByTestId('call-tile').filter({ hasText: GUEST }).locator('video');
+  await expect(guestVideo).toBeVisible({ timeout: 30000 });
+  const guestFirst = await guestVideo.evaluate((v) => (v as HTMLVideoElement).currentTime);
+  await page.waitForTimeout(1500);
+  const guestSecond = await guestVideo.evaluate((v) => (v as HTMLVideoElement).currentTime);
+  expect(guestSecond).toBeGreaterThan(guestFirst);
 
   // The organiser shares; the camera tile stays and the screen is a second,
   // separate feed.
@@ -179,7 +187,7 @@ test('a webinar guest cannot share a screen', async ({ page, browser }) => {
   const guest = await browser.newPage();
   await signIn(guest, GUEST);
   await guest.goto(meetingUrl);
-  await guest.getByRole('link', { name: 'Join meeting' }).click();
+  await guest.goto((await guest.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await guest.waitForURL(/\/meetings\/[^/]+\/room/);
   await expect(guest.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
 
@@ -187,7 +195,7 @@ test('a webinar guest cannot share a screen', async ({ page, browser }) => {
   await expect(guest.getByTestId('raise-hand')).toBeVisible({ timeout: 15000 });
   await expect(guest.getByTestId('share-screen')).toHaveCount(0);
 
-  await page.getByRole('link', { name: 'Join meeting' }).click();
+  await page.goto((await page.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await page.waitForURL(/\/meetings\/[^/]+\/room/);
   await expect(page.getByTestId('share-screen')).toBeVisible();
 

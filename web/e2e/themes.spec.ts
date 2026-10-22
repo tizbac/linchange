@@ -37,7 +37,8 @@ test('the theme switches, persists, and accepts an admin-uploaded theme', async 
   await expect(html).toHaveAttribute('data-theme', 'dark', { timeout: 15000 });
 
   // Upload a custom theme as the domain administrator.
-  await page.getByRole('link', { name: 'Admin' }).click();
+  await page.getByTestId('account-menu').click();
+  await page.getByRole('link', { name: 'Administration' }).click();
   await page.waitForURL(/\/admin\/domains/);
   await page.getByRole('link', { name: 'Themes' }).click();
   await page.waitForURL(/\/admin\/themes/);
@@ -64,7 +65,8 @@ test('the theme switches, persists, and accepts an admin-uploaded theme', async 
   // Leave the account on the default and remove the uploaded theme.
   await page.getByRole('combobox', { name: 'Theme' }).selectOption('system');
   await page.goto('/dashboard');
-  await page.getByRole('link', { name: 'Admin' }).click();
+  await page.getByTestId('account-menu').click();
+  await page.getByRole('link', { name: 'Administration' }).click();
   await page.waitForURL(/\/admin\/domains/);
   await page.getByRole('link', { name: 'Themes' }).click();
   await page.waitForURL(/\/admin\/themes/);

@@ -54,6 +54,8 @@ address-book service to install: everything ships in the same server.
 - Light, dark and system themes, plus custom CSS themes uploaded as ZIPs by an
   administrator. The default can be set per organization or with `web.theme`;
   a user's own choice wins.
+- A profile page to change the password, set a recovery email, and enrol an
+  authenticator app from a QR code with one-time recovery codes.
 - Conversation view, search, drafts, signatures, inline images, attachment
   handling and import progress.
 - Two-factor authentication with TOTP and recovery codes, password reset,

@@ -417,6 +417,24 @@ func (s *Sessions) RevokeAllForAddress(ctx context.Context, q Querier, address s
 	return n, nil
 }
 
+// RevokeAllExcept revokes every live session for an address except one. It is
+// what a password change uses: other devices are signed out, while the tab that
+// made the change stays usable.
+func (s *Sessions) RevokeAllExcept(ctx context.Context, q Querier, address, keepSessionID string) (int64, error) {
+	const update = `
+		UPDATE sessions SET revoked_at = now()
+		WHERE address = $1 AND id <> $2 AND revoked_at IS NULL`
+	res, err := q.ExecContext(ctx, update, address, keepSessionID)
+	if err != nil {
+		return 0, fmt.Errorf("store: revoking other sessions: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("store: revoking other sessions: %w", err)
+	}
+	return n, nil
+}
+
 // ListForAddress returns a principal's live sessions, newest first, for the
 // "where am I signed in" view. Each one is shown by id and address so a user can
 // recognise and end a session that is not theirs.

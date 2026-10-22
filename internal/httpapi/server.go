@@ -132,6 +132,13 @@ type Server struct {
 	contacts *contacts.Service
 	// carddav speaks the same store over CardDAV.
 	carddav *carddav.Server
+	// totpVerifier issues and verifies authenticator secrets for the profile
+	// page. It is nil when the deployment has second factors switched off.
+	totpVerifier *totp.Verifier
+	// argon2 and minPasswordLength are the password policy a self-service
+	// change has to satisfy, shared with login and reset.
+	argon2            config.Argon2Params
+	minPasswordLength int
 }
 
 // Options are the inputs to New.
@@ -433,35 +440,38 @@ func New(opts Options) (*Server, error) {
 	})
 
 	return &Server{
-		db:           opts.DB,
-		log:          log,
-		auth:         auth,
-		reset:        r,
-		admin:        adm,
-		tokens:       tokens,
-		sessions:     store.NewSessions(),
-		mail:         mailService,
-		calendar:     calService,
-		caldav:       caldavServer,
-		autodiscover: autodiscoverService,
-		ews:          ewsService,
-		eas:          easService,
-		mapihttp:     mapihttpService,
-		aliases:      store.NewAliases(),
-		shared:       store.NewSharedMailboxes(),
-		grants:       store.NewSharedMailboxGrants(),
-		workgroups:   store.NewWorkgroups(),
-		themes:       store.NewThemes(),
-		defaultTheme: defaultTheme(cfg.Web.Theme),
-		blobs:        opts.Blobs,
-		staticDir:    opts.StaticDir,
-		imports:      opts.Imports,
-		meetings:     meetingsService,
-		chat:         chatService,
-		chatHub:      chatHub,
-		webrtc:       opts.WebRTC,
-		contacts:     contactsService,
-		carddav:      carddavServer,
+		db:                opts.DB,
+		log:               log,
+		auth:              auth,
+		reset:             r,
+		admin:             adm,
+		tokens:            tokens,
+		sessions:          store.NewSessions(),
+		mail:              mailService,
+		calendar:          calService,
+		caldav:            caldavServer,
+		autodiscover:      autodiscoverService,
+		ews:               ewsService,
+		eas:               easService,
+		mapihttp:          mapihttpService,
+		aliases:           store.NewAliases(),
+		shared:            store.NewSharedMailboxes(),
+		grants:            store.NewSharedMailboxGrants(),
+		workgroups:        store.NewWorkgroups(),
+		themes:            store.NewThemes(),
+		defaultTheme:      defaultTheme(cfg.Web.Theme),
+		blobs:             opts.Blobs,
+		staticDir:         opts.StaticDir,
+		imports:           opts.Imports,
+		meetings:          meetingsService,
+		chat:              chatService,
+		chatHub:           chatHub,
+		webrtc:            opts.WebRTC,
+		contacts:          contactsService,
+		carddav:           carddavServer,
+		totpVerifier:      verifier,
+		argon2:            cfg.Auth.Local.Argon2,
+		minPasswordLength: cfg.Auth.Local.MinPasswordLength,
 	}, nil
 }
 
@@ -516,6 +526,11 @@ func (s *Server) Handler() http.Handler {
 		// The organization routes answer "who is in my organization", which the
 		// header, the address book and the invite picker all need.
 		s.mountOrganization(r)
+
+		// The signed-in user's own account: password, recovery address and
+		// second factor. These are separate from /admin because every account
+		// owns them, not only an administrator.
+		s.mountProfile(r)
 
 		// Address books for the web client. CardDAV speaks the same store and
 		// is mounted at the origin root below, where its discovery document

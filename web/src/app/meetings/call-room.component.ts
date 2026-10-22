@@ -8,6 +8,7 @@ import {
   inject,
   signal,
   viewChild,
+  viewChildren,
   type ElementRef,
   OnDestroy,
   OnInit,
@@ -32,7 +33,21 @@ interface CallParticipant {
   standalone: true,
   imports: [NgClass, FormsModule, RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `<main class="flex h-screen flex-col bg-slate-950 text-slate-100">
+  template: `<main class="flex h-screen flex-col bg-slate-950 text-slate-100" (click)="unlockPlayback()">
+  @if (audioBlocked()) {
+    <button
+      type="button"
+      (click)="$event.stopPropagation(); unlockPlayback()"
+      data-testid="enable-audio"
+      class="fixed left-1/2 top-20 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full bg-amber-400 px-5 py-2.5 text-sm font-semibold text-slate-950 shadow-xl transition hover:bg-amber-300"
+    >
+      <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M11 5 6 9H3v6h3l5 4V5Z" />
+        <path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" />
+      </svg>
+      <span i18n="@@call.enableSound">Click to enable sound</span>
+    </button>
+  }
   @if (loading()) {
     <div class="flex flex-1 items-center justify-center">
       <p class="text-sm text-slate-400">Joining the meeting…</p>
@@ -124,6 +139,7 @@ interface CallParticipant {
             <div data-testid="screen-share" class="mb-3 overflow-hidden rounded-xl bg-black ring-1 ring-white/10">
               <div class="relative">
                 <video
+                  #callMedia
                   [srcObject]="screen.stream"
                   autoplay
                   playsinline
@@ -151,6 +167,7 @@ interface CallParticipant {
               >
                 @if (hasVideo(p)) {
                   <video
+                    #callMedia
                     [srcObject]="p.stream"
                     autoplay
                     [muted]="p.self"
@@ -165,7 +182,7 @@ interface CallParticipant {
                     <span class="text-xs text-slate-400" i18n="@@call.cameraOffLabel">Camera off</span>
                   </div>
                   @if (!p.self) {
-                    <audio [srcObject]="p.stream" autoplay></audio>
+                    <audio #callMedia [srcObject]="p.stream" autoplay></audio>
                   }
                 }
 
@@ -445,6 +462,10 @@ export class CallRoomComponent implements OnInit, OnDestroy {
   // button is still on screen until then.
   readonly joining = signal(false);
   readonly callError = signal('');
+  // audioBlocked is true when the browser refused to start remote media
+  // because the room auto-joined without a user gesture. The banner asks for
+  // one tap, which unlocks both sound and video playback.
+  readonly audioBlocked = signal(false);
   // mediaNotice is a soft status: a call works without a camera or microphone,
   // so a refused permission is information rather than an error.
   readonly mediaNotice = signal('');
@@ -518,6 +539,9 @@ export class CallRoomComponent implements OnInit, OnDestroy {
   // a few times a second. It decides which tile is "speaking" and moves it to
   // the front, which is what keeps a full room readable.
   private audioContext?: AudioContext;
+  // audioUnlocked becomes true on the first gesture. Until then the browser
+  // would refuse to start an AudioContext, so the meter is simply deferred.
+  private audioUnlocked = false;
   private readonly meters = new Map<string, AnalyserNode>();
   private meterTimer?: number;
   private readonly meterData = new Uint8Array(512);
@@ -530,6 +554,9 @@ export class CallRoomComponent implements OnInit, OnDestroy {
   draftText = '';
 
   private readonly chatLog = viewChild<ElementRef<HTMLDivElement>>('chatLog');
+  // callMedia is every media element in the gallery. Playback is retried when
+  // the tiles change, and again on the first tap if autoplay was refused.
+  private readonly callMedia = viewChildren<ElementRef<HTMLMediaElement>>('callMedia');
 
   readonly isOrganizer = computed(() => {
     const m = this.meeting();
@@ -564,6 +591,16 @@ export class CallRoomComponent implements OnInit, OnDestroy {
         if (this.attachmentUrls()[att.uid] || this.attachmentLoading.has(att.uid)) continue;
         void this.loadAttachmentPreview(att.uid);
       }
+    });
+
+    // A new tile is a new media element, and a browser that blocked the first
+    // autoplay will block this one too until the user taps. Retrying after the
+    // render keeps the ordinary case (the user did gesture) seamless and marks
+    // the blocked case for the banner.
+    effect(() => {
+      this.participants();
+      this.remoteScreens();
+      window.setTimeout(() => void this.tryPlay(), 0);
     });
   }
 
@@ -809,6 +846,11 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     this.raisedHands.set([]);
     this.floorSpeaker.set('');
     this.participants.set([{ member: me, self: true, stream }]);
+    // A client-side navigation can still be inside the gesture that opened the
+    // room. If it is, the meter may start immediately; otherwise the first tap
+    // on the room unlocks it.
+    this.audioUnlocked =
+      (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation?.isActive === true;
     this.addMeter(me, stream);
 
     // One queue for every relayed frame: offers, answers and ICE candidates
@@ -919,7 +961,7 @@ export class CallRoomComponent implements OnInit, OnDestroy {
       this.sharing.set(true);
       this.screenError.set('');
       for (const pc of this.peers.values()) {
-        this.attachScreenTrack(pc, track);
+        await this.attachScreenTrack(pc, track);
       }
       this.chat.sendControl('screen-start');
     } catch {
@@ -933,7 +975,7 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     this.screenStream = undefined;
     this.sharing.set(false);
     for (const pc of this.peers.values()) {
-      this.attachScreenTrack(pc);
+      void this.attachScreenTrack(pc);
     }
     this.chat.sendControl('screen-stop');
   }
@@ -1069,16 +1111,12 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     }
   }
 
-  private createPeer(remote: string, withMedia = true): RTCPeerConnection {
+  private createPeer(remote: string): RTCPeerConnection {
     const existing = this.peers.get(remote);
     if (existing) return existing;
 
     const pc = new RTCPeerConnection({ iceServers: this.iceServers });
     this.peers.set(remote, pc);
-
-    if (withMedia) {
-      this.attachLocalMedia(pc, true);
-    }
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -1121,6 +1159,13 @@ export class CallRoomComponent implements OnInit, OnDestroy {
         { member: remote, self: false, stream },
       ]);
       this.addMeter(remote, stream);
+      // A remote receiver track can be created muted and unmute when the first
+      // frames arrive. Without a signal write on that event the tile would
+      // stay on the avatar and the <video> would never be created.
+      const refresh = () => this.participants.update((list) => [...list]);
+      event.track.addEventListener('unmute', refresh);
+      event.track.addEventListener('mute', refresh);
+      event.track.addEventListener('ended', refresh);
     };
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
@@ -1136,7 +1181,8 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     if (this.offered.has(remote)) return;
     this.offered.add(remote);
     try {
-      const pc = this.createPeer(remote, true);
+      const pc = this.createPeer(remote);
+      await this.attachLocalMedia(pc, true);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       this.chat.sendSignal('rtc-offer', remote, { sdp: offer });
@@ -1157,9 +1203,9 @@ export class CallRoomComponent implements OnInit, OnDestroy {
       // The offer carries microphone, camera and screen m-lines even from a
       // participant with no devices. Answer it first, then attach whatever
       // local media we have to the transceivers the offer created.
-      const pc = this.createPeer(signal.from, false);
+      const pc = this.createPeer(signal.from);
       await pc.setRemoteDescription(signal.sdp as RTCSessionDescriptionInit);
-      this.attachLocalMedia(pc, false);
+      await this.attachLocalMedia(pc, false);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       await this.flushIce(signal.from, pc);
@@ -1178,12 +1224,12 @@ export class CallRoomComponent implements OnInit, OnDestroy {
   // On the offering side missing lines are added; on the answering side the
   // offer already created them and only their tracks and directions are set.
   // All three are sendrecv, so either side may send at any time.
-  private attachLocalMedia(pc: RTCPeerConnection, offerSide: boolean): void {
+  private async attachLocalMedia(pc: RTCPeerConnection, offerSide: boolean): Promise<void> {
     const audio = this.localStream?.getAudioTracks()[0];
     const camera = this.localStream?.getVideoTracks()[0];
     const screen = this.screenStream?.getVideoTracks()[0];
 
-    const configure = (
+    const configure = async (
       index: number,
       kind: 'audio' | 'video',
       track?: MediaStreamTrack,
@@ -1195,23 +1241,27 @@ export class CallRoomComponent implements OnInit, OnDestroy {
         transceiver = pc.addTransceiver(kind, { direction: 'sendrecv' });
       }
       transceiver.direction = 'sendrecv';
-      void transceiver.sender.replaceTrack(track ?? null);
+      // replaceTrack is a promise. Creating an offer or answer before it
+      // settles is what made the camera track missing from the SDP: the
+      // sender still looked empty at negotiation time.
+      await transceiver.sender.replaceTrack(track ?? null);
     };
 
-    configure(0, 'audio', audio);
-    configure(1, 'video', camera);
-    configure(2, 'video', screen);
+    await configure(0, 'audio', audio);
+    await configure(1, 'video', camera);
+    await configure(2, 'video', screen);
   }
 
   // attachScreenTrack starts (or stops) the screen feed on one existing peer.
   // The m-line was negotiated with the first offer, so no renegotiation is
   // needed and the camera keeps flowing untouched.
-  private attachScreenTrack(pc: RTCPeerConnection, track?: MediaStreamTrack): void {
+  private async attachScreenTrack(pc: RTCPeerConnection, track?: MediaStreamTrack): Promise<void> {
     const transceiver = pc.getTransceivers()[2];
     if (!transceiver) return;
     transceiver.direction = 'sendrecv';
-    void transceiver.sender.replaceTrack(track ?? null);
+    await transceiver.sender.replaceTrack(track ?? null);
   }
+
 
   // addIce applies a candidate now when the peer has a remote description,
   // and queues it otherwise. The queue is drained once the offer or answer
@@ -1278,6 +1328,7 @@ export class CallRoomComponent implements OnInit, OnDestroy {
   // addMeter starts measuring one participant's audio. The analyser is what
   // moves the active speaker to the front of the grid.
   private addMeter(member: string, stream: MediaStream): void {
+    if (!this.audioUnlocked) return;
     if (this.meters.has(member) || stream.getAudioTracks().length === 0) return;
     try {
       this.audioContext ??= new AudioContext();
@@ -1364,6 +1415,45 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     this.floorGranted.set(false);
     this.raisedHands.set([]);
     this.floorSpeaker.set('');
+  }
+
+  // unlockPlayback is the user-gesture escape hatch. Browsers refuse to start
+  // media with sound, and to start an AudioContext, until the page has been
+  // acted on; the call room auto-joins, so a fresh load has not been. Resuming
+  // the meter context and playing every tile here turns the banner's one tap
+  // into a working call.
+  async unlockPlayback(): Promise<void> {
+    if (!this.inCall()) return;
+    this.audioUnlocked = true;
+    // Start playback before any await: the click's activation is what makes an
+    // unmuted play() legal, and an await could move it out of that window.
+    const playback = this.tryPlay();
+    try {
+      this.audioContext ??= new AudioContext();
+      await this.audioContext.resume();
+    } catch {
+      // WebAudio is optional; the call is not.
+    }
+    // Meters created before the context existed were skipped, so give them
+    // another chance now that creating an AudioContext is allowed.
+    for (const participant of this.participants()) {
+      this.addMeter(participant.member, participant.stream);
+    }
+    await playback;
+  }
+
+  private async tryPlay(): Promise<void> {
+    let blocked = false;
+    // Call play() on every element before awaiting anything: an autoplay
+    // policy decision is made per call, and doing them in one synchronous pass
+    // is what keeps a user's tap valid for all of them.
+    const plays = this.callMedia().map((ref) =>
+      ref.nativeElement.play().catch(() => {
+        blocked = true;
+      }),
+    );
+    await Promise.all(plays);
+    this.audioBlocked.set(blocked);
   }
 
   // hasAudio reports whether a participant currently has a live, enabled

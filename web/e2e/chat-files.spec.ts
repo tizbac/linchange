@@ -29,14 +29,14 @@ test('a file sent in the meeting chat is downloadable by the other side', async 
   await page.waitForURL(/\/meetings\/[A-Za-z0-9_@-]+$/);
   const meetingUrl = page.url();
 
-  await page.getByRole('link', { name: 'Join meeting' }).click();
+  await page.goto((await page.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await page.waitForURL(/\/meetings\/[^/]+\/room/);
   await expect(page.locator('input[name="draftText"]')).toBeVisible({ timeout: 20000 });
 
   const guest = await browser.newPage();
   await signIn(guest, GUEST);
   await guest.goto(meetingUrl);
-  await guest.getByRole('link', { name: 'Join meeting' }).click();
+  await guest.goto((await guest.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await guest.waitForURL(/\/meetings\/[^/]+\/room/);
   await expect(guest.locator('input[name="draftText"]')).toBeVisible({ timeout: 20000 });
 

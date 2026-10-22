@@ -67,6 +67,11 @@ export const routes: Routes = [
     canActivate: [requireAuth],
     loadComponent: () => import('./meetings/meetings.component').then((m) => m.MeetingsComponent),
   },
+  {
+    path: 'profile',
+    canActivate: [requireAuth],
+    loadComponent: () => import('./profile/profile.component').then((m) => m.ProfileComponent),
+  },
   // The call itself is its own full-screen page, so the meeting details can
   // stay readable and the gallery has the whole viewport.
   {

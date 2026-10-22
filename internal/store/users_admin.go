@@ -32,7 +32,10 @@ type User struct {
 	Language       string `db:"language"`
 	// Theme is the user's explicit presentation choice, empty when they have
 	// not chosen and the organization or deployment default applies.
-	Theme              string `db:"theme"`
+	Theme string `db:"theme"`
+	// RecoveryEmail is an address the account can be reached at when the
+	// mailbox itself is unavailable. Empty when none is set.
+	RecoveryEmail      string `db:"recovery_email"`
 	MustChangePassword bool   `db:"must_change_password"`
 	// AddressLocal is the lowercased local part, the part before the "@". It is
 	// what the "#sharedmailbox" login convention splits on.
@@ -166,6 +169,7 @@ const userSelect = `
 	SELECT u.address, u.source, u.display_name, u.enabled, u.mailbox_enabled,
 	       u.is_domain_admin, COALESCE(u.quota_bytes, d.default_quota_bytes) AS quota_bytes,
 	       u.daily_send_limit, u.timezone, u.language, COALESCE(u.theme, '') AS theme,
+	       COALESCE(u.recovery_email, '') AS recovery_email,
 	       u.must_change_password, u.address_local, u.last_login_at,
 	       u.created_at, u.updated_at
 	FROM users u
@@ -194,6 +198,21 @@ func (u *Users) SetTheme(ctx context.Context, q Querier, address, theme string) 
 		WHERE address = $1 AND deleted_at IS NULL`, address, strings.TrimSpace(theme))
 	if err != nil {
 		return fmt.Errorf("store: setting user theme: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetRecoveryEmail records an address the account can be reached at when the
+// mailbox is unavailable. An empty value clears it.
+func (u *Users) SetRecoveryEmail(ctx context.Context, q Querier, address, email string) error {
+	res, err := q.ExecContext(ctx, `
+		UPDATE users SET recovery_email = NULLIF($2, ''), updated_at = now()
+		WHERE address = $1 AND deleted_at IS NULL`, address, strings.TrimSpace(email))
+	if err != nil {
+		return fmt.Errorf("store: setting recovery email: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound

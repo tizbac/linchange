@@ -80,12 +80,12 @@ test.describe('meetings', () => {
     // tab so the same address is not represented twice; the anonymous link is
     // the guest that enters the room.
     await guest.close();
-    await page.getByRole('link', { name: 'Join meeting' }).click();
+    await page.goto((await page.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
     await page.waitForURL(/\/meetings\/[^/]+\/room/);
     await expect(page.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
 
     await expect(anon.getByRole('link', { name: 'Join meeting' })).toBeVisible({ timeout: 15000 });
-    await anon.getByRole('link', { name: 'Join meeting' }).click();
+    await anon.goto((await anon.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
     await anon.waitForURL(/\/meetings\/[^/]+\/room/);
     await expect(anon.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
 
@@ -152,7 +152,7 @@ test.describe('meetings', () => {
     const guest = await browser.newPage();
     await signIn(guest, GUEST);
     await openMeeting(guest, title);
-    await guest.getByRole('link', { name: 'Join meeting' }).click();
+    await guest.goto((await guest.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
     await guest.waitForURL(/\/meetings\/[^/]+\/room/);
     await expect(guest.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
     await expect(guest.getByTestId('webinar-note')).toContainText('One-way conference');
@@ -167,7 +167,7 @@ test.describe('meetings', () => {
     await guest.getByTestId('raise-hand').click();
     await expect(guest.getByTestId('raise-hand')).toHaveText('Lower hand');
 
-    await page.getByRole('link', { name: 'Join meeting' }).click();
+    await page.goto((await page.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
     await page.waitForURL(/\/meetings\/[^/]+\/room/);
     const hands = page.getByTestId('raised-hands');
     await expect(hands).toContainText(GUEST, { timeout: 15000 });
@@ -199,11 +199,12 @@ test('a participant can join with camera and microphone denied', async ({ page }
 
   // Refuse both devices, as a browser with no camera/microphone or a person
   // who does not want to share them would. The room must still render a
-  // gallery and the chat.
-  await page.evaluate(() => {
+  // gallery and the chat. The override has to be an init script because the
+  // Join button opens a fresh page load, not a client-side route change.
+  await page.addInitScript(() => {
     navigator.mediaDevices.getUserMedia = () => Promise.reject(new Error('permission denied'));
   });
-  await page.getByRole('link', { name: 'Join meeting' }).click();
+  await page.goto((await page.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await page.waitForURL(/\/meetings\/[^/]+\/room/);
 
   await expect(page.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
@@ -211,4 +212,26 @@ test('a participant can join with camera and microphone denied', async ({ page }
   await expect(page.getByTestId('call-tile').filter({ hasText: 'You' })).toBeVisible();
   await expect(page.locator('input[name="draftText"]')).toBeVisible();
   await expect(page.getByText(/camera and microphone could not be opened/i)).toHaveCount(0);
+});
+
+test('Join meeting opens the room in a new tab with no app shell', async ({ page }) => {
+  const title = `New tab ${RUN}`;
+  await signIn(page, USER);
+  await page.goto('/meetings');
+  await page.getByRole('button', { name: 'New meeting' }).click();
+  await page.getByLabel('Title').fill(title);
+  await page.locator('textarea[name="attendees"]').fill(GUEST);
+  await page.getByRole('button', { name: 'Create and invite' }).click();
+  await page.waitForURL(/\/meetings\/[A-Za-z0-9_@-]+$/);
+
+  const [room] = await Promise.all([
+    page.context().waitForEvent('page'),
+    page.getByRole('link', { name: 'Join meeting' }).click(),
+  ]);
+  await room.waitForURL(/\/room$/);
+  await expect(room.getByTestId('call-grid')).toBeVisible({ timeout: 20000 });
+  // The room is the whole page: no global navigation from the app shell.
+  await expect(room.getByRole('navigation')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: title })).toBeVisible();
+  await room.close();
 });

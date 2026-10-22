@@ -139,6 +139,9 @@ type Enrolment struct {
 	URI string
 	// RecoveryCodes are shown once and never again.
 	RecoveryCodes []string
+	// RecoveryDigests are the stored forms of RecoveryCodes, passed to
+	// Encrypt when the caller persists the enrolment.
+	RecoveryDigests [][]byte
 }
 
 // Enrol creates a new secret for a principal.
@@ -170,14 +173,17 @@ func (v *Verifier) Enrol(address string) (*Enrolment, error) {
 		return nil, err
 	}
 	plain := make([]string, len(codes))
+	digests := make([][]byte, len(codes))
 	for i, c := range codes {
 		plain[i] = c.Code
+		digests[i] = c.Digest
 	}
 
 	return &Enrolment{
-		Secret:        key.Secret(),
-		URI:           key.URL(),
-		RecoveryCodes: plain,
+		Secret:          key.Secret(),
+		URI:             key.URL(),
+		RecoveryCodes:   plain,
+		RecoveryDigests: digests,
 	}, nil
 }
 

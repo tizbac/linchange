@@ -24,7 +24,7 @@ test('clicking Join while the room auto-joins does not freeze the call', async (
   await page.waitForURL(/\/meetings\/[A-Za-z0-9_@-]+$/);
   const meetingUrl = page.url();
 
-  await page.getByRole('link', { name: 'Join meeting' }).click();
+  await page.goto((await page.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await page.waitForURL(/\/meetings\/[^/]+\/room/);
   await expect(page.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
 
@@ -40,7 +40,7 @@ test('clicking Join while the room auto-joins does not freeze the call', async (
   });
   await signIn(guest, GUEST);
   await guest.goto(meetingUrl);
-  await guest.getByRole('link', { name: 'Join meeting' }).click();
+  await guest.goto((await guest.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await guest.waitForURL(/\/meetings\/[^/]+\/room/);
 
   // The room auto-joins. While that is in flight the button is disabled, so
