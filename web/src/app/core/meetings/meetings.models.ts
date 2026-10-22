@@ -37,6 +37,9 @@ export interface MeetingDraft {
   // and what comes back is people — a client-side expansion would invite
   // whoever the list said when the page loaded.
   groups?: number[];
+  // oneWay makes the meeting a webinar: only the organiser speaks, and a
+  // guest asks for the floor by raising a hand.
+  oneWay?: boolean;
 }
 
 // Meeting is the whole meeting as the room page draws it.
@@ -53,8 +56,12 @@ export interface Meeting {
   cancelled: boolean;
   organizer: Attendee;
   joinUrl: string;
-  // imGroupId is absent for invitees and on servers without chat.
-  imGroupId?: string;
+  // chatConversation is the native chat room's uid. It is absent for
+  // invitees (no account to open it with) and if the room could not be made.
+  chatConversation?: string;
+  // oneWay marks a webinar: only the presenter speaks unless a guest is
+  // granted the floor.
+  oneWay?: boolean;
   attendees: MeetingAttendee[];
   createdAt: string;
 }
@@ -76,7 +83,8 @@ export interface MeetingListItem {
   organizer: string;
   location?: string;
   role: string;
-  imGroupId?: string;
+  chatConversation?: string;
+  oneWay?: boolean;
   attendeeCount: number;
   acceptedCount: number;
   myPartStat?: string;
@@ -88,12 +96,3 @@ export interface ResendResult {
   inviteFailures?: string[];
 }
 
-// IMSession is what the server mints so the browser can log this account into
-// OpenIM: the SDK identity, a token for it, and the two addresses the SDK
-// connects through.
-export interface IMSession {
-  userId: string;
-  token: string;
-  wsAddr: string;
-  apiAddr: string;
-}

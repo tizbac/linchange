@@ -118,8 +118,8 @@ func TestFormatWhen(t *testing.T) {
 	}
 }
 
-// TestIdentifiers checks the three identifiers this package mints against the
-// properties they exist for: unguessability, uniqueness, and OpenIM's rules.
+// TestIdentifiers checks the identifiers this package mints against the
+// properties they exist for: unguessability and uniqueness.
 func TestIdentifiers(t *testing.T) {
 	uid, err := newUID()
 	if err != nil {
@@ -138,18 +138,5 @@ func TestIdentifiers(t *testing.T) {
 	}
 	if len(token) != 32 {
 		t.Errorf("token = %d characters, want 32 hex digits (128 bits)", len(token))
-	}
-
-	// The room id must be derivable from the UID alone - that is what makes
-	// it stable across a resend - and must satisfy OpenIM's alphabet.
-	group := imGroupIDFor(uid)
-	if !strings.HasPrefix(group, "mtg_") {
-		t.Errorf("room id = %q, want an mtg_ prefix", group)
-	}
-	if group != imGroupIDFor(uid) {
-		t.Error("room id is not stable for one meeting")
-	}
-	if group == imGroupIDFor(uid+"x") {
-		t.Error("two meetings share a room id")
 	}
 }

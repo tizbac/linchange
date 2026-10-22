@@ -149,6 +149,23 @@ function defaults() {
               }
             </div>
 
+            <!-- A webinar is chosen here, with the invitation, so every guest
+                 knows before they join that only the organiser will speak. -->
+            <label class="flex items-start gap-3 rounded-lg border border-slate-200 p-3 sm:col-span-2">
+              <input
+                type="checkbox"
+                [(ngModel)]="oneWay"
+                name="oneWay"
+                class="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+              />
+              <span>
+                <span class="text-sm font-medium text-slate-700">One-way conference (webinar)</span>
+                <span class="block text-xs text-slate-400">
+                  Only you speak. Guests stay muted and can raise a hand to ask for the floor.
+                </span>
+              </span>
+            </label>
+
             <label class="block">
               <span class="text-sm font-medium text-slate-700">Location <span class="font-normal text-slate-400">(optional; the join link fills in)</span></span>
               <input
@@ -278,6 +295,7 @@ export class MeetingsComponent {
   description = '';
   location = '';
   attendeesText = '';
+  oneWay = false;
   timezone = browserZone();
   date = defaults().date;
   startTime = defaults().start;
@@ -355,6 +373,7 @@ export class MeetingsComponent {
       // invitation carries is the group's membership when it was sent rather
       // than when the form was filled in.
       groups: groups.length > 0 ? groups : undefined,
+      oneWay: this.oneWay || undefined,
     };
 
     this.saving.set(true);

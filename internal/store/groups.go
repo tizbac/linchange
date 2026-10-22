@@ -179,6 +179,81 @@ func (g *Groups) Members(ctx context.Context, q Querier, groupID int64) ([]strin
 	return out, nil
 }
 
+// ForMember returns the groups an address belongs to.
+//
+// A listed group asks its member rows. The organization's Everyone group asks
+// the directory: the address must be an enabled mailbox in one of the
+// organization's domains. That is the same rule Members expands, expressed
+// here so a chat room can find its groups without walking every group in the
+// organization.
+func (g *Groups) ForMember(ctx context.Context, q Querier, address string) ([]WorkgroupGroup, error) {
+	out := make([]WorkgroupGroup, 0, 4)
+	err := q.SelectContext(ctx, &out, `
+		SELECT `+groupColumns+`, `+listedMemberCount+` AS member_count
+		FROM workgroup_groups g
+		WHERE EXISTS (
+		    SELECT 1 FROM workgroup_group_members m
+		    WHERE m.group_id = g.id AND m.address = $1
+		) OR (
+		    g.everyone AND EXISTS (
+		        SELECT 1
+		        FROM users u
+		        WHERE u.address = $1 AND u.enabled
+		          AND lower(split_part(u.address, '@', 2)) IN (
+		              SELECT w.domain FROM workgroups w WHERE w.id = g.workgroup_id
+		              UNION
+		              SELECT d.name FROM domains d WHERE d.workgroup_id = g.workgroup_id
+		          )
+		    )
+		)
+		ORDER BY g.everyone DESC, g.name`, address)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing a member's workgroup groups: %w", err)
+	}
+	for i := range out {
+		if out[i].Everyone {
+			count, err := g.everyoneCount(ctx, q, out[i].WorkgroupID)
+			if err != nil {
+				return nil, err
+			}
+			out[i].MemberCount = count
+		}
+	}
+	return out, nil
+}
+
+// IsMember reports whether the address belongs to the group.
+//
+// It is the targeted form of Members, for callers that ask about one person
+// rather than listing everyone: a listed group asks its member rows, and an
+// Everyone group asks the directory with the same domain rule.
+func (g *Groups) IsMember(ctx context.Context, q Querier, groupID int64, address string) (bool, error) {
+	var member bool
+	err := q.GetContext(ctx, &member, `
+		SELECT CASE WHEN g.everyone THEN EXISTS (
+		    SELECT 1
+		    FROM users u
+		    WHERE u.address = $2 AND u.enabled
+		      AND lower(split_part(u.address, '@', 2)) IN (
+		          SELECT w.domain FROM workgroups w WHERE w.id = g.workgroup_id
+		          UNION
+		          SELECT d.name FROM domains d WHERE d.workgroup_id = g.workgroup_id
+		      )
+		) ELSE EXISTS (
+		    SELECT 1 FROM workgroup_group_members m
+		    WHERE m.group_id = g.id AND m.address = $2
+		) END
+		FROM workgroup_groups g
+		WHERE g.id = $1`, groupID, address)
+	if IsNotFound(err) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, fmt.Errorf("store: checking workgroup group membership: %w", err)
+	}
+	return member, nil
+}
+
 // AddMember adds an address to a listed group.
 //
 // An Everyone group refuses: the address is in it already if it belongs to the

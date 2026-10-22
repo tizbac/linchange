@@ -76,18 +76,11 @@ test.describe('meetings', () => {
     await page.reload();
     await expect(page.getByText(/2 guests, 1 accepted/)).toBeVisible();
 
-    // Chat, through the real OpenIM SDK: the organiser opens the room and
-    // says something; the guest's own page, opening the same room from a
-    // different browser context, reads it back from server history.
-    //
-    // A stack that runs no OpenIM still holds the meeting — invitations go
-    // out and answers come back either way — it simply has no room to talk
-    // in, and offers no button to open one. That case is skipped rather than
-    // failed: everything above already checks what a room-less server shows,
-    // and a failure here would say nothing about the meeting at all.
+    // Chat is native to linchange: the organiser opens the meeting's room and
+    // says something; the guest's own page, in a different browser context,
+    // reads it back through the same room.
     const chatButton = page.getByRole('button', { name: 'Open chat' });
-    await chatButton.waitFor({ state: 'visible', timeout: 15000 }).catch(() => undefined);
-    test.skip((await chatButton.count()) === 0, 'this stack runs no OpenIM, so the meeting has no chat room');
+    await expect(chatButton).toBeVisible({ timeout: 15000 });
 
     await chatButton.click();
     const composer = page.locator('input[name="draftText"]');
@@ -99,5 +92,73 @@ test.describe('meetings', () => {
     await openMeeting(guest, TITLE);
     await guest.getByRole('button', { name: 'Open chat' }).click();
     await expect(guest.locator('#chatLog').getByText(MARKER)).toBeVisible({ timeout: 25000 });
+
+    // The other direction: the guest speaks and the organiser's open room
+    // receives it live, so the wiring is not one-way.
+    const guestMarker = `guest marker ${RUN}`;
+    const guestComposer = guest.locator('input[name="draftText"]');
+    await guestComposer.fill(guestMarker);
+    await guest.locator('form').filter({ has: guestComposer }).getByRole('button', { name: 'Send' }).click();
+    await expect(page.locator('#chatLog').getByText(guestMarker)).toBeVisible({ timeout: 15000 });
+
+    // The call: both join the meeting's room and each browser connects to the
+    // other. The server only relays signalling; the fake devices give both
+    // sides a real stream to negotiate.
+    await page.getByRole('button', { name: 'Join call' }).click();
+    await expect(page.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
+    await guest.getByRole('button', { name: 'Join call' }).click();
+    await expect(guest.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
+
+    // Each side sees the other as a remote tile once the offer/answer and ICE
+    // have completed. The tile is labelled with the other member's address.
+    await expect(guest.getByTestId('call-tile').filter({ hasText: USER })).toBeVisible({ timeout: 30000 });
+    await expect(page.getByTestId('call-tile').filter({ hasText: GUEST })).toBeVisible({ timeout: 30000 });
+  });
+
+  test('a one-way meeting keeps guests muted until the presenter grants the floor', async ({ page, browser }) => {
+    const title = `Webinar ${RUN}`;
+
+    await signIn(page, USER);
+    await page.goto('/meetings');
+    await page.getByRole('button', { name: 'New meeting' }).click();
+    await page.getByLabel('Title').fill(title);
+    await page.locator('textarea[name="attendees"]').fill(GUEST);
+    await page.getByLabel('One-way conference (webinar)').check();
+    await page.getByRole('button', { name: 'Create and invite' }).click();
+    await page.waitForURL(/\/meetings\/[A-Za-z0-9_@-]+$/);
+    await expect(page.getByText('You are the organiser.')).toBeVisible();
+
+    // The guest joins with no microphone: a webinar is listen-first.
+    const guest = await browser.newPage();
+    await signIn(guest, GUEST);
+    await openMeeting(guest, title);
+    await guest.getByRole('button', { name: 'Join call' }).click();
+    await expect(guest.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
+    await expect(guest.getByTestId('webinar-note')).toContainText('One-way conference');
+    await expect(guest.getByTestId('raise-hand')).toHaveText('Raise hand');
+    await expect(guest.getByRole('button', { name: 'Unmute' })).toBeVisible();
+
+    // Unmuting without the floor is refused, with a reason rather than silence.
+    await guest.getByRole('button', { name: 'Unmute' }).click();
+    await expect(guest.getByText('Raise your hand to ask the presenter for the floor.')).toBeVisible();
+
+    // Raising a hand asks for the floor; the presenter sees the request.
+    await guest.getByTestId('raise-hand').click();
+    await expect(guest.getByTestId('raise-hand')).toHaveText('Lower hand');
+
+    await page.getByRole('button', { name: 'Join call' }).click();
+    const hands = page.getByTestId('raised-hands');
+    await expect(hands).toContainText(GUEST, { timeout: 15000 });
+    await hands.getByRole('button', { name: 'Allow to speak' }).click();
+
+    // The floor is granted: the guest's microphone opens and both sides see
+    // who is speaking.
+    await expect(guest.getByRole('button', { name: 'Mute' })).toBeVisible({ timeout: 15000 });
+    await expect(guest.getByTestId('webinar-note')).toContainText(`${GUEST} has the floor.`);
+    await expect(page.getByTestId('webinar-note')).toContainText(`${GUEST} has the floor.`);
+
+    // The presenter can take the floor back.
+    await hands.getByRole('button', { name: 'Mute' }).click();
+    await expect(guest.getByRole('button', { name: 'Unmute' })).toBeVisible({ timeout: 15000 });
   });
 });

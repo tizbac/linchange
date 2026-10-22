@@ -18,29 +18,32 @@ type Meeting struct {
 	UID       string `db:"uid"`
 	EventID   int64  `db:"event_id"`
 	Organizer string `db:"organizer"`
-	// IMGroupID is the OpenIM group holding the meeting's chat room. It is
-	// empty when chat is off or the group could not be created, because a
-	// meeting whose room failed to open is still a meeting.
-	IMGroupID string    `db:"im_group_id"`
+	// ChatConversation is the uid of the meeting's chat room in the local chat
+	// store. It is empty when the room could not be opened, because a meeting
+	// whose room failed is still a meeting.
+	ChatConversation string `db:"chat_conversation"`
+	// OneWay marks a webinar: only the presenter speaks until the presenter
+	// grants somebody the floor.
+	OneWay    bool      `db:"one_way"`
 	CreatedAt time.Time `db:"created_at"`
 }
 
 // MeetingInvite is one guest's row in meeting_invites: the per-guest secret
-// their RSVP link carries, and the OpenIM user id they were provisioned as,
-// which is empty for a guest who is not a user of this server.
+// their RSVP link carries, and whether they are a user of this server (which is
+// what decides whether they can open the meeting's chat room).
 type MeetingInvite struct {
 	MeetingID int64  `db:"meeting_id"`
 	Address   string `db:"address"`
-	IMUserID  string `db:"im_user_id"`
+	IsLocal   bool   `db:"local"`
 	RSVPToken string `db:"rsvp_token"`
 }
 
 // Local reports whether this guest has an account here.
 //
-// It is read off the provisioned id rather than asked of the users table
-// again: the id is assigned exactly when the address was a user of this
-// server at invitation time, which is the fact the meeting cares about.
-func (i MeetingInvite) Local() bool { return i.IMUserID != "" }
+// It is recorded when the invitation is made, when the address is checked
+// against the users table, because that is the fact the meeting cares about and
+// the users table may have changed by the time somebody asks.
+func (i MeetingInvite) Local() bool { return i.IsLocal }
 
 // Meetings reads and writes the meetings and meeting_invites tables.
 type Meetings struct{}
@@ -55,19 +58,19 @@ func NewMeetings() *Meetings { return &Meetings{} }
 // answered by anybody - worse than having no meeting at all.
 func (m *Meetings) Create(ctx context.Context, q Querier, meeting Meeting, invites []MeetingInvite) (Meeting, error) {
 	err := q.QueryRowxContext(ctx, `
-		INSERT INTO meetings (uid, event_id, organizer, im_group_id)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO meetings (uid, event_id, organizer, chat_conversation, one_way)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id, created_at`,
-		meeting.UID, meeting.EventID, meeting.Organizer, meeting.IMGroupID,
+		meeting.UID, meeting.EventID, meeting.Organizer, meeting.ChatConversation, meeting.OneWay,
 	).Scan(&meeting.ID, &meeting.CreatedAt)
 	if err != nil {
 		return Meeting{}, fmt.Errorf("store: recording the meeting: %w", err)
 	}
 	for _, inv := range invites {
 		if _, err := q.ExecContext(ctx, `
-			INSERT INTO meeting_invites (meeting_id, address, im_user_id, rsvp_token)
+			INSERT INTO meeting_invites (meeting_id, address, local, rsvp_token)
 			VALUES ($1, $2, $3, $4)`,
-			meeting.ID, inv.Address, inv.IMUserID, inv.RSVPToken); err != nil {
+			meeting.ID, inv.Address, inv.IsLocal, inv.RSVPToken); err != nil {
 			return Meeting{}, fmt.Errorf("store: recording an invitation: %w", err)
 		}
 	}
@@ -78,7 +81,7 @@ func (m *Meetings) Create(ctx context.Context, q Querier, meeting Meeting, invit
 func (m *Meetings) ByUID(ctx context.Context, q Querier, uid string) (Meeting, error) {
 	var out Meeting
 	err := q.GetContext(ctx, &out, `
-		SELECT id, uid, event_id, organizer, im_group_id, created_at
+		SELECT id, uid, event_id, organizer, chat_conversation, one_way, created_at
 		FROM meetings WHERE uid = $1`, uid)
 	if IsNotFound(err) {
 		return Meeting{}, ErrNotFound
@@ -93,7 +96,7 @@ func (m *Meetings) ByUID(ctx context.Context, q Querier, uid string) (Meeting, e
 func (m *Meetings) Invite(ctx context.Context, q Querier, meetingID int64, address string) (MeetingInvite, error) {
 	var out MeetingInvite
 	err := q.GetContext(ctx, &out, `
-		SELECT meeting_id, address, im_user_id, rsvp_token
+		SELECT meeting_id, address, local, rsvp_token
 		FROM meeting_invites WHERE meeting_id = $1 AND address = $2`,
 		meetingID, address)
 	if IsNotFound(err) {
@@ -112,7 +115,7 @@ func (m *Meetings) Invite(ctx context.Context, q Querier, meetingID int64, addre
 func (m *Meetings) Invites(ctx context.Context, q Querier, meetingID int64) ([]MeetingInvite, error) {
 	var out []MeetingInvite
 	err := q.SelectContext(ctx, &out, `
-		SELECT meeting_id, address, im_user_id, rsvp_token
+		SELECT meeting_id, address, local, rsvp_token
 		FROM meeting_invites WHERE meeting_id = $1
 		ORDER BY address`, meetingID)
 	if err != nil {
@@ -121,10 +124,11 @@ func (m *Meetings) Invites(ctx context.Context, q Querier, meetingID int64) ([]M
 	return out, nil
 }
 
-// SetIMGroup records the OpenIM room a meeting's conversation lives in.
-func (m *Meetings) SetIMGroup(ctx context.Context, q Querier, id int64, groupID string) error {
+// SetChatConversation records the local chat room a meeting's conversation
+// lives in.
+func (m *Meetings) SetChatConversation(ctx context.Context, q Querier, id int64, conversation string) error {
 	if _, err := q.ExecContext(ctx,
-		`UPDATE meetings SET im_group_id = $2 WHERE id = $1`, id, groupID); err != nil {
+		`UPDATE meetings SET chat_conversation = $2 WHERE id = $1`, id, conversation); err != nil {
 		return fmt.Errorf("store: recording the meeting's chat room: %w", err)
 	}
 	return nil
@@ -159,7 +163,7 @@ type MeetingListRow struct {
 func (m *Meetings) ListFor(ctx context.Context, q Querier, address string) ([]MeetingListRow, error) {
 	var out []MeetingListRow
 	err := q.SelectContext(ctx, &out, `
-		SELECT m.id, m.uid, m.event_id, m.organizer, m.im_group_id, m.created_at,
+		SELECT m.id, m.uid, m.event_id, m.organizer, m.chat_conversation, m.one_way, m.created_at,
 		       e.summary, e.location, e.dtstart, e.dtend, e.timezone,
 		       e.status, e.cancelled,
 		       (SELECT count(*) FROM attendees a WHERE a.event_id = e.id)

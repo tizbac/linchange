@@ -7,20 +7,16 @@
 // client - CalDAV, EWS, EAS, the web calendar - sees it and answers it with
 // the protocol it already speaks. What this package adds is what those
 // protocols do not carry: the invitation email with a per-guest reply link,
-// and the OpenIM room a meeting's conversation lives in.
+// and the native chat room a meeting's conversation lives in.
 //
-// OpenIM users are linchange users. Nothing here creates an OpenIM account
-// that is not one of ours: the administrator token lives only in this
-// process, and the SDK tokens the browser uses are minted here after the
-// session is already authenticated. An external invitee gets the invitation
-// and the reply link, but no chat account, because they have no account to
-// have one with.
+// The room's members are the organiser and every guest with an account here.
+// An external invitee gets the invitation and the reply link, but no room,
+// because they have no account to open it with.
 package meetings
 
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
@@ -38,6 +34,7 @@ import (
 
 	"github.com/linchange/linchange/internal/auth/policy"
 	"github.com/linchange/linchange/internal/calendar"
+	"github.com/linchange/linchange/internal/chat"
 	"github.com/linchange/linchange/internal/ical"
 	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/webmail"
@@ -51,12 +48,6 @@ var ErrInvalid = errors.New("meetings: invalid request")
 // ErrDenied means the caller may not do this to this meeting: answering an
 // invitation for somebody else, calling off a meeting one does not organise.
 var ErrDenied = errors.New("meetings: denied")
-
-// ErrChatUnavailable means the OpenIM backend is not configured or did not
-// answer. It is deliberately separate from a server fault: a meeting works
-// without its chat room, and the browser should be able to tell "this
-// deployment has no chat" from "something is broken".
-var ErrChatUnavailable = errors.New("meetings: chat is not available")
 
 // maxTitle bounds the title, which becomes the email subject: RFC 5322 caps a
 // header line at 998 octets and "Invitation: " is already spent.
@@ -88,6 +79,9 @@ type Draft struct {
 	// itself would invite whoever the list said a moment ago, which is exactly
 	// the set of people this field exists to stop going stale.
 	Groups []int64 `json:"groups,omitempty"`
+	// OneWay makes this a webinar: the organiser is the only speaker, and a
+	// guest asks for the floor by raising a hand.
+	OneWay bool `json:"oneWay,omitempty"`
 }
 
 // AttendeeStatus is one guest and everything known about them: the answer
@@ -118,11 +112,14 @@ type Meeting struct {
 	Cancelled   bool      `json:"cancelled"`
 	Organizer   Attendee  `json:"organizer"`
 	JoinURL     string    `json:"joinUrl"`
-	// IMGroupID is the meeting's OpenIM room, empty when the deployment has
-	// no chat or the room could not be opened. It is withheld from the
-	// unauthenticated view: an invitee answers by link and has no chat
-	// account to use it with.
-	IMGroupID string           `json:"imGroupId,omitempty"`
+	// ChatConversation is the uid of the meeting's native chat room, empty
+	// when the room could not be opened. It is withheld from the
+	// unauthenticated view: an invitee answers by link and has no account to
+	// open the room with.
+	ChatConversation string `json:"chatConversation,omitempty"`
+	// OneWay marks a webinar: only the presenter speaks unless the presenter
+	// grants a guest the floor.
+	OneWay    bool             `json:"oneWay,omitempty"`
 	Attendees []AttendeeStatus `json:"attendees"`
 	CreatedAt time.Time        `json:"createdAt"`
 }
@@ -141,12 +138,13 @@ type MeetingListItem struct {
 	Location  string    `json:"location,omitempty"`
 	// Role is "organizer" or "attendee": what the caller is to this meeting,
 	// which is what decides which controls the row shows.
-	Role          string    `json:"role"`
-	IMGroupID     string    `json:"imGroupId,omitempty"`
-	AttendeeCount int       `json:"attendeeCount"`
-	AcceptedCount int       `json:"acceptedCount"`
-	MyPartStat    string    `json:"myPartStat,omitempty"`
-	CreatedAt     time.Time `json:"createdAt"`
+	Role             string    `json:"role"`
+	ChatConversation string    `json:"chatConversation,omitempty"`
+	OneWay           bool      `json:"oneWay,omitempty"`
+	AttendeeCount    int       `json:"attendeeCount"`
+	AcceptedCount    int       `json:"acceptedCount"`
+	MyPartStat       string    `json:"myPartStat,omitempty"`
+	CreatedAt        time.Time `json:"createdAt"`
 }
 
 // CreateResult reports what creating a meeting did, including which guests
@@ -164,25 +162,14 @@ type ResendResult struct {
 	InviteFailures []string `json:"inviteFailures,omitempty"`
 }
 
-// IMSession is what the browser needs to log the organiser or a guest into
-// OpenIM: the SDK identity, a token minted for it, and the two addresses the
-// SDK connects through.
-type IMSession struct {
-	UserID  string `json:"userId"`
-	Token   string `json:"token"`
-	WSAddr  string `json:"wsAddr"`
-	APIAddr string `json:"apiAddr"`
-}
-
 // Options are the inputs to New.
 type Options struct {
 	DB       *sqlx.DB
 	Mail     *webmail.Service
 	Calendar *calendar.Service
-	// OpenIM is the chat backend. Nil means the deployment has no chat, which
-	// is a supported state rather than a missing dependency: invitations and
-	// answers work the same without it.
-	OpenIM *OpenIMClient
+	// Chat is the native chat backend. Nil means the service runs without chat
+	// rooms, which tests do; invitations and answers work the same either way.
+	Chat *chat.Service
 	// PublicURL is the base address invitation links are built from, with no
 	// trailing slash.
 	PublicURL string
@@ -197,7 +184,7 @@ type Service struct {
 	events    *store.Events
 	meetings  *store.Meetings
 	users     *store.Users
-	openim    *OpenIMClient
+	chat      *chat.Service
 	publicURL string
 	log       *slog.Logger
 }
@@ -224,7 +211,7 @@ func New(opts Options) (*Service, error) {
 		events:   store.NewEvents(),
 		meetings: store.NewMeetings(),
 		users:    store.NewUsers(),
-		openim:   opts.OpenIM,
+		chat:     opts.Chat,
 		// One trailing slash is removed so joining a path does not double
 		// the separator. Only one: trimming every trailing slash would turn
 		// a base address that somehow arrived without a host ("https://")
@@ -234,9 +221,9 @@ func New(opts Options) (*Service, error) {
 	}, nil
 }
 
-// ChatEnabled reports whether this deployment has a chat backend at all, so
-// a handler can answer "there is no chat here" without attempting a call.
-func (s *Service) ChatEnabled() bool { return s.openim != nil }
+// ChatEnabled reports whether this deployment has a chat backend at all, so a
+// handler can answer "there is no chat here" without attempting a call.
+func (s *Service) ChatEnabled() bool { return s.chat != nil }
 
 // JoinURL is the link every invitation carries: the meeting's page on this
 // server.
@@ -351,13 +338,12 @@ func (s *Service) Create(ctx context.Context, who policy.Principal, d Draft) (*C
 		}
 		invitees = invitees[:0]
 		for _, g := range guests {
-			// A guest has an OpenIM identity exactly when they are a user of
-			// this server. The lookup is the whole of that decision: an
-			// external address is invited by mail and answered by link, and
-			// is never given a chat account.
+			// A guest can open the meeting's chat room exactly when they are a
+			// user of this server. An external address is invited by mail and
+			// answers by link, and has no account to chat with.
 			inv := store.MeetingInvite{Address: g.Address}
 			if _, err := store.LoadPrincipal(ctx, tx, g.Address); err == nil {
-				inv.IMUserID = ImUserID(g.Address)
+				inv.IsLocal = true
 			}
 			if inv.RSVPToken, err = randomToken(); err != nil {
 				return err
@@ -368,6 +354,7 @@ func (s *Service) Create(ctx context.Context, who policy.Principal, d Draft) (*C
 			UID:       uid,
 			EventID:   row.ID,
 			Organizer: organizer,
+			OneWay:    d.OneWay,
 		}, invitees)
 		return err
 	})
@@ -380,7 +367,7 @@ func (s *Service) Create(ctx context.Context, who policy.Principal, d Draft) (*C
 		return nil, err
 	}
 
-	s.openRoomBestEffort(ctx, &meeting, organizer, orgName, invitees, title)
+	s.openChatRoomBestEffort(ctx, &meeting, organizer, invitees, title)
 
 	view, err := s.view(ctx, meeting, invitees)
 	if err != nil {
@@ -403,21 +390,22 @@ func (s *Service) List(ctx context.Context, who policy.Principal) ([]MeetingList
 			role = "organizer"
 		}
 		out = append(out, MeetingListItem{
-			UID:           row.UID,
-			Title:         row.Summary,
-			Start:         row.DTStart,
-			End:           row.DTEnd,
-			Timezone:      row.Timezone,
-			Status:        row.Status,
-			Cancelled:     row.Cancelled,
-			Organizer:     row.Organizer,
-			Location:      row.Location,
-			Role:          role,
-			IMGroupID:     row.IMGroupID,
-			AttendeeCount: row.AttendeeCount,
-			AcceptedCount: row.AcceptedCount,
-			MyPartStat:    row.MyPartStat,
-			CreatedAt:     row.CreatedAt,
+			UID:              row.UID,
+			Title:            row.Summary,
+			Start:            row.DTStart,
+			End:              row.DTEnd,
+			Timezone:         row.Timezone,
+			Status:           row.Status,
+			Cancelled:        row.Cancelled,
+			Organizer:        row.Organizer,
+			Location:         row.Location,
+			Role:             role,
+			ChatConversation: row.ChatConversation,
+			OneWay:           row.OneWay,
+			AttendeeCount:    row.AttendeeCount,
+			AcceptedCount:    row.AcceptedCount,
+			MyPartStat:       row.MyPartStat,
+			CreatedAt:        row.CreatedAt,
 		})
 	}
 	return out, nil
@@ -465,7 +453,7 @@ func (s *Service) GetByInvite(ctx context.Context, uid, address, token string) (
 	if err != nil {
 		return nil, err
 	}
-	view.IMGroupID = ""
+	view.ChatConversation = ""
 	return view, nil
 }
 
@@ -493,7 +481,7 @@ func (s *Service) Resend(ctx context.Context, who policy.Principal, uid string) 
 	if err != nil {
 		return nil, err
 	}
-	s.openRoomBestEffort(ctx, &meeting, meeting.Organizer, "", invitees, row.Summary)
+	s.openChatRoomBestEffort(ctx, &meeting, meeting.Organizer, invitees, row.Summary)
 
 	failures, err := s.mailInvites(ctx, who, meeting, invitees, row.Summary)
 	if err != nil {
@@ -588,34 +576,6 @@ func (s *Service) InviteRSVP(ctx context.Context, uid, address, token, partstat 
 		return "", err
 	}
 	return partstat, nil
-}
-
-// IMSession mints the SDK login for the caller, provisioning their OpenIM
-// user first. It is the only place an SDK token is issued, and it issues one
-// for the authenticated caller and for nobody else.
-func (s *Service) IMSession(ctx context.Context, who policy.Principal) (*IMSession, error) {
-	if s.openim == nil {
-		return nil, fmt.Errorf("%w: this deployment has no chat backend", ErrChatUnavailable)
-	}
-	address := strings.ToLower(strings.TrimSpace(who.Address))
-	nickname := address
-	if u, err := s.users.Get(ctx, s.db, address); err == nil && u.DisplayName != "" {
-		nickname = u.DisplayName
-	}
-	userID := ImUserID(address)
-	if err := s.openim.EnsureUser(ctx, userID, nickname); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrChatUnavailable, err)
-	}
-	token, err := s.openim.UserToken(ctx, userID)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrChatUnavailable, err)
-	}
-	return &IMSession{
-		UserID:  userID,
-		Token:   token,
-		WSAddr:  s.openim.WSAddr(),
-		APIAddr: s.openim.APIAddr(),
-	}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -747,59 +707,50 @@ func (s *Service) displayName(ctx context.Context, address string) string {
 	return ""
 }
 
-// openRoomBestEffort provisions the organiser and every local guest in
-// OpenIM and opens the meeting's room. Every failure is swallowed into the
-// log: the room is a convenience the meeting works without, and a chat
-// backend being down must not take invitations with it.
-func (s *Service) openRoomBestEffort(ctx context.Context, meeting *store.Meeting,
-	organizer, organizerName string, invitees []store.MeetingInvite, title string) {
-	if s.openim == nil || meeting.IMGroupID != "" {
+// openChatRoomBestEffort opens the meeting's native chat room. Every failure is
+// logged and swallowed: a meeting works without its room, and a chat problem
+// must not take the invitations with it.
+//
+// The room's members are the organiser and every guest who has an account here.
+// An external guest gets the invitation and the RSVP link but no chat identity,
+// because there is no account to have one with.
+func (s *Service) openChatRoomBestEffort(ctx context.Context, meeting *store.Meeting,
+	organizer string, invitees []store.MeetingInvite, title string) {
+	if s.chat == nil || meeting.ChatConversation != "" {
 		return
 	}
-	owner := ImUserID(organizer)
-	if organizerName == "" {
-		organizerName = s.displayName(ctx, organizer)
-	}
-	if organizerName == "" {
-		organizerName = organizer
-	}
-	if err := s.openim.EnsureUser(ctx, owner, organizerName); err != nil {
-		s.log.Warn("meeting chat: provisioning the organiser failed",
-			"meeting", meeting.UID, "error", err)
-		return
-	}
-	var members []string
+	organizer = strings.ToLower(strings.TrimSpace(organizer))
+	members := []string{organizer}
 	for _, inv := range invitees {
-		if inv.IMUserID == "" {
+		if !inv.IsLocal {
 			continue
 		}
-		if inv.IMUserID == owner {
-			continue
+		address := strings.ToLower(strings.TrimSpace(inv.Address))
+		if address != "" && address != organizer {
+			members = append(members, address)
 		}
-		name := s.displayName(ctx, inv.Address)
-		if name == "" {
-			name = inv.Address
-		}
-		if err := s.openim.EnsureUser(ctx, inv.IMUserID, name); err != nil {
-			// One guest failing to provision must not keep the rest out of
-			// the room; the missing one is retried by a resend.
-			s.log.Warn("meeting chat: provisioning a guest failed",
-				"meeting", meeting.UID, "guest", inv.Address, "error", err)
-			continue
-		}
-		members = append(members, inv.IMUserID)
 	}
-	groupID := imGroupIDFor(meeting.UID)
-	if err := s.openim.CreateGroup(ctx, groupID, title, owner, members); err != nil {
+
+	conv, err := s.chat.Create(ctx, s.db, chat.CreateRequest{
+		Kind:       chat.KindMeeting,
+		Title:      title,
+		Members:    members,
+		CreatedBy:  organizer,
+		MeetingUID: meeting.UID,
+		OneWay:     meeting.OneWay,
+		Presenter:  organizer,
+	})
+	if err != nil {
 		s.log.Warn("meeting chat: opening the room failed",
 			"meeting", meeting.UID, "error", err)
 		return
 	}
-	if err := s.meetings.SetIMGroup(ctx, s.db, meeting.ID, groupID); err != nil {
+	if err := s.meetings.SetChatConversation(ctx, s.db, meeting.ID, conv.UID); err != nil {
 		s.log.Warn("meeting chat: recording the room failed",
 			"meeting", meeting.UID, "error", err)
+		return
 	}
-	meeting.IMGroupID = groupID
+	meeting.ChatConversation = conv.UID
 }
 
 // view assembles the whole meeting from its rows.
@@ -825,21 +776,22 @@ func (s *Service) view(ctx context.Context, meeting store.Meeting, invitees []st
 		attendees = append(attendees, status)
 	}
 	return &Meeting{
-		UID:         meeting.UID,
-		EventID:     meeting.EventID,
-		Title:       row.Summary,
-		Description: eventDescription(row.ICalBlob),
-		Location:    row.Location,
-		Start:       row.DTStart,
-		End:         row.DTEnd,
-		Timezone:    row.Timezone,
-		Status:      row.Status,
-		Cancelled:   row.Cancelled,
-		Organizer:   Attendee{Address: strings.ToLower(meeting.Organizer), Name: row.Organizer},
-		JoinURL:     s.JoinURL(meeting.UID),
-		IMGroupID:   meeting.IMGroupID,
-		Attendees:   attendees,
-		CreatedAt:   meeting.CreatedAt,
+		UID:              meeting.UID,
+		EventID:          meeting.EventID,
+		Title:            row.Summary,
+		Description:      eventDescription(row.ICalBlob),
+		Location:         row.Location,
+		Start:            row.DTStart,
+		End:              row.DTEnd,
+		Timezone:         row.Timezone,
+		Status:           row.Status,
+		Cancelled:        row.Cancelled,
+		Organizer:        Attendee{Address: strings.ToLower(meeting.Organizer), Name: row.Organizer},
+		JoinURL:          s.JoinURL(meeting.UID),
+		ChatConversation: meeting.ChatConversation,
+		OneWay:           meeting.OneWay,
+		Attendees:        attendees,
+		CreatedAt:        meeting.CreatedAt,
 	}, nil
 }
 
@@ -1024,15 +976,4 @@ func randomToken() (string, error) {
 		return "", fmt.Errorf("meetings: generating a reply token: %w", err)
 	}
 	return hex.EncodeToString(buf[:]), nil
-}
-
-// imGroupIDFor derives the OpenIM room id from the meeting UID.
-//
-// It is derived rather than generated so that the id is stable, matches
-// OpenIM's alphabet (letters, digits, underscore), and cannot collide with
-// another meeting's room: the UID is unique, so any injective encoding of it
-// is too.
-func imGroupIDFor(uid string) string {
-	sum := sha256.Sum256([]byte("linchange.meeting.group\x00" + uid))
-	return "mtg_" + hex.EncodeToString(sum[:16])
 }

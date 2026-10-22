@@ -37,6 +37,7 @@ import (
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/caldav"
 	"github.com/linchange/linchange/internal/calendar"
+	"github.com/linchange/linchange/internal/chat"
 	"github.com/linchange/linchange/internal/delivery"
 	"github.com/linchange/linchange/internal/eas"
 	"github.com/linchange/linchange/internal/ews"
@@ -107,8 +108,12 @@ type Server struct {
 	// simply not mounted.
 	imports *imapimport.Service
 	// meetings creates meetings: the invitation emails with their reply
-	// links, the answers, and the OpenIM room behind the chat panel.
+	// links, the answers, and the native chat room behind the chat panel.
 	meetings *meetings.Service
+	// chat is the durable chat store, and chatHub carries it live over a
+	// WebSocket.
+	chat    *chat.Service
+	chatHub *chat.Hub
 }
 
 // Options are the inputs to New.
@@ -325,25 +330,20 @@ func New(opts Options) (*Server, error) {
 	// iOS/macOS Calendar, Evolution, etc.). It uses the same calendar service.
 	caldavServer := caldav.NewServer("/caldav", calService, opts.DB, mailVerifier)
 
+	// Chat is native: it is built here, over the same database, and there is no
+	// external chat server to configure or to be down. The hub is the live
+	// socket layer; the service is the durable one.
+	chatService := chat.New(opts.DB, log)
+	chatHub := chat.NewHub(chatService, log)
+
 	// The meetings service turns a calendar event into an invitation: one
-	// email per guest with their own reply link, and a chat room in OpenIM
-	// when the deployment runs one. The OpenIM client is built only when
-	// configured - no config means no chat, which is a state the service
-	// answers honestly rather than failing to construct over.
-	var openIM *meetings.OpenIMClient
-	if cfg.Meetings.OpenIM.Enabled {
-		openIM = meetings.NewOpenIMClient(meetings.OpenIMConfig{
-			APIAddr:     cfg.Meetings.OpenIM.APIAddr,
-			WSAddr:      cfg.Meetings.OpenIM.WSAddr,
-			AdminUserID: cfg.Meetings.OpenIM.AdminUserID,
-			Secret:      cfg.Meetings.OpenIM.AdminSecret,
-		})
-	}
+	// email per guest with their own reply link, and a chat room in the local
+	// chat store.
 	meetingsService, err := meetings.New(meetings.Options{
 		DB:        opts.DB,
 		Mail:      mailService,
 		Calendar:  calService,
-		OpenIM:    openIM,
+		Chat:      chatService,
 		PublicURL: cfg.MeetingsPublicURL(),
 		Logger:    log,
 	})
@@ -420,6 +420,8 @@ func New(opts Options) (*Server, error) {
 		staticDir:    opts.StaticDir,
 		imports:      opts.Imports,
 		meetings:     meetingsService,
+		chat:         chatService,
+		chatHub:      chatHub,
 	}, nil
 }
 
@@ -474,6 +476,11 @@ func (s *Server) Handler() http.Handler {
 		// are mounted in the same group but outside requireAuth, because the
 		// person following an invitation link has no session to present.
 		s.mountMeetings(r)
+
+		// Chat is native and lives on the same server: the REST routes for
+		// history and conversation lists, and the WebSocket that carries
+		// messages, typing, receipts and WebRTC signalling.
+		s.mountChat(r)
 	})
 
 	// CalDAV is not part of the REST surface: a calendar client is handed
@@ -689,9 +696,6 @@ func mapErrorCode(err error) int {
 	}
 	if errors.Is(err, meetings.ErrDenied) {
 		return http.StatusForbidden
-	}
-	if errors.Is(err, meetings.ErrChatUnavailable) {
-		return http.StatusServiceUnavailable
 	}
 	if errors.Is(err, ErrInvalid) {
 		return http.StatusBadRequest

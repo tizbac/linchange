@@ -3,7 +3,6 @@ import { Injectable, inject } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import {
   CreateMeetingResult,
-  IMSession,
   Meeting,
   MeetingDraft,
   MeetingListItem,
@@ -45,13 +44,6 @@ export class MeetingsApi {
 
   rsvp(uid: string, partStat: string): Promise<Meeting> {
     return this.post(`/meetings/${encodeURIComponent(uid)}/rsvp`, { partStat });
-  }
-
-  // imSession mints the OpenIM login for the signed-in caller. The server
-  // answers 503 on a deployment without chat, which the room page reports
-  // rather than treats as a broken invitation.
-  imSession(): Promise<IMSession> {
-    return this.post('/meetings/im/session', {});
   }
 
   // --- invitee (token-gated, no session) ---

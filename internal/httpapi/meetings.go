@@ -31,11 +31,6 @@ func (s *Server) mountMeetings(r chi.Router) {
 
 	r.Route("/meetings", func(r chi.Router) {
 		r.Use(s.requireAuth)
-		// The static session route is registered before the parameterised
-		// ones for the same reason /messages/search is: a wildcard that
-		// swallowed it would turn "im" into a meeting UID nobody has.
-		r.Post("/im/session", s.handleMeetingIMSession)
-
 		r.Get("/", s.handleListMeetings)
 		r.Post("/", s.handleCreateMeeting)
 		r.Get("/{uid}", s.handleGetMeeting)
@@ -176,16 +171,4 @@ func (s *Server) handleMeetingInviteRSVP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]string{"partStat": partstat})
-}
-
-// handleMeetingIMSession mints the OpenIM SDK session for the signed-in
-// caller - provisioning their user first, so an account that has never
-// chatted before exists by the time the browser logs in.
-func (s *Server) handleMeetingIMSession(w http.ResponseWriter, r *http.Request) {
-	sess, err := s.meetings.IMSession(r.Context(), Principal(r.Context()))
-	if err != nil {
-		s.writeError(w, mapErrorCode(err), err.Error())
-		return
-	}
-	s.writeJSON(w, http.StatusOK, sess)
 }

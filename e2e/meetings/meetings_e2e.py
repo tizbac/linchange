@@ -3,8 +3,8 @@
 
 Drives the whole meeting lifecycle the way real clients would, asserting every
 wire surface with independent, spec-derived tooling - the Python standard
-library plus the OpenIM JS SDK the browser itself uses. Nothing here imports
-linchange code or reuses the server's codecs:
+library only. Nothing here imports linchange code or reuses the server's
+codecs:
 
   1.  create a meeting over the HTTP API (one local guest, one external)
   2.  read the local guest's invitation from their IMAP inbox and parse the
@@ -15,9 +15,8 @@ linchange code or reuses the server's codecs:
   4.  answer as the external guest through the public, token-gated view - no
       session, exactly like the link in their invitation - and confirm the
       organiser sees the answer
-  5.  mint an OpenIM session as the organiser and hand it to the JS SDK, which
-      logs into the live OpenIM deployment, opens the meeting's room, sends a
-      message and reads it back
+  5.  send a chat message into the meeting's native room as the organiser and
+      read it back as the guest
   6.  have the local guest accept by email (iTIP METHOD:REPLY over SMTP) and
       confirm the organiser's view reflects it - the inbound iTIP hook
   7.  resend, then cancel, and confirm the CANCEL mail and the delivery-failure
@@ -35,7 +34,6 @@ import re
 import smtplib
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -199,21 +197,6 @@ def poll_until(pred, timeout, interval=1.0):
     return None
 
 
-def run_sdk(payload):
-    """Hand a minted session to the JS SDK check and require IM-OK back."""
-    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-        json.dump(payload, f)
-        session_file = f.name
-    run = subprocess.run(
-        ["node", str(REPO / "e2e" / "meetings" / "im_session_check.cjs"), session_file],
-        capture_output=True, text=True, timeout=120,
-        cwd=str(REPO),
-    )
-    if run.returncode != 0 or "IM-OK" not in run.stdout:
-        fail(f"live OpenIM check ({payload.get('mode')})",
-             (run.stdout + run.stderr).strip()[-600:])
-
-
 # --------------------------------------------------------------------------
 # The meeting
 # --------------------------------------------------------------------------
@@ -283,12 +266,12 @@ def main():
         fail("joinUrl", meeting.get("joinUrl"))
     if meeting.get("inviteFailures"):
         fail("invite delivery reported failures", str(meeting["inviteFailures"]))
-    if not meeting.get("imGroupId"):
-        fail("no imGroupId although chat is configured")
+    if not meeting.get("chatConversation"):
+        fail("no chatConversation although chat is native")
     by_addr = {a["address"]: a for a in meeting["attendees"]}
     if not by_addr[GUEST]["local"] or by_addr[EXTERNAL]["local"]:
         fail("local flags on attendees", json.dumps(by_addr))
-    ok(f"meeting created ({uid}, room {meeting['imGroupId']})")
+    ok(f"meeting created ({uid}, room {meeting['chatConversation']})")
 
     # --- 2. local guest reads their invitation over IMAP ------------------
     invite = poll_until(lambda: find_invitation(uid, GUEST), 60)
@@ -307,7 +290,7 @@ def main():
 
     # --- 4. external guest answers through the public view ----------------
     view = api("GET", f"/meeting-invites/{uid}?to={urllib.parse.quote(EXTERNAL)}&token={ext_token}")
-    if view.get("imGroupId"):
+    if view.get("chatConversation"):
         fail("public invite view leaks the chat room id")
     if len(view.get("attendees", [])) != 2:
         fail("public view guest list", json.dumps(view.get("attendees")))
@@ -326,27 +309,26 @@ def main():
     api_expect("POST", f"/meetings/{uid}/rsvp", {"partStat": "ACCEPTED"}, token, 403)
     ok("external guest answered over their token link; organiser sees ACCEPTED")
 
-    # --- 5. OpenIM sessions minted, verified with the real JS SDK ----------
-    # Two clients, the two directions a real meeting works in: the organiser
-    # sends a marker, the guest's own SDK reads it back from server history.
+    # --- 5. native chat: the organiser writes, the guest reads -------------
+    # The meeting's room is a linchange conversation. The REST path is the one
+    # a client without a socket can use; the browser socket stores through the
+    # same service and is exercised by the Playwright suite.
+    room = meeting.get("chatConversation")
+    if not room:
+        fail("no chatConversation although chat is native")
     marker = f"room check {uid[:8]} {int(time.time())}"
-    im = api("POST", "/meetings/im/session", {}, token)
-    for field in ("userId", "token", "wsAddr", "apiAddr"):
-        if not im.get(field):
-            fail(f"organiser IM session misses {field}", json.dumps(im)[:200])
-    run_sdk({**im, "groupID": meeting["imGroupId"], "mode": "send", "text": marker})
+    sent = api("POST", f"/chat/conversations/{room}/messages", {"body": marker}, token)
+    if sent.get("body") != marker:
+        fail("organiser's chat message was not stored", json.dumps(sent)[:200])
 
     guest_login = api("POST", "/auth/login", {"login": GUEST, "password": PASSWORD})
     guest_access = guest_login.get("access_token")
     if not guest_access:
         fail("guest login returned no access_token", json.dumps(guest_login)[:200])
-    guest_im = api("POST", "/meetings/im/session", {}, guest_access)
-    for field in ("userId", "token", "wsAddr", "apiAddr"):
-        if not guest_im.get(field):
-            fail(f"guest IM session misses {field}", json.dumps(guest_im)[:200])
-    run_sdk({**guest_im, "groupID": meeting["imGroupId"], "mode": "receive",
-             "text": marker, "fromUserID": im["userId"]})
-    ok("OpenIM: organiser's message sent, guest's real SDK client received it")
+    history = api("GET", f"/chat/conversations/{room}/messages", token=guest_access)
+    if marker not in [m.get("body") for m in history.get("messages", [])]:
+        fail("guest does not see the organiser's chat message", json.dumps(history)[:300])
+    ok("native chat: organiser sent over HTTP, guest read it from history")
 
     # --- 6. local guest accepts by email; the inbound hook applies it -----
     # The reply is composed the way a real client does: it echoes the event

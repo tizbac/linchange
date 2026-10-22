@@ -471,36 +471,24 @@ func (v *validator) validateExchange() {
 	}
 }
 
-// validateMeetings checks the meeting integration. Everything is optional: a
-// deployment that says nothing about meetings simply has no meeting UI, and
-// one that enables OpenIM without pointing at a server is refused at startup
-// rather than at the first invitation.
+// validateMeetings checks the meeting settings. Everything is optional: a
+// deployment that says nothing about meetings has no public URL to check, and
+// one that sets it must point at an address an invitee can reach. Chat is
+// native, so there is no external chat server to validate.
 func (v *validator) validateMeetings() {
 	c := v.server()
 	m := c.Meetings
-	if m.PublicURL != "" {
-		if !strings.HasPrefix(m.PublicURL, "http://") && !strings.HasPrefix(m.PublicURL, "https://") {
-			v.addf("meetings.public_url %q must start with http:// or https://", m.PublicURL)
-		}
-		if strings.HasSuffix(m.PublicURL, "/") {
-			v.addf("meetings.public_url %q must not end with /", m.PublicURL)
-		}
-	}
-	o := m.OpenIM
-	if !o.Enabled {
+	if m.PublicURL == "" {
 		return
 	}
-	if o.APIAddr == "" {
-		v.addf("meetings.openim.api_addr is required when OpenIM is enabled")
+	if !strings.HasPrefix(m.PublicURL, "http://") && !strings.HasPrefix(m.PublicURL, "https://") {
+		v.addf("meetings.public_url %q must start with http:// or https://", m.PublicURL)
 	}
-	if o.WSAddr == "" {
-		v.addf("meetings.openim.ws_addr is required when OpenIM is enabled; it is the address the browser SDK connects to")
-	}
-	if o.AdminSecret == "" {
-		v.addf("meetings.openim.admin_secret is required when OpenIM is enabled")
+	if strings.HasSuffix(m.PublicURL, "/") {
+		v.addf("meetings.public_url %q must not end with /", m.PublicURL)
 	}
 	if !c.Listener.HTTP.Enabled() && !c.Listener.HTTPS.Enabled() {
-		v.addf("meetings are enabled but neither listeners.http nor listeners.https is set")
+		v.addf("meetings.public_url is set but neither listeners.http nor listeners.https is set")
 	}
 }
 

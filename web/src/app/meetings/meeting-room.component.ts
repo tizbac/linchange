@@ -1,6 +1,5 @@
 import { NgClass } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
-import type { MessageItem } from '@openim/client-sdk';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -16,16 +15,22 @@ import {
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { AuthService } from '../core/auth/auth.service';
+import { ChatMessage, ChatService, ChatSignal } from '../core/chat/chat.service';
 import { errorMessage } from '../core/http-error';
 import { MeetingsApi } from '../core/meetings/meetings-api';
 import { Meeting } from '../core/meetings/meetings.models';
 import { formatWhen, partStatClass, partStatLabel } from '../core/meetings/meetings.ui';
-import {
-  OpenIMService,
-  messagePlaceholder,
-  messageText,
-  sdkError,
-} from '../core/meetings/openim.service';
+
+// A four-person grid: the local tile plus three remote ones. A full mesh can
+// carry more, and does — the participants past this limit are still connected
+// and audible; only their video tiles are left out.
+const MAX_REMOTE_TILES = 3;
+
+interface CallParticipant {
+  member: string;
+  self: boolean;
+  stream: MediaStream;
+}
 
 // MeetingRoomComponent is one page with two visitors: a signed-in user, who
 // may be the organiser or a guest of this meeting, and an invitee who followed
@@ -227,10 +232,146 @@ import {
           </table>
         </section>
 
-        <!-- Chat: a signed-in guest or the organiser, in a meeting that has
-             a room. Invitees have no chat account to enter it with, and a
-             cancelled meeting has no conversation worth continuing. -->
-        @if (mode() === 'member' && !m.cancelled && m.imGroupId) {
+        @if (mode() === 'member' && !m.cancelled && m.chatConversation) {
+          <!-- Call: a mesh of peer connections. The server introduces the
+               participants and relays their signalling; the media itself never
+               passes through it. -->
+          <section class="mt-5 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+            <div class="flex items-center justify-between">
+              <h2 class="text-lg font-semibold text-slate-900">Call</h2>
+              @if (inCall()) {
+                <button
+                  type="button"
+                  (click)="leaveCall()"
+                  class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                >
+                  Leave call
+                </button>
+              } @else {
+                <button
+                  type="button"
+                  (click)="joinCall()"
+                  class="rounded-lg bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-800 transition-colors"
+                >
+                  Join call
+                </button>
+              }
+            </div>
+            @if (callError()) {
+              <p class="mt-3 text-sm text-rose-600">{{ callError() }}</p>
+            }
+            @if (inCall()) {
+              <div class="mt-3 grid gap-3 sm:grid-cols-2" data-testid="call-grid">
+                @for (p of visibleParticipants(); track p.member) {
+                  <div
+                    data-testid="call-tile"
+                    class="rounded-lg"
+                    [ngClass]="p.member === activeSpeaker() ? 'ring-2 ring-emerald-500' : ''"
+                  >
+                    <video
+                      [srcObject]="p.stream"
+                      autoplay
+                      [muted]="p.self"
+                      playsinline
+                      class="aspect-video w-full rounded-lg bg-slate-900 object-cover"
+                    ></video>
+                    <p class="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                      <span>{{ p.self ? 'You' : p.member }}</span>
+                      @if (p.member === activeSpeaker()) {
+                        <span class="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800">
+                          speaking
+                        </span>
+                      }
+                      @if (p.member === floorSpeaker()) {
+                        <span class="rounded bg-brand-100 px-1.5 py-0.5 text-[10px] font-medium text-brand-800">
+                          floor
+                        </span>
+                      }
+                    </p>
+                  </div>
+                }
+                @if (hiddenParticipants().length > 0) {
+                  <div
+                    class="flex items-center justify-center rounded-lg bg-slate-50 p-4 text-sm text-slate-500 ring-1 ring-slate-200"
+                    data-testid="more-participants"
+                  >
+                    +{{ hiddenParticipants().length }} more listening
+                  </div>
+                }
+              </div>
+              <!-- Participants past the four tiles are still heard: their
+                   audio plays without a video tile. -->
+              @for (p of hiddenParticipants(); track p.member) {
+                <audio [srcObject]="p.stream" autoplay></audio>
+              }
+              <div class="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  (click)="toggleMic()"
+                  class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                >
+                  {{ micOn() ? 'Mute' : 'Unmute' }}
+                </button>
+                <button
+                  type="button"
+                  (click)="toggleCamera()"
+                  class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                >
+                  {{ cameraOn() ? 'Camera off' : 'Camera on' }}
+                </button>
+                @if (m.oneWay && !isOrganizer()) {
+                  <button
+                    type="button"
+                    (click)="toggleHand()"
+                    data-testid="raise-hand"
+                    class="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100 transition-colors"
+                  >
+                    {{ handRaised() ? 'Lower hand' : 'Raise hand' }}
+                  </button>
+                }
+              </div>
+              @if (m.oneWay) {
+                <p class="mt-2 text-xs text-slate-500" data-testid="webinar-note">
+                  One-way conference: only the presenter speaks.
+                  @if (floorSpeaker()) {
+                    <span class="font-medium text-slate-700">{{ floorSpeaker() }}</span> has the floor.
+                  }
+                </p>
+              }
+              @if (isOrganizer() && m.oneWay && raisedHands().length > 0) {
+                <div class="mt-3 rounded-lg bg-amber-50 p-3 ring-1 ring-amber-200" data-testid="raised-hands">
+                  <p class="text-sm font-medium text-amber-900">Raised hands</p>
+                  @for (hand of raisedHands(); track hand) {
+                    <div class="mt-1 flex flex-wrap items-center justify-between gap-2">
+                      <span class="text-sm text-amber-900">{{ hand }}</span>
+                      <span class="flex gap-2">
+                        <button
+                          type="button"
+                          (click)="allowSpeak(hand)"
+                          class="rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-800 transition-colors"
+                        >
+                          Allow to speak
+                        </button>
+                        @if (floorSpeaker() === hand) {
+                          <button
+                            type="button"
+                            (click)="revokeSpeak(hand)"
+                            class="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 transition-colors"
+                          >
+                            Mute
+                          </button>
+                        }
+                      </span>
+                    </div>
+                  }
+                </div>
+              }
+            }
+          </section>
+
+          <!-- Chat: a signed-in guest or the organiser, in a meeting that has
+               a room. Invitees have no account to enter it with, and a
+               cancelled meeting has no conversation worth continuing. -->
           <section class="mt-5 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
             <div class="flex items-center justify-between">
               <h2 class="text-lg font-semibold text-slate-900">Meeting chat</h2>
@@ -266,7 +407,7 @@ import {
                       No messages yet. Say something.
                     </p>
                   }
-                  @for (msg of chat.messages(); track msg.clientMsgID) {
+                  @for (msg of chat.messages(); track msg.id || msg.clientId) {
                     <div class="mb-3 flex gap-2" [ngClass]="isSelf(msg) ? 'flex-row-reverse' : ''">
                       <div
                         class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-medium text-slate-600"
@@ -274,26 +415,26 @@ import {
                         {{ initial(msg) }}
                       </div>
                       <div class="min-w-0" [ngClass]="isSelf(msg) ? 'text-right' : ''">
-                        <div class="text-xs text-slate-400">{{ msg.senderNickname || msg.sendID }}</div>
+                        <div class="text-xs text-slate-400">{{ msg.sender }}</div>
                         <div
-                          class="mt-0.5 inline-block rounded-lg px-3 py-1.5 text-sm text-slate-800"
+                          class="mt-0.5 inline-block rounded-lg px-3 py-1.5 text-sm text-slate-800 whitespace-pre-wrap"
                           [ngClass]="isSelf(msg) ? 'bg-brand-100' : 'bg-white ring-1 ring-slate-200'"
                         >
-                          @if (textOf(msg); as text) {
-                            {{ text }}
-                          } @else if (placeholderOf(msg); as what) {
-                            <span class="italic text-slate-400">{{ what }}</span>
-                          }
+                          {{ msg.body }}
                         </div>
                         <div class="mt-0.5 text-[10px] text-slate-400">{{ timeOf(msg) }}</div>
                       </div>
                     </div>
+                  }
+                  @if (chat.typing()) {
+                    <p class="text-xs italic text-slate-400">{{ chat.typing() }} is typing…</p>
                   }
                 </div>
                 <form class="mt-3 flex gap-2" (ngSubmit)="sendChat()">
                   <input
                     type="text"
                     [(ngModel)]="draftText"
+                    (ngModelChange)="chat.notifyTyping()"
                     name="draftText"
                     placeholder="Message the room"
                     autocomplete="off"
@@ -308,7 +449,7 @@ import {
                   </button>
                 </form>
               } @else if (chat.state() === 'error') {
-                <p class="mt-3 text-sm text-rose-600">{{ chat.error() || 'The chat server could not be reached.' }}</p>
+                <p class="mt-3 text-sm text-rose-600">{{ chat.error() || 'The chat connection could not be opened.' }}</p>
                 <button
                   type="button"
                   (click)="openChat()"
@@ -331,7 +472,7 @@ export class MeetingRoomComponent implements OnInit, OnDestroy {
   private readonly api = inject(MeetingsApi);
   private readonly auth = inject(AuthService);
 
-  readonly chat = inject(OpenIMService);
+  readonly chat = inject(ChatService);
 
   readonly meeting = signal<Meeting | null>(null);
   readonly loading = signal(true);
@@ -344,6 +485,68 @@ export class MeetingRoomComponent implements OnInit, OnDestroy {
   readonly chatOpen = signal(false);
   readonly chatBusy = signal(false);
   readonly chatError = signal('');
+
+  // --- call state ---
+  readonly inCall = signal(false);
+  readonly callError = signal('');
+  readonly micOn = signal(true);
+  readonly cameraOn = signal(true);
+  // participants is every connected participant, local included. The grid
+  // shows at most four of them; the rest are heard but not seen.
+  readonly participants = signal<CallParticipant[]>([]);
+  readonly levels = signal<Record<string, number>>({});
+  readonly activeSpeaker = signal('');
+  readonly raisedHands = signal<string[]>([]);
+  readonly floorSpeaker = signal('');
+  readonly handRaised = signal(false);
+  readonly floorGranted = signal(false);
+
+  // visibleParticipants keeps the local tile and fills the remaining three
+  // slots, with whoever is speaking moved to the front.
+  readonly visibleParticipants = computed(() => {
+    const all = this.orderedParticipants();
+    const self = all.filter((p) => p.self);
+    const others = all.filter((p) => !p.self).slice(0, MAX_REMOTE_TILES);
+    const chosen = [...self, ...others];
+    const active = this.activeSpeaker();
+    return chosen.sort((a, b) => {
+      if (a.member === active && b.member !== active) return -1;
+      if (b.member === active && a.member !== active) return 1;
+      return 0;
+    });
+  });
+
+  // hiddenParticipants are the ones past the grid limit. Their audio still
+  // plays; only their video is left out.
+  readonly hiddenParticipants = computed(() => {
+    const shown = new Set(this.visibleParticipants().map((p) => p.member));
+    return this.orderedParticipants().filter((p) => !p.self && !shown.has(p.member));
+  });
+
+  private orderedParticipants = computed(() => {
+    const active = this.activeSpeaker();
+    return [...this.participants()].sort((a, b) => {
+      if (a.member === active && b.member !== active) return -1;
+      if (b.member === active && a.member !== active) return 1;
+      return 0;
+    });
+  });
+
+  private localStream?: MediaStream;
+  private readonly peers = new Map<string, RTCPeerConnection>();
+  private signalUnsub?: () => void;
+  // A public STUN server is enough to discover a route on most networks. A
+  // deployment that needs TURN for restrictive NATs can add one here; the
+  // server only relays signalling and never sees the media either way.
+  private readonly iceServers: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
+
+  // Voice activity is measured with one WebAudio analyser per stream, polled
+  // a few times a second. It decides which tile is "speaking" and moves it to
+  // the front, which is what keeps a full room readable.
+  private audioContext?: AudioContext;
+  private readonly meters = new Map<string, AnalyserNode>();
+  private meterTimer?: number;
+  private readonly meterData = new Uint8Array(512);
 
   readonly answerOptions = ['ACCEPTED', 'TENTATIVE', 'DECLINED'] as const;
 
@@ -413,9 +616,9 @@ export class MeetingRoomComponent implements OnInit, OnDestroy {
   }
 
   async ngOnDestroy(): Promise<void> {
-    // The SDK connection is per room: leaving the page logs it out so a
-    // rotated token cannot find a session nobody is watching.
-    await this.chat.close();
+    // A call and its camera must not outlive the page.
+    this.cleanupCall();
+    this.chat.close();
   }
 
   label(partStat: string): string {
@@ -513,24 +716,17 @@ export class MeetingRoomComponent implements OnInit, OnDestroy {
 
   async openChat(): Promise<void> {
     const m = this.meeting();
-    if (!m?.imGroupId) return;
+    if (!m?.chatConversation) return;
     this.chatOpen.set(true);
     this.chatError.set('');
-    try {
-      const session = await this.api.imSession();
-      await this.chat.open(session, m.imGroupId);
-      if (this.chat.state() === 'error') {
-        this.chatError.set(this.chat.error() || 'The chat server could not be reached.');
-      }
-    } catch (err) {
-      // 503 means this deployment runs without chat at all: the invitation
-      // above is unaffected, and the page says so rather than implying the
-      // meeting itself is broken.
-      if (err instanceof HttpErrorResponse && err.status === 503) {
-        this.chatError.set('Chat is not available on this server. The invitation and answers are unaffected.');
-      } else {
-        this.chatError.set(errorMessage(err));
-      }
+    // Opening the chat must not drop a call that is already using the same
+    // socket: joining the call opens it, and this only fills in when it has
+    // not been opened yet.
+    if (!this.chat.isOpenFor(m.chatConversation)) {
+      await this.chat.open(m.chatConversation);
+    }
+    if (this.chat.state() === 'error') {
+      this.chatError.set(this.chat.error() || 'The chat connection could not be opened.');
     }
   }
 
@@ -539,36 +735,345 @@ export class MeetingRoomComponent implements OnInit, OnDestroy {
     if (!text || this.chatBusy()) return;
     this.chatBusy.set(true);
     this.chatError.set('');
+    this.chat.send(text);
+    this.draftText = '';
+    this.chatBusy.set(false);
+  }
+
+  isSelf(msg: ChatMessage): boolean {
+    return msg.sender.toLowerCase() === this.auth.user().toLowerCase();
+  }
+
+  initial(msg: ChatMessage): string {
+    return (msg.sender || '?').trim().charAt(0).toUpperCase() || '?';
+  }
+
+  timeOf(msg: ChatMessage): string {
+    return msg.createdAt
+      ? new Date(msg.createdAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+      : '';
+  }
+
+  // --- call ---
+
+  // joinCall opens the camera and microphone, then asks the server who is
+  // already in the room. The server introduces the participants; each browser
+  // then connects directly to every other one, because the media never travels
+  // through linchange.
+  //
+  // In a one-way meeting only the presenter starts with a live microphone and
+  // camera. A guest joins muted and asks for the floor by raising a hand.
+  async joinCall(): Promise<void> {
+    if (this.inCall()) return;
+    this.callError.set('');
+
+    // The call shares the chat socket: it carries both the WebRTC signalling
+    // and the webinar's hand/floor frames. Joining the call therefore opens
+    // the socket if the chat panel has not been opened yet.
+    const meeting = this.meeting();
+    if (!meeting?.chatConversation) {
+      this.callError.set('This meeting has no room to join.');
+      return;
+    }
+    if (!this.chat.isOpenFor(meeting.chatConversation)) {
+      await this.chat.open(meeting.chatConversation);
+    }
+    if (!this.chat.isOpenFor(meeting.chatConversation)) {
+      this.callError.set(this.chat.error() || 'The call could not connect.');
+      return;
+    }
+
+    const webinar = meeting.oneWay === true;
+    const presenter = this.isOrganizer();
     try {
-      await this.chat.send(text);
-      this.draftText = '';
-    } catch (err) {
-      this.chatError.set(sdkError(err));
-    } finally {
-      this.chatBusy.set(false);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+      this.localStream = stream;
+
+      if (webinar && !presenter) {
+        stream.getAudioTracks().forEach((track) => { track.enabled = false; });
+        stream.getVideoTracks().forEach((track) => { track.enabled = false; });
+        this.micOn.set(false);
+        this.cameraOn.set(false);
+      } else {
+        this.micOn.set(true);
+        this.cameraOn.set(true);
+      }
+
+      const me = this.auth.user().toLowerCase();
+      this.inCall.set(true);
+      this.handRaised.set(false);
+      this.floorGranted.set(false);
+      this.raisedHands.set([]);
+      this.floorSpeaker.set('');
+      this.participants.set([{ member: me, self: true, stream }]);
+      this.addMeter(me, stream);
+
+      this.signalUnsub = this.chat.onSignal((signal) => void this.onSignal(signal));
+      this.chat.sendSignal('rtc-join', '', {});
+    } catch {
+      this.callError.set('The camera and microphone could not be opened. Check the browser permission.');
+      this.cleanupCall();
     }
   }
 
-  textOf(msg: MessageItem): string {
-    return messageText(msg);
+  leaveCall(): void {
+    if (this.inCall()) {
+      this.chat.sendSignal('rtc-leave', '', {});
+    }
+    this.cleanupCall();
   }
 
-  placeholderOf(msg: MessageItem): string {
-    return messagePlaceholder(msg);
+  toggleMic(): void {
+    // A guest in a webinar has no microphone to toggle: the floor is the
+    // presenter's to give, and raising a hand is how they ask for it.
+    if (this.meeting()?.oneWay && !this.isOrganizer() && !this.floorGranted()) {
+      this.callError.set('Raise your hand to ask the presenter for the floor.');
+      return;
+    }
+    const track = this.localStream?.getAudioTracks()[0];
+    if (!track) return;
+    track.enabled = !track.enabled;
+    this.micOn.set(track.enabled);
   }
 
-  isSelf(msg: MessageItem): boolean {
-    return msg.sendID === this.chat.selfId();
+  toggleCamera(): void {
+    const track = this.localStream?.getVideoTracks()[0];
+    if (!track) return;
+    track.enabled = !track.enabled;
+    this.cameraOn.set(track.enabled);
   }
 
-  initial(msg: MessageItem): string {
-    const name = msg.senderNickname || msg.sendID || '?';
-    return name.trim().charAt(0).toUpperCase() || '?';
+  // toggleHand raises or lowers the guest's hand in a one-way meeting.
+  toggleHand(): void {
+    if (this.handRaised()) {
+      this.chat.sendControl('hand-lower');
+      this.handRaised.set(false);
+      return;
+    }
+    this.chat.sendControl('hand-raise');
+    this.handRaised.set(true);
   }
 
-  timeOf(msg: MessageItem): string {
-    const at = msg.sendTime || msg.createTime;
-    return at ? new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '';
+  // allowSpeak lets one guest talk. The server enforces that only the
+  // presenter may call it and that only one guest holds the floor at a time.
+  allowSpeak(member: string): void {
+    this.chat.sendControl('allow-speak', { to: member });
+  }
+
+  revokeSpeak(member: string): void {
+    this.chat.sendControl('revoke-speak', { to: member });
+  }
+
+  private async onSignal(signal: ChatSignal): Promise<void> {
+    const me = this.auth.user().toLowerCase();
+    try {
+      switch (signal.type) {
+        case 'rtc-peers':
+          // This tab is the newcomer, so it offers to everyone already here.
+          // The existing peers wait for that offer, which keeps both sides from
+          // offering at once.
+          for (const peer of signal.peers ?? []) {
+            await this.offerTo(peer);
+          }
+          break;
+        case 'rtc-offer':
+          await this.answerOffer(signal);
+          break;
+        case 'rtc-answer': {
+          const pc = this.peers.get(signal.from);
+          if (pc && signal.sdp) {
+            await pc.setRemoteDescription(signal.sdp as RTCSessionDescriptionInit);
+          }
+          break;
+        }
+        case 'rtc-ice': {
+          const pc = this.peers.get(signal.from);
+          if (pc && signal.candidate) {
+            await pc.addIceCandidate(signal.candidate as RTCIceCandidateInit);
+          }
+          break;
+        }
+        case 'rtc-leave':
+          if (signal.member) {
+            this.dropPeer(signal.member);
+          }
+          break;
+        case 'hand-raise':
+          if (signal.member && signal.member !== me && !this.raisedHands().includes(signal.member)) {
+            this.raisedHands.update((list) => [...list, signal.member as string]);
+          }
+          break;
+        case 'hand-lower':
+          this.raisedHands.update((list) => list.filter((m) => m !== signal.member));
+          break;
+        case 'allow-speak':
+          // The server answers the guest it concerns: true enables the
+          // microphone, false takes it away.
+          if (signal.member === me) {
+            this.floorGranted.set(signal.allowed === true);
+            this.setMicEnabled(signal.allowed === true);
+            if (signal.allowed) {
+              this.handRaised.set(false);
+            }
+          }
+          break;
+        case 'speaker':
+          this.floorSpeaker.set(signal.speaker ?? '');
+          break;
+        case 'hands':
+          // A joiner is told who is already waiting and who has the floor.
+          this.raisedHands.set(signal.hands ?? []);
+          this.floorSpeaker.set(signal.speaker ?? '');
+          break;
+        // rtc-join is informational: the newcomer offers to us.
+      }
+    } catch {
+      this.callError.set('A call connection could not be established.');
+    }
+  }
+
+  private createPeer(remote: string): RTCPeerConnection {
+    const existing = this.peers.get(remote);
+    if (existing) return existing;
+
+    const pc = new RTCPeerConnection({ iceServers: this.iceServers });
+    this.peers.set(remote, pc);
+
+    this.localStream?.getTracks().forEach((track) => {
+      pc.addTrack(track, this.localStream as MediaStream);
+    });
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        this.chat.sendSignal('rtc-ice', remote, { candidate: event.candidate.toJSON() });
+      }
+    };
+    pc.ontrack = (event) => {
+      const stream = event.streams[0];
+      if (!stream) return;
+      this.participants.update((list) => [
+        ...list.filter((p) => p.member !== remote),
+        { member: remote, self: false, stream },
+      ]);
+      this.addMeter(remote, stream);
+    };
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        this.dropPeer(remote);
+      }
+    };
+    return pc;
+  }
+
+  private async offerTo(remote: string): Promise<void> {
+    const pc = this.createPeer(remote);
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    this.chat.sendSignal('rtc-offer', remote, { sdp: offer });
+  }
+
+  private async answerOffer(signal: ChatSignal): Promise<void> {
+    if (!signal.sdp) return;
+    const pc = this.createPeer(signal.from);
+    await pc.setRemoteDescription(signal.sdp as RTCSessionDescriptionInit);
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    this.chat.sendSignal('rtc-answer', signal.from, { sdp: answer });
+  }
+
+  private dropPeer(member: string): void {
+    const pc = this.peers.get(member);
+    if (pc) {
+      pc.close();
+      this.peers.delete(member);
+    }
+    this.participants.update((list) => list.filter((p) => p.member !== member));
+    this.meters.delete(member);
+    this.raisedHands.update((list) => list.filter((m) => m !== member));
+  }
+
+  private setMicEnabled(on: boolean): void {
+    const track = this.localStream?.getAudioTracks()[0];
+    if (!track) return;
+    track.enabled = on;
+    this.micOn.set(on);
+  }
+
+  // addMeter starts measuring one participant's audio. The analyser is what
+  // moves the active speaker to the front of the grid.
+  private addMeter(member: string, stream: MediaStream): void {
+    if (this.meters.has(member) || stream.getAudioTracks().length === 0) return;
+    try {
+      this.audioContext ??= new AudioContext();
+      void this.audioContext.resume();
+      const source = this.audioContext.createMediaStreamSource(stream);
+      const analyser = this.audioContext.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+      this.meters.set(member, analyser);
+      this.startMetering();
+    } catch {
+      // WebAudio can be unavailable (or refused); the call works without it.
+    }
+  }
+
+  private startMetering(): void {
+    if (this.meterTimer) return;
+    this.meterTimer = window.setInterval(() => {
+      const raw: Record<string, number> = {};
+      for (const [member, analyser] of this.meters) {
+        analyser.getByteTimeDomainData(this.meterData);
+        let sum = 0;
+        for (const value of this.meterData) {
+          const centred = (value - 128) / 128;
+          sum += centred * centred;
+        }
+        raw[member] = Math.sqrt(sum / this.meterData.length);
+      }
+      // Smooth over the previous reading so the order does not flicker on
+      // every syllable.
+      this.levels.update((previous) => {
+        const next: Record<string, number> = {};
+        for (const [member, level] of Object.entries(raw)) {
+          next[member] = 0.65 * (previous[member] ?? 0) + 0.35 * level;
+        }
+        return next;
+      });
+      const active = Object.entries(this.levels())
+        .filter(([, level]) => level > 0.03)
+        .sort((a, b) => b[1] - a[1])[0];
+      this.activeSpeaker.set(active ? active[0] : '');
+    }, 150);
+  }
+
+  private stopMetering(): void {
+    if (this.meterTimer) {
+      window.clearInterval(this.meterTimer);
+      this.meterTimer = undefined;
+    }
+    this.meters.clear();
+    void this.audioContext?.close();
+    this.audioContext = undefined;
+    this.levels.set({});
+    this.activeSpeaker.set('');
+  }
+
+  private cleanupCall(): void {
+    this.signalUnsub?.();
+    this.signalUnsub = undefined;
+    for (const pc of this.peers.values()) {
+      pc.close();
+    }
+    this.peers.clear();
+    this.participants.set([]);
+    this.stopMetering();
+    this.localStream?.getTracks().forEach((track) => track.stop());
+    this.localStream = undefined;
+    this.inCall.set(false);
+    this.handRaised.set(false);
+    this.floorGranted.set(false);
+    this.raisedHands.set([]);
+    this.floorSpeaker.set('');
   }
 
   // answerSelectedClass is the chosen button: the answer the visitor already

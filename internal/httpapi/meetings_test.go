@@ -222,8 +222,8 @@ func TestMeetingsLifecycle(t *testing.T) {
 	if str(view, "title") != "Design review" {
 		t.Errorf("invite view title = %q", str(view, "title"))
 	}
-	if str(view, "imGroupId") != "" {
-		t.Errorf("invite view hands out the chat room id %q to a token holder", str(view, "imGroupId"))
+	if str(view, "chatConversation") != "" {
+		t.Errorf("invite view hands out the chat room id %q to a token holder", str(view, "chatConversation"))
 	}
 
 	// The same link with the wrong answer to either half is a 404, not a
@@ -330,11 +330,9 @@ func TestMeetingsLifecycle(t *testing.T) {
 		}
 	}
 
-	// Chat is minted only for the signed-in caller, and a deployment without
-	// an OpenIM backend says so instead of pretending.
-	if code, body := do(t, srv, "POST", "/api/v1/meetings/im/session", nil, auth); code != 503 {
-		t.Errorf("im session with no chat backend = %d %v, want 503", code, body)
-	}
+	// Chat is native, so there is no per-deployment chat session to mint:
+	// the room is opened by the meeting itself and reached over the chat
+	// socket.
 
 	// Cancellation keeps the row, mails everybody one CANCEL, and closes the
 	// meeting against further work.
