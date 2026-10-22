@@ -31,6 +31,10 @@ test('the theme switches, persists, and accepts an admin-uploaded theme', async 
 
   await page.getByRole('combobox', { name: 'Theme' }).selectOption('dark');
   await expect(html).toHaveAttribute('data-theme', 'dark');
+  // The header uses a translucent Tailwind opacity variant; make sure the
+  // dark remap actually reaches it rather than leaving a white bar.
+  const headerBg = await page.locator('header').first().evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(headerBg).toContain('30, 41, 59');
 
   // The choice is stored on the account, not only in this tab.
   await page.reload();

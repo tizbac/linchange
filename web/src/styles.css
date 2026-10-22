@@ -55,6 +55,14 @@ body {
 [data-theme="dark"] .bg-white {
   background-color: #1e293b;
 }
+/* Tailwind's opacity variants are different class names; the plain .bg-white
+   rule above does not match the header's translucent background. */
+[data-theme="dark"] .bg-white\/90 {
+  background-color: rgb(30 41 59 / 0.9);
+}
+[data-theme="dark"] .bg-slate-50\/60 {
+  background-color: rgb(30 41 59 / 0.6);
+}
 
 [data-theme="dark"] .text-slate-900,
 [data-theme="dark"] .text-slate-800,
@@ -77,12 +85,22 @@ body {
 [data-theme="dark"] .border-gray-200 {
   border-color: #334155;
 }
+[data-theme="dark"] .border-slate-200\/80 {
+  border-color: rgb(51 65 85 / 0.8);
+}
 [data-theme="dark"] .ring-slate-200 {
   --tw-ring-color: #334155;
 }
 [data-theme="dark"] .hover\:bg-slate-100:hover,
 [data-theme="dark"] .hover\:bg-slate-50:hover {
   background-color: #334155;
+}
+[data-theme="dark"] .hover\:text-slate-900:hover,
+[data-theme="dark"] .hover\:text-slate-800:hover {
+  color: #f1f5f9;
+}
+[data-theme="dark"] .hover\:text-brand-700:hover {
+  color: #a5b4fc;
 }
 [data-theme="dark"] .hover\:ring-blue-400:hover {
   --tw-ring-color: #60a5fa;

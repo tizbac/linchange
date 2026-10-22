@@ -319,7 +319,7 @@ function defaults() {
               </li>
             }
           </ul>
-        )}
+        }
       </section>
     </main>
   `,

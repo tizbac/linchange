@@ -142,6 +142,15 @@ server maps locale-less URLs to the preferred locale, and serves `/en/` and
   must not render there. "Join meeting" opens the room in a new tab, which is
   why auth tokens live in `localStorage` rather than `sessionStorage`.
 
+## Theming
+
+- The dark theme is a set of `[data-theme="dark"]` remaps in
+  `web/src/styles.css`, not `dark:` variants on every element. Tailwind
+  opacity variants are **different class names**: `bg-white/90` is not
+  `bg-white`. A translucent surface added to the shell needs its own dark rule.
+  The header (`bg-white/90`, `border-slate-200/80`) is the usual offender.
+- Custom themes are linked after these rules and may override them.
+
 ## General conventions
 
 - Do not reformat pre-existing gofmt offenders (for example
