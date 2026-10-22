@@ -13,15 +13,10 @@ WORKDIR /app/web
 # npm 12 lockfile; using the same version here keeps `npm ci` reproducible.
 RUN npm install -g npm@11.20.0
 
-# Copy package files and the install-time scripts.
-#
-# npm ci runs the postinstall hook, and that hook is a file in web/scripts, so
-# it has to be on disk before the install rather than arriving with the rest of
-# the source. The destination is spelled out because a bare "./" would copy the
-# directory's contents into the working directory and leave the hook where npm
-# cannot find it.
+# Copy the package manifests first so the dependency layer is cached. There is
+# no local postinstall hook: an empty web/scripts directory is not represented
+# in git, and copying it here made a clean checkout fail before npm even ran.
 COPY web/package*.json ./
-COPY web/scripts/ ./scripts/
 
 # Install dependencies
 RUN npm ci
