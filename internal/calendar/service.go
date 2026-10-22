@@ -443,6 +443,47 @@ func (s *Service) Create(ctx context.Context, q store.Querier, who policy.Princi
 	return s.events.Create(ctx, q, writeRequest(cal.ID, who.Address, ev))
 }
 
+// StoreCopy files an event in the principal's default calendar, replacing any
+// copy with the same UID. It is how a meeting accepted from an invitation
+// appears on the attendee's own calendar: the event belongs to the organiser,
+// but the attendee needs their own row to see it beside their other bookings.
+//
+// The identity here comes from the meeting's guest list, not from a session,
+// so this deliberately does not run the calendar handshake's authentication
+// check. The caller has already proved that this address is the guest who
+// answered, and the write is confined to that address's own default calendar.
+func (s *Service) StoreCopy(ctx context.Context, q store.Querier, who policy.Principal, ev ical.Event) (store.Event, error) {
+	if who.Address == "" || !who.Enabled {
+		return store.Event{}, ErrDenied
+	}
+	cal, err := s.calendars.EnsureDefault(ctx, q, who.Address, defaultTimezone())
+	if err != nil {
+		return store.Event{}, err
+	}
+	return s.events.Upsert(ctx, q, writeRequest(cal.ID, who.Address, ev))
+}
+
+// RemoveCopy removes the principal's copy of an event by UID. It is the
+// counterpart of StoreCopy: declining an invitation must not leave the meeting
+// on the calendar. A copy that is not there is not an error.
+func (s *Service) RemoveCopy(ctx context.Context, q store.Querier, who policy.Principal, uid string) error {
+	if who.Address == "" || !who.Enabled {
+		return ErrDenied
+	}
+	cal, err := s.calendars.EnsureDefault(ctx, q, who.Address, defaultTimezone())
+	if err != nil {
+		return err
+	}
+	row, err := s.events.ByUID(ctx, q, cal.ID, uid, nil)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return s.events.Delete(ctx, q, row.ID)
+}
+
 // Update replaces an event and returns the stored row.
 //
 // expectSequence is the revision the client was looking at. Passing zero skips

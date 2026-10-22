@@ -82,11 +82,13 @@ test.describe('meetings', () => {
     await guest.close();
     await page.goto((await page.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
     await page.waitForURL(/\/meetings\/[^/]+\/room/);
+  await page.getByTestId("prejoin-join").click();
     await expect(page.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
 
     await expect(anon.getByRole('link', { name: 'Join meeting' })).toBeVisible({ timeout: 15000 });
     await anon.goto((await anon.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
     await anon.waitForURL(/\/meetings\/[^/]+\/room/);
+  await anon.getByTestId("prejoin-join").click();
     await expect(anon.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
 
     // Chat is a collapsible sidebar in the room and shares the call socket.
@@ -154,6 +156,7 @@ test.describe('meetings', () => {
     await openMeeting(guest, title);
     await guest.goto((await guest.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
     await guest.waitForURL(/\/meetings\/[^/]+\/room/);
+  await guest.getByTestId("prejoin-join").click();
     await expect(guest.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
     await expect(guest.getByTestId('webinar-note')).toContainText('One-way conference');
     await expect(guest.getByTestId('raise-hand')).toHaveText('Raise hand');
@@ -169,6 +172,7 @@ test.describe('meetings', () => {
 
     await page.goto((await page.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
     await page.waitForURL(/\/meetings\/[^/]+\/room/);
+  await page.getByTestId("prejoin-join").click();
     const hands = page.getByTestId('raised-hands');
     await expect(hands).toContainText(GUEST, { timeout: 15000 });
     await hands.getByRole('button', { name: 'Allow to speak' }).click();
@@ -206,6 +210,7 @@ test('a participant can join with camera and microphone denied', async ({ page }
   });
   await page.goto((await page.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await page.waitForURL(/\/meetings\/[^/]+\/room/);
+  await page.getByTestId("prejoin-join").click();
 
   await expect(page.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
   await expect(page.getByText(/listen-only/)).toBeVisible();

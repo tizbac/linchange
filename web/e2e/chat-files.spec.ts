@@ -31,6 +31,7 @@ test('a file sent in the meeting chat is downloadable by the other side', async 
 
   await page.goto((await page.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await page.waitForURL(/\/meetings\/[^/]+\/room/);
+  await page.getByTestId("prejoin-join").click();
   await expect(page.locator('input[name="draftText"]')).toBeVisible({ timeout: 20000 });
 
   const guest = await browser.newPage();
@@ -38,6 +39,7 @@ test('a file sent in the meeting chat is downloadable by the other side', async 
   await guest.goto(meetingUrl);
   await guest.goto((await guest.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await guest.waitForURL(/\/meetings\/[^/]+\/room/);
+  await guest.getByTestId("prejoin-join").click();
   await expect(guest.locator('input[name="draftText"]')).toBeVisible({ timeout: 20000 });
 
   // The composer's hidden file input is what the paperclip opens.

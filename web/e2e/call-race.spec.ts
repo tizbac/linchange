@@ -13,7 +13,7 @@ async function signIn(page: Page, address: string): Promise<void> {
   await page.waitForURL(/\/dashboard$/);
 }
 
-test('clicking Join while the room auto-joins does not freeze the call', async ({ page, browser }) => {
+test('the pre-join button cannot start two negotiations', async ({ page, browser }) => {
   const title = `Race ${RUN}`;
   await signIn(page, USER);
   await page.goto('/meetings');
@@ -26,10 +26,11 @@ test('clicking Join while the room auto-joins does not freeze the call', async (
 
   await page.goto((await page.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await page.waitForURL(/\/meetings\/[^/]+\/room/);
+  await page.getByTestId('prejoin-join').click();
   await expect(page.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
 
-  // A slow permission prompt keeps the auto-join in flight and the Join
-  // button on screen, which is what a person would click.
+  // A slow permission prompt keeps the join in flight, which is the window in
+  // which a person could click the same button a second time.
   const guest = await browser.newPage();
   await guest.addInitScript(() => {
     const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
@@ -43,11 +44,13 @@ test('clicking Join while the room auto-joins does not freeze the call', async (
   await guest.goto((await guest.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await guest.waitForURL(/\/meetings\/[^/]+\/room/);
 
-  // The room auto-joins. While that is in flight the button is disabled, so
-  // a person cannot start a second negotiation by clicking it.
-  const join = guest.getByRole('button', { name: /Join call|Joining/ });
+  const join = guest.getByTestId('prejoin-join');
   await expect(join).toBeVisible();
+  await join.click();
+  // While getUserMedia is pending, the modal is still there but the button is
+  // disabled, so a second click cannot start a second negotiation.
   await expect(join).toBeDisabled();
+  await expect(join).toContainText(/Joining|Partecipa/);
 
   // The call must come up with no negotiation error and keep showing the
   // organiser's tile.

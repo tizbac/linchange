@@ -24,7 +24,9 @@ type Meeting struct {
 	ChatConversation string `db:"chat_conversation"`
 	// OneWay marks a webinar: only the presenter speaks until the presenter
 	// grants somebody the floor.
-	OneWay    bool      `db:"one_way"`
+	OneWay bool `db:"one_way"`
+	// ExpiresAt is when the join link and the room stop working.
+	ExpiresAt time.Time `db:"expires_at"`
 	CreatedAt time.Time `db:"created_at"`
 }
 
@@ -58,11 +60,11 @@ func NewMeetings() *Meetings { return &Meetings{} }
 // answered by anybody - worse than having no meeting at all.
 func (m *Meetings) Create(ctx context.Context, q Querier, meeting Meeting, invites []MeetingInvite) (Meeting, error) {
 	err := q.QueryRowxContext(ctx, `
-		INSERT INTO meetings (uid, event_id, organizer, chat_conversation, one_way)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, created_at`,
-		meeting.UID, meeting.EventID, meeting.Organizer, meeting.ChatConversation, meeting.OneWay,
-	).Scan(&meeting.ID, &meeting.CreatedAt)
+		INSERT INTO meetings (uid, event_id, organizer, chat_conversation, one_way, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id, created_at, expires_at`,
+		meeting.UID, meeting.EventID, meeting.Organizer, meeting.ChatConversation, meeting.OneWay, meeting.ExpiresAt,
+	).Scan(&meeting.ID, &meeting.CreatedAt, &meeting.ExpiresAt)
 	if err != nil {
 		return Meeting{}, fmt.Errorf("store: recording the meeting: %w", err)
 	}
@@ -81,7 +83,7 @@ func (m *Meetings) Create(ctx context.Context, q Querier, meeting Meeting, invit
 func (m *Meetings) ByUID(ctx context.Context, q Querier, uid string) (Meeting, error) {
 	var out Meeting
 	err := q.GetContext(ctx, &out, `
-		SELECT id, uid, event_id, organizer, chat_conversation, one_way, created_at
+		SELECT id, uid, event_id, organizer, chat_conversation, one_way, expires_at, created_at
 		FROM meetings WHERE uid = $1`, uid)
 	if IsNotFound(err) {
 		return Meeting{}, ErrNotFound
@@ -155,15 +157,26 @@ type MeetingListRow struct {
 	MyPartStat string `db:"my_partstat"`
 }
 
-// ListFor returns every meeting the address organises or is invited to,
-// nearest first.
+// ListFor returns one page of the meetings the address organises or is
+// invited to, nearest first. Expired meetings are left out unless the caller
+// asks for them: a link that no longer works is not something the list should
+// fill with by default, but the organiser still needs a way to find one.
 //
 // Cancelled meetings are included: a meeting called off is something the
 // people who were going to attend still need to see, not a row to hide.
-func (m *Meetings) ListFor(ctx context.Context, q Querier, address string) ([]MeetingListRow, error) {
+func (m *Meetings) ListFor(ctx context.Context, q Querier, address string, includeExpired bool, limit, offset int) ([]MeetingListRow, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	if offset < 0 {
+		offset = 0
+	}
 	var out []MeetingListRow
 	err := q.SelectContext(ctx, &out, `
-		SELECT m.id, m.uid, m.event_id, m.organizer, m.chat_conversation, m.one_way, m.created_at,
+		SELECT m.id, m.uid, m.event_id, m.organizer, m.chat_conversation, m.one_way, m.expires_at, m.created_at,
 		       e.summary, e.location, e.dtstart, e.dtend, e.timezone,
 		       e.status, e.cancelled,
 		       (SELECT count(*) FROM attendees a WHERE a.event_id = e.id)
@@ -176,12 +189,33 @@ func (m *Meetings) ListFor(ctx context.Context, q Querier, address string) ([]Me
 		           AS my_partstat
 		FROM meetings m
 		JOIN events e ON e.id = m.event_id
-		WHERE m.organizer = $1
+		WHERE (m.organizer = $1
 		   OR EXISTS (SELECT 1 FROM attendees a
-		              WHERE a.event_id = e.id AND a.address = $1)
-		ORDER BY e.dtstart ASC`, address)
+		              WHERE a.event_id = e.id AND a.address = $1))
+		  AND ($2 OR m.expires_at > now())
+		ORDER BY e.dtstart ASC, e.id ASC
+		LIMIT $3 OFFSET $4`, address, includeExpired, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing meetings: %w", err)
 	}
 	return out, nil
+}
+
+// CountFor returns how many meetings match ListFor's visibility rule, ignoring
+// the page. The list page needs it for "1-20 of 34", and a query that counted
+// only the current page would always say 20.
+func (m *Meetings) CountFor(ctx context.Context, q Querier, address string, includeExpired bool) (int64, error) {
+	var n int64
+	err := q.GetContext(ctx, &n, `
+		SELECT count(*)
+		FROM meetings m
+		JOIN events e ON e.id = m.event_id
+		WHERE (m.organizer = $1
+		   OR EXISTS (SELECT 1 FROM attendees a
+		              WHERE a.event_id = e.id AND a.address = $1))
+		  AND ($2 OR m.expires_at > now())`, address, includeExpired)
+	if err != nil {
+		return 0, fmt.Errorf("store: counting meetings: %w", err)
+	}
+	return n, nil
 }

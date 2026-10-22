@@ -835,6 +835,9 @@ func mapErrorCode(err error) int {
 	if errors.Is(err, meetings.ErrDenied) {
 		return http.StatusForbidden
 	}
+	if errors.Is(err, meetings.ErrExpired) {
+		return http.StatusGone
+	}
 	if errors.Is(err, ErrInvalid) {
 		return http.StatusBadRequest
 	}

@@ -66,6 +66,47 @@ interface CallParticipant {
       </div>
     </div>
   } @else if (meeting(); as m) {
+    @if (preJoin() && !inCall()) {
+      <div
+        data-testid="prejoin"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-sm"
+      >
+        <div class="w-full max-w-sm rounded-2xl border border-white/10 bg-slate-900 p-6 text-center shadow-2xl">
+          <img src="favicon.svg" alt="" class="mx-auto h-14 w-14 rounded-2xl" />
+          <h2 class="mt-4 text-lg font-semibold" i18n="@@call.preJoinTitle">Ready to join?</h2>
+          <p class="mt-1 text-sm text-slate-400" i18n="@@call.preJoinHint">
+            Your browser needs a click before it will start the camera, microphone and
+            sound.
+          </p>
+          @if (callError()) {
+            <p class="mt-3 text-xs text-rose-300">{{ callError() }}</p>
+          }
+          <button
+            type="button"
+            data-testid="prejoin-join"
+            (click)="startFromPreJoin()"
+            [disabled]="joining()"
+            class="mt-5 w-full rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
+          >
+            @if (joining()) {
+              <span i18n="@@call.joining">Joining…</span>
+            } @else {
+              <span i18n="@@call.joinNow">Join now</span>
+            }
+          </button>
+          <a
+            [routerLink]="['/meetings', m.uid]"
+            [queryParams]="guestParams()"
+            (click)="preJoin.set(false)"
+            class="mt-3 block text-xs text-slate-400 hover:text-slate-200"
+            i18n="@@call.backDetails"
+          >
+            Back to details
+          </a>
+        </div>
+      </div>
+    }
+
     <header class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3 sm:px-6">
       <div class="flex min-w-0 items-center gap-3">
         @if (m.organizationLogo) {
@@ -242,7 +283,7 @@ interface CallParticipant {
 
         <footer class="flex flex-wrap items-center justify-center gap-2 border-t border-white/10 px-4 py-3">
           @if (!inCall()) {
-            <button type="button" (click)="joinCall()" [disabled]="joining()" class="rounded-xl bg-brand-600 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
+            <button type="button" (click)="startFromPreJoin()" [disabled]="joining()" class="rounded-xl bg-brand-600 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
               @if (joining()) {
                 <span i18n="@@call.joining">Joining…</span>
               } @else {
@@ -461,6 +502,10 @@ export class CallRoomComponent implements OnInit, OnDestroy {
   // true: media permissions and the socket can take a moment, and the Join
   // button is still on screen until then.
   readonly joining = signal(false);
+  // preJoin is the gate in front of the room. Browsers will not start a camera,
+  // microphone or AudioContext without a gesture, and the room auto-joining was
+  // exactly what denied them one. The Join now button is that gesture.
+  readonly preJoin = signal(false);
   readonly callError = signal('');
   // audioBlocked is true when the browser refused to start remote media
   // because the room auto-joined without a user gesture. The banner asks for
@@ -621,11 +666,15 @@ export class CallRoomComponent implements OnInit, OnDestroy {
       return;
     }
     await this.reload();
-    if (this.mode() !== 'signin' && this.meeting() && !this.meeting()!.cancelled) {
-      // The room page is the conference: joining does not need another click.
-      // Camera and microphone are optional, and joinCall falls back to a
-      // receive-only connection when they are refused.
-      await this.joinCall();
+    if (this.mode() !== 'signin' && this.meeting()) {
+      if (this.meeting()!.expired) {
+        this.pageError.set($localize`:@@call.expired:This meeting link has expired.`);
+      } else if (!this.meeting()!.cancelled && !this.pageError()) {
+        // Do not join on arrival. Browsers refuse a camera, microphone and
+        // AudioContext until the page has been acted on, and a fresh load has
+        // not been. The pre-join dialog is that one deliberate click.
+        this.preJoin.set(true);
+      }
     }
   }
 
@@ -761,6 +810,31 @@ export class CallRoomComponent implements OnInit, OnDestroy {
 
   // --- call ---
 
+  // startFromPreJoin is the gesture the whole room waits for. It primes the
+  // AudioContext before any await, then joins; browsers only grant a camera,
+  // microphone and unmuted playback while the click is still "active", and
+  // getUserMedia can take longer than that.
+  async startFromPreJoin(): Promise<void> {
+    await this.primeAudio();
+    await this.joinCall();
+    if (this.inCall()) {
+      this.preJoin.set(false);
+      await this.tryPlay();
+    }
+  }
+
+  private async primeAudio(): Promise<void> {
+    this.audioUnlocked = true;
+    try {
+      // Creating the context happens synchronously inside the click; only the
+      // resume is awaited.
+      this.audioContext ??= new AudioContext();
+      await this.audioContext.resume();
+    } catch {
+      // WebAudio is an enhancement: the call itself still works.
+    }
+  }
+
   // joinCall opens the camera and microphone, then asks the server who is
   // already in the room. The server introduces the participants; each browser
   // then connects directly to every other one, because the media never travels
@@ -847,9 +921,10 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     this.floorSpeaker.set('');
     this.participants.set([{ member: me, self: true, stream }]);
     // A client-side navigation can still be inside the gesture that opened the
-    // room. If it is, the meter may start immediately; otherwise the first tap
-    // on the room unlocks it.
+    // room. If it is, the meter may start immediately; otherwise the pre-join
+    // dialog's click has already unlocked it.
     this.audioUnlocked =
+      this.audioUnlocked ||
       (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation?.isActive === true;
     this.addMeter(me, stream);
 

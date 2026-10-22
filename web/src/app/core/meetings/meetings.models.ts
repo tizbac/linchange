@@ -40,6 +40,9 @@ export interface MeetingDraft {
   // oneWay makes the meeting a webinar: only the organiser speaks, and a
   // guest asks for the floor by raising a hand.
   oneWay?: boolean;
+  // expiryHours is how long the join link and room stay usable after the
+  // meeting ends. Omitted means the server's default of 12; the maximum is 24.
+  expiryHours?: number;
 }
 
 // Meeting is the whole meeting as the room page draws it.
@@ -67,6 +70,8 @@ export interface Meeting {
   organizationLogo?: string;
   attendees: MeetingAttendee[];
   createdAt: string;
+  expiresAt: string;
+  expired: boolean;
 }
 
 export interface CreateMeetingResult extends Meeting {
@@ -92,6 +97,8 @@ export interface MeetingListItem {
   acceptedCount: number;
   myPartStat?: string;
   createdAt: string;
+  expiresAt: string;
+  expired: boolean;
 }
 
 export interface ResendResult {

@@ -50,6 +50,10 @@ var ErrInvalid = errors.New("meetings: invalid request")
 // invitation for somebody else, calling off a meeting one does not organise.
 var ErrDenied = errors.New("meetings: denied")
 
+// ErrExpired means the meeting's link and room have passed the lifetime the
+// organiser chose. The record is still there; the capability is not.
+var ErrExpired = errors.New("This meeting link has expired.")
+
 // maxTitle bounds the title, which becomes the email subject: RFC 5322 caps a
 // header line at 998 octets and "Invitation: " is already spent.
 const maxTitle = 200
@@ -83,6 +87,9 @@ type Draft struct {
 	// OneWay makes this a webinar: the organiser is the only speaker, and a
 	// guest asks for the floor by raising a hand.
 	OneWay bool `json:"oneWay,omitempty"`
+	// ExpiryHours is how long the join link and the room stay usable after the
+	// meeting ends. Zero means the default of 12; the maximum is 24.
+	ExpiryHours int `json:"expiryHours,omitempty"`
 }
 
 // AttendeeStatus is one guest and everything known about them: the answer
@@ -126,6 +133,11 @@ type Meeting struct {
 	OrganizationLogo string           `json:"organizationLogo,omitempty"`
 	Attendees        []AttendeeStatus `json:"attendees"`
 	CreatedAt        time.Time        `json:"createdAt"`
+	// ExpiresAt is when the join link and the call room stop working.
+	ExpiresAt time.Time `json:"expiresAt"`
+	// Expired is derived from ExpiresAt so the client does not have to compare
+	// clocks with the server to know which page to draw.
+	Expired bool `json:"expired"`
 }
 
 // MeetingListItem is one row of the meeting list: everything the list shows,
@@ -149,6 +161,8 @@ type MeetingListItem struct {
 	AcceptedCount    int       `json:"acceptedCount"`
 	MyPartStat       string    `json:"myPartStat,omitempty"`
 	CreatedAt        time.Time `json:"createdAt"`
+	ExpiresAt        time.Time `json:"expiresAt"`
+	Expired          bool      `json:"expired"`
 }
 
 // CreateResult reports what creating a meeting did, including which guests
@@ -293,6 +307,14 @@ func (s *Service) Create(ctx context.Context, who policy.Principal, d Draft) (*C
 	if _, err := time.LoadLocation(timezone); err != nil {
 		return nil, fmt.Errorf("%w: %q is not a time zone", ErrInvalid, timezone)
 	}
+	expiryHours, err := normaliseExpiry(d.ExpiryHours)
+	if err != nil {
+		return nil, err
+	}
+	// The lifetime is measured from the end, not from creation: a meeting
+	// booked for next month must not expire before it happens. The default is
+	// twelve hours after the meeting, and the organiser may choose up to a day.
+	expiresAt := d.End.Add(time.Duration(expiryHours) * time.Hour)
 
 	orgName := ""
 	if u, err := s.users.Get(ctx, s.db, organizer); err == nil {
@@ -361,6 +383,7 @@ func (s *Service) Create(ctx context.Context, who policy.Principal, d Draft) (*C
 			EventID:   row.ID,
 			Organizer: organizer,
 			OneWay:    d.OneWay,
+			ExpiresAt: expiresAt,
 		}, invitees)
 		return err
 	})
@@ -384,11 +407,20 @@ func (s *Service) Create(ctx context.Context, who policy.Principal, d Draft) (*C
 
 // List returns every meeting the caller organises or is invited to, nearest
 // first.
-func (s *Service) List(ctx context.Context, who policy.Principal) ([]MeetingListItem, error) {
-	rows, err := s.meetings.ListFor(ctx, s.db, strings.ToLower(strings.TrimSpace(who.Address)))
+// List returns one page of meetings the caller organises or is invited to,
+// nearest first. Expired meetings are omitted unless includeExpired is true;
+// the page can still reach them behind a toggle.
+func (s *Service) List(ctx context.Context, who policy.Principal, includeExpired bool, limit, offset int) ([]MeetingListItem, int64, error) {
+	address := strings.ToLower(strings.TrimSpace(who.Address))
+	rows, err := s.meetings.ListFor(ctx, s.db, address, includeExpired, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
+	total, err := s.meetings.CountFor(ctx, s.db, address, includeExpired)
+	if err != nil {
+		return nil, 0, err
+	}
+	now := time.Now()
 	out := make([]MeetingListItem, 0, len(rows))
 	for _, row := range rows {
 		role := "attendee"
@@ -412,9 +444,11 @@ func (s *Service) List(ctx context.Context, who policy.Principal) ([]MeetingList
 			AcceptedCount:    row.AcceptedCount,
 			MyPartStat:       row.MyPartStat,
 			CreatedAt:        row.CreatedAt,
+			ExpiresAt:        row.ExpiresAt,
+			Expired:          !row.ExpiresAt.After(now),
 		})
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // Get returns one meeting.
@@ -451,6 +485,9 @@ func (s *Service) GetByInvite(ctx context.Context, uid, address, token string) (
 	if err := s.verifyInvite(ctx, meeting, address, token); err != nil {
 		return nil, err
 	}
+	if meetingExpired(meeting) {
+		return nil, ErrExpired
+	}
 	invitees, err := s.meetings.Invites(ctx, s.db, meeting.ID)
 	if err != nil {
 		return nil, err
@@ -470,6 +507,9 @@ func (s *Service) Resend(ctx context.Context, who policy.Principal, uid string) 
 	}
 	if !strings.EqualFold(meeting.Organizer, who.Address) {
 		return nil, fmt.Errorf("%w: only the organiser can resend invitations", ErrDenied)
+	}
+	if meetingExpired(meeting) {
+		return nil, ErrExpired
 	}
 	row, err := s.events.Get(ctx, s.db, meeting.EventID)
 	if err != nil {
@@ -553,9 +593,13 @@ func (s *Service) RSVP(ctx context.Context, who policy.Principal, uid, partstat 
 	if _, err := s.meetings.Invite(ctx, s.db, meeting.ID, address); err != nil {
 		return nil, fmt.Errorf("%w: this address is not invited", ErrDenied)
 	}
+	if meetingExpired(meeting) {
+		return nil, ErrExpired
+	}
 	if _, err := s.events.SetPartStat(ctx, s.db, meeting.UID, address, partstat); err != nil {
 		return nil, err
 	}
+	s.syncPersonalCopy(ctx, meeting, address, partstat)
 	return s.Get(ctx, uid)
 }
 
@@ -572,11 +616,79 @@ func (s *Service) InviteRSVP(ctx context.Context, uid, address, token, partstat 
 	if err := s.verifyInvite(ctx, meeting, address, token); err != nil {
 		return "", err
 	}
+	if meetingExpired(meeting) {
+		return "", ErrExpired
+	}
 	if _, err := s.events.SetPartStat(ctx, s.db, meeting.UID,
 		strings.ToLower(strings.TrimSpace(address)), partstat); err != nil {
 		return "", err
 	}
+	s.syncPersonalCopy(ctx, meeting, strings.ToLower(strings.TrimSpace(address)), partstat)
 	return partstat, nil
+}
+
+// syncPersonalCopy mirrors an answered meeting into a local guest's own
+// calendar. Accepting (or tentatively accepting) puts it there; declining
+// removes it. An invitation-link guest with no account here has no personal
+// calendar to mirror to, so the copy is simply skipped.
+//
+// It is best-effort on purpose: the answer has already been recorded, and a
+// calendar write that fails must not turn "I can come" into an error the guest
+// has to retry.
+func (s *Service) syncPersonalCopy(ctx context.Context, meeting store.Meeting, address, partstat string) {
+	principal, err := store.LoadPrincipal(ctx, s.db, address)
+	if err != nil {
+		return
+	}
+	switch partstat {
+	case ical.PartStatDeclined:
+		if err := s.calendar.RemoveCopy(ctx, s.db, principal, meeting.UID); err != nil {
+			s.log.WarnContext(ctx, "removing a declined meeting from the calendar failed",
+				"address", address, "uid", meeting.UID, "error", err)
+		}
+	case ical.PartStatAccepted, ical.PartStatTentative:
+		row, err := s.events.Get(ctx, s.db, meeting.EventID)
+		if err != nil {
+			s.log.WarnContext(ctx, "reading a meeting for the attendee calendar failed",
+				"address", address, "uid", meeting.UID, "error", err)
+			return
+		}
+		doc, err := ical.Parse(row.ICalBlob)
+		if err != nil || len(doc.Events) == 0 {
+			s.log.WarnContext(ctx, "parsing a meeting for the attendee calendar failed",
+				"address", address, "uid", meeting.UID, "error", err)
+			return
+		}
+		ev := doc.Events[0]
+		ev.Attendees = setAttendeePartStat(ev.Attendees, address, partstat)
+		// The organiser's row moved to a new sequence when the answer was
+		// recorded. Keep the copy one step ahead so a later synchronization
+		// treats it as the current revision.
+		ev.Sequence = row.Sequence + 1
+		ev.DTStamp = time.Now()
+		if _, err := s.calendar.StoreCopy(ctx, s.db, principal, ev); err != nil {
+			s.log.WarnContext(ctx, "adding an accepted meeting to the calendar failed",
+				"address", address, "uid", meeting.UID, "error", err)
+		}
+	}
+}
+
+// setAttendeePartStat writes one guest's answer into the copy that goes on
+// their calendar. The attendee is normally present; appending one keeps the
+// copy correct if the organiser's event was edited around them.
+func setAttendeePartStat(attendees []ical.Attendee, address, partstat string) []ical.Attendee {
+	for i := range attendees {
+		if strings.EqualFold(attendees[i].Address, address) {
+			attendees[i].PartStat = partstat
+			attendees[i].RSVP = false
+			return attendees
+		}
+	}
+	return append(attendees, ical.Attendee{
+		Address:  address,
+		Role:     ical.RoleRequired,
+		PartStat: partstat,
+	})
 }
 
 // GuestRoom verifies an invitation token and returns the meeting's chat room,
@@ -592,6 +704,9 @@ func (s *Service) GuestRoom(ctx context.Context, uid, address, token string) (ch
 	}
 	if err := s.verifyInvite(ctx, meeting, address, token); err != nil {
 		return chat.Conversation{}, err
+	}
+	if meetingExpired(meeting) {
+		return chat.Conversation{}, ErrExpired
 	}
 	if s.chat == nil || meeting.ChatConversation == "" {
 		return chat.Conversation{}, store.ErrNotFound
@@ -628,6 +743,13 @@ func (s *Service) GuestChatHistory(ctx context.Context, uid, address, token stri
 // "wrong token" from "no such meeting" can enumerate meetings by UID and then
 // learn which addresses were invited, one probe at a time; a caller who
 // cannot distinguish them learns only that the pair they guessed is wrong.
+// meetingExpired reports whether the organiser's chosen lifetime has passed.
+// Expiry is a capability fact, not a deletion: the meeting row remains so its
+// organiser can still see and cancel it.
+func meetingExpired(meeting store.Meeting) bool {
+	return !meeting.ExpiresAt.After(time.Now())
+}
+
 func (s *Service) verifyInvite(ctx context.Context, meeting store.Meeting, address, token string) error {
 	address = strings.ToLower(strings.TrimSpace(address))
 	if address == "" || token == "" {
@@ -835,6 +957,8 @@ func (s *Service) view(ctx context.Context, meeting store.Meeting, invitees []st
 		OneWay:           meeting.OneWay,
 		Attendees:        attendees,
 		CreatedAt:        meeting.CreatedAt,
+		ExpiresAt:        meeting.ExpiresAt,
+		Expired:          meetingExpired(meeting),
 	}
 	// The logo is decoration: an organization that has none, or a lookup that
 	// fails, simply leaves the room with its title alone.
@@ -860,6 +984,24 @@ func calendarAttachment(doc []byte) webmail.AttachmentInput {
 // organiser did not mean to write. What survives is the title with its
 // whitespace runs collapsed, so the check that follows sees the length that
 // will actually be sent.
+// normaliseExpiry clamps the requested room lifetime to the allowed range.
+// Zero is the documented default rather than an error, because the client
+// omits the field when the organiser did not touch it.
+const (
+	defaultMeetingExpiryHours = 12
+	maxMeetingExpiryHours     = 24
+)
+
+func normaliseExpiry(hours int) (int, error) {
+	if hours == 0 {
+		return defaultMeetingExpiryHours, nil
+	}
+	if hours < 1 || hours > maxMeetingExpiryHours {
+		return 0, fmt.Errorf("%w: the room lifetime must be between 1 and %d hours", ErrInvalid, maxMeetingExpiryHours)
+	}
+	return hours, nil
+}
+
 func normaliseTitle(title string) (string, error) {
 	title = strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7f {

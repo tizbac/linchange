@@ -22,8 +22,21 @@ export class MeetingsApi {
 
   // --- signed-in ---
 
-  list(): Promise<{ meetings: MeetingListItem[] }> {
-    return this.fetch('/meetings/');
+  // list returns one page of meetings. Expired meetings are hidden by default:
+  // their links no longer work, so they are reached through the explicit
+  // "show expired" toggle rather than filling the page.
+  list(opts: { includeExpired?: boolean; limit?: number; offset?: number } = {}): Promise<{
+    meetings: MeetingListItem[];
+    total: number;
+    limit: number;
+    offset: number;
+  }> {
+    const q = new URLSearchParams();
+    if (opts.includeExpired) q.set('include_expired', '1');
+    if (opts.limit) q.set('limit', String(opts.limit));
+    if (opts.offset) q.set('offset', String(opts.offset));
+    const query = q.toString();
+    return this.fetch(`/meetings/${query ? `?${query}` : ''}`);
   }
 
   create(draft: MeetingDraft): Promise<CreateMeetingResult> {

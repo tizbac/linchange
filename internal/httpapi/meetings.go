@@ -86,14 +86,43 @@ func (s *Server) handleCreateMeeting(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusCreated, result)
 }
 
-// handleListMeetings lists the caller's meetings, nearest first.
+// handleListMeetings lists the caller's meetings, nearest first. Expired
+// meetings are hidden unless include_expired is set; the list is paged so a
+// long history does not arrive in one response.
 func (s *Server) handleListMeetings(w http.ResponseWriter, r *http.Request) {
-	items, err := s.meetings.List(r.Context(), Principal(r.Context()))
+	q := r.URL.Query()
+	includeExpired := q.Get("include_expired") == "1" || q.Get("include_expired") == "true"
+	limit, offset := 20, 0
+	if raw := q.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			s.writeError(w, http.StatusBadRequest, "limit is not a number")
+			return
+		}
+		limit = n
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if raw := q.Get("offset"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			s.writeError(w, http.StatusBadRequest, "offset is not a number")
+			return
+		}
+		offset = n
+	}
+	items, total, err := s.meetings.List(r.Context(), Principal(r.Context()), includeExpired, limit, offset)
 	if err != nil {
 		s.writeError(w, mapErrorCode(err), err.Error())
 		return
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"meetings": items})
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"meetings": items,
+		"total":    total,
+		"limit":    limit,
+		"offset":   offset,
+	})
 }
 
 // handleGetMeeting returns one meeting: content, guest list, answers, and

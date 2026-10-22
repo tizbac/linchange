@@ -39,6 +39,7 @@ test('a participant without a camera keeps receiving the other video', async ({ 
 
   await page.goto((await page.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await page.waitForURL(/\/meetings\/[^/]+\/room/);
+  await page.getByTestId("prejoin-join").click();
   await expect(page.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
 
   // The guest browser has a microphone but no camera. The app asks for both
@@ -58,6 +59,7 @@ test('a participant without a camera keeps receiving the other video', async ({ 
   await guest.goto(meetingUrl);
   await guest.goto((await guest.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await guest.waitForURL(/\/meetings\/[^/]+\/room/);
+  await guest.getByTestId("prejoin-join").click();
 
   await expect(guest.getByTestId('call-tile').filter({ hasText: USER })).toBeVisible({ timeout: 30000 });
   await expect(page.getByTestId('call-tile').filter({ hasText: GUEST })).toBeVisible({ timeout: 30000 });
@@ -122,12 +124,14 @@ test('a screen share is a separate view-only feed and stops cleanly', async ({ p
 
   await page.goto((await page.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await page.waitForURL(/\/meetings\/[^/]+\/room/);
+  await page.getByTestId("prejoin-join").click();
 
   const guest = await browser.newPage();
   await signIn(guest, GUEST);
   await guest.goto(meetingUrl);
   await guest.goto((await guest.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await guest.waitForURL(/\/meetings\/[^/]+\/room/);
+  await guest.getByTestId("prejoin-join").click();
 
   await expect(guest.getByTestId('call-tile').filter({ hasText: USER })).toBeVisible({ timeout: 30000 });
   await expect(page.getByTestId('call-tile').filter({ hasText: GUEST })).toBeVisible({ timeout: 30000 });
@@ -189,6 +193,7 @@ test('a webinar guest cannot share a screen', async ({ page, browser }) => {
   await guest.goto(meetingUrl);
   await guest.goto((await guest.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await guest.waitForURL(/\/meetings\/[^/]+\/room/);
+  await guest.getByTestId("prejoin-join").click();
   await expect(guest.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
 
   // Only the presenter has the share control in a one-way meeting.
@@ -197,6 +202,7 @@ test('a webinar guest cannot share a screen', async ({ page, browser }) => {
 
   await page.goto((await page.getByRole('link', { name: 'Join meeting' }).getAttribute('href')) ?? '');
   await page.waitForURL(/\/meetings\/[^/]+\/room/);
+  await page.getByTestId("prejoin-join").click();
   await expect(page.getByTestId('share-screen')).toBeVisible();
 
   await guest.close();

@@ -381,6 +381,212 @@ func TestMeetingsLifecycle(t *testing.T) {
 // "@", and a client that encodes its path segments sends that as %40. Both
 // spellings must reach the same meeting, or the browser - which builds URLs
 // out of its own path parameters - 404s on rooms it created seconds ago.
+// TestMeetingExpiryAndListPagination pins the two rules the meeting list
+// depends on: an expired room is hidden unless asked for, and the list is a
+// page whose total describes the whole filtered set.
+func TestMeetingExpiryAndListPagination(t *testing.T) {
+	db := testMigratedDB(t)
+	srv, _ := newMeetingsServer(t, db)
+
+	seedUser(t, db, "alice@example.com", "local", true, true)
+	seedUser(t, db, "bob@example.com", "local", true, true)
+	setPassword(t, db, "alice@example.com", "correct horse battery staple")
+	setPassword(t, db, "bob@example.com", "correct horse battery staple")
+	alice := adminToken(t, srv, "alice@example.com")
+	bob := adminToken(t, srv, "bob@example.com")
+
+	start := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
+	create := func(title string, expiry int) map[string]any {
+		body := map[string]any{
+			"title":    title,
+			"start":    start,
+			"end":      start.Add(time.Hour),
+			"timezone": "UTC",
+			"attendees": []map[string]string{
+				{"address": "bob@example.com"},
+			},
+		}
+		if expiry != 0 {
+			body["expiryHours"] = expiry
+		}
+		code, created := do(t, srv, "POST", "/api/v1/meetings", body, alice)
+		if code != 201 {
+			t.Fatalf("creating %s = %d %v", title, code, created)
+		}
+		return created
+	}
+
+	first := create("Expiring", 2)
+	if first["expired"] == true {
+		t.Errorf("a new meeting is already expired: %v", first)
+	}
+	if str(first, "expiresAt") == "" {
+		t.Errorf("created meeting has no expiresAt: %v", first)
+	}
+	uid := mustField(t, first, "uid")
+	create("Still live", 0)
+
+	// A lifetime beyond the maximum is a client error, not a silently clamped
+	// room. The default (zero) is valid and was exercised above.
+	code, body := do(t, srv, "POST", "/api/v1/meetings", map[string]any{
+		"title":       "Too long",
+		"start":       start,
+		"end":         start.Add(time.Hour),
+		"expiryHours": 25,
+		"attendees": []map[string]string{
+			{"address": "bob@example.com"},
+		},
+	}, alice)
+	if code != 400 {
+		t.Fatalf("expiryHours=25 = %d %v, want 400", code, body)
+	}
+
+	// Move the first meeting's expiry into the past. The row stays; only the
+	// capability is gone.
+	if _, err := db.Exec(`UPDATE meetings SET expires_at = now() - interval '1 hour' WHERE uid = $1`, uid); err != nil {
+		t.Fatalf("expiring the meeting: %v", err)
+	}
+
+	code, list := do(t, srv, "GET", "/api/v1/meetings", nil, alice)
+	if code != 200 {
+		t.Fatalf("listing meetings = %d %v", code, list)
+	}
+	if total, _ := list["total"].(float64); total != 1 {
+		t.Errorf("default list total = %v, want 1 (expired hidden): %v", list["total"], list)
+	}
+	for _, raw := range list["meetings"].([]any) {
+		item := raw.(map[string]any)
+		if item["uid"] == uid {
+			t.Errorf("an expired meeting appeared in the default list: %v", item)
+		}
+	}
+
+	code, list = do(t, srv, "GET", "/api/v1/meetings?include_expired=1", nil, alice)
+	if code != 200 {
+		t.Fatalf("listing with expired = %d %v", code, list)
+	}
+	if total, _ := list["total"].(float64); total != 2 {
+		t.Errorf("include_expired total = %v, want 2: %v", list["total"], list)
+	}
+
+	// The same filter drifts into pages without changing the total or
+	// repeating a row.
+	code, page1 := do(t, srv, "GET", "/api/v1/meetings?include_expired=1&limit=1&offset=0", nil, alice)
+	if code != 200 {
+		t.Fatalf("first page = %d %v", code, page1)
+	}
+	code, page2 := do(t, srv, "GET", "/api/v1/meetings?include_expired=1&limit=1&offset=1", nil, alice)
+	if code != 200 {
+		t.Fatalf("second page = %d %v", code, page2)
+	}
+	p1 := page1["meetings"].([]any)
+	p2 := page2["meetings"].([]any)
+	if len(p1) != 1 || len(p2) != 1 {
+		t.Fatalf("pages returned %d and %d rows, want 1 each", len(p1), len(p2))
+	}
+	if p1[0].(map[string]any)["uid"] == p2[0].(map[string]any)["uid"] {
+		t.Errorf("offset=1 repeated the first page's row")
+	}
+	if total, _ := page2["total"].(float64); total != 2 {
+		t.Errorf("paged total = %v, want 2", page2["total"])
+	}
+
+	// The organizer still sees the expired record, marked expired.
+	code, view := do(t, srv, "GET", "/api/v1/meetings/"+uid, nil, alice)
+	if code != 200 {
+		t.Fatalf("reading an expired meeting = %d %v", code, view)
+	}
+	if view["expired"] != true {
+		t.Errorf("expired view = %v, want expired:true", view)
+	}
+
+	// Answering and opening the invitation link are refused with 410 once the
+	// lifetime has passed.
+	code, _ = do(t, srv, "POST", "/api/v1/meetings/"+uid+"/rsvp",
+		map[string]any{"partStat": "ACCEPTED"}, bob)
+	if code != 410 {
+		t.Errorf("RSVP on an expired meeting = %d, want 410", code)
+	}
+	var token string
+	if err := db.Get(&token, `
+		SELECT i.rsvp_token FROM meeting_invites i
+		JOIN meetings m ON m.id = i.meeting_id
+		WHERE m.uid = $1 AND i.address = 'bob@example.com'`, uid); err != nil {
+		t.Fatalf("reading the invitation token: %v", err)
+	}
+	code, _ = do(t, srv, "GET",
+		"/api/v1/meeting-invites/"+uid+"?to=bob@example.com&token="+token, nil, nil)
+	if code != 410 {
+		t.Errorf("expired invitation view = %d, want 410", code)
+	}
+}
+
+// TestAcceptedMeetingAppearsOnGuestCalendar is the promise that accepting an
+// invitation puts it on your own calendar. The organiser's event is not the
+// guest's event: without a copy in the guest's default calendar, a signed-in
+// guest sees the meeting in the meetings list but nowhere in their calendar.
+func TestAcceptedMeetingAppearsOnGuestCalendar(t *testing.T) {
+	db := testMigratedDB(t)
+	srv, _ := newMeetingsServer(t, db)
+
+	seedUser(t, db, "alice@example.com", "local", true, true)
+	seedUser(t, db, "bob@example.com", "local", true, true)
+	setPassword(t, db, "alice@example.com", "correct horse battery staple")
+	setPassword(t, db, "bob@example.com", "correct horse battery staple")
+	alice := adminToken(t, srv, "alice@example.com")
+	bob := adminToken(t, srv, "bob@example.com")
+
+	start := time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second)
+	code, created := do(t, srv, "POST", "/api/v1/meetings", map[string]any{
+		"title":    "Calendar copy",
+		"start":    start,
+		"end":      start.Add(time.Hour),
+		"timezone": "UTC",
+		"attendees": []map[string]string{
+			{"address": "bob@example.com"},
+		},
+	}, alice)
+	if code != 201 {
+		t.Fatalf("create = %d %v", code, created)
+	}
+	uid := mustField(t, created, "uid")
+
+	count := func() int {
+		t.Helper()
+		var n int
+		if err := db.Get(&n, `
+			SELECT count(*) FROM events e
+			JOIN calendars c ON c.id = e.calendar_id
+			WHERE c.owner = 'bob@example.com' AND e.uid = $1`, uid); err != nil {
+			t.Fatalf("counting the guest's calendar: %v", err)
+		}
+		return n
+	}
+	if n := count(); n != 0 {
+		t.Fatalf("guest calendar already has %d copies before answering", n)
+	}
+
+	code, _ = do(t, srv, "POST", "/api/v1/meetings/"+uid+"/rsvp",
+		map[string]any{"partStat": "ACCEPTED"}, bob)
+	if code != 200 {
+		t.Fatalf("accepting = %d, want 200", code)
+	}
+	if n := count(); n != 1 {
+		t.Errorf("accepted meeting produced %d calendar copies, want 1", n)
+	}
+
+	// Declining removes it again: an invitation you said no to is not a
+	// booking on your calendar.
+	code, _ = do(t, srv, "POST", "/api/v1/meetings/"+uid+"/rsvp",
+		map[string]any{"partStat": "DECLINED"}, bob)
+	if code != 200 {
+		t.Fatalf("declining = %d, want 200", code)
+	}
+	if n := count(); n != 0 {
+		t.Errorf("declined meeting left %d calendar copies, want 0", n)
+	}
+}
+
 func TestMeetingUIDEncoding(t *testing.T) {
 	db := testMigratedDB(t)
 	srv, _ := newMeetingsServer(t, db)

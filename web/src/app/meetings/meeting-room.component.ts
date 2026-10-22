@@ -45,7 +45,7 @@ interface CallParticipant {
   template: `
     <main class="mx-auto max-w-3xl px-6 py-10">
       @if (loading()) {
-        <p class="text-sm text-slate-500">Loading the meeting…</p>
+        <p class="text-sm text-slate-500" i18n="@@meeting.loading">Loading the meeting…</p>
       } @else if (pageError()) {
         <div class="rounded-2xl bg-white p-8 text-center shadow-sm ring-1 ring-slate-200">
           <p class="text-sm text-slate-600">{{ pageError() }}</p>
@@ -65,6 +65,9 @@ interface CallParticipant {
             <h1 class="text-2xl font-semibold tracking-tight text-slate-900">{{ m.title }}</h1>
             @if (m.cancelled) {
               <span class="rounded bg-rose-100 px-2 py-0.5 text-sm font-medium text-rose-700" i18n="@@meeting.cancelled">Cancelled</span>
+            }
+            @if (m.expired) {
+              <span class="rounded bg-slate-200 px-2 py-0.5 text-sm font-medium text-slate-600" i18n="@@meeting.expired">Expired</span>
             }
           </div>
           @if (mode() === 'invitee') {
@@ -97,7 +100,7 @@ interface CallParticipant {
             </div>
             <div class="flex gap-3">
               <dt class="w-24 shrink-0 text-slate-400" i18n="@@meeting.where">Where</dt>
-              <dd class="text-slate-800">{{ m.location || 'The link below' }}</dd>
+              <dd class="text-slate-800">{{ m.location || linkBelow }}</dd>
             </div>
             <div class="flex gap-3">
               <dt class="w-24 shrink-0 text-slate-400" i18n="@@meeting.organizer">Organiser</dt>
@@ -134,15 +137,17 @@ interface CallParticipant {
         <!-- Your answer. The organiser is not on their own guest list, so
              this block is absent for them rather than showing a row of
              buttons the server would refuse. -->
-        @if (!m.cancelled && iAmGuest()) {
+        @if (!m.cancelled && !m.expired && iAmGuest()) {
           <section class="mt-5 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
             <h2 class="text-lg font-semibold text-slate-900" i18n="@@meeting.yourAnswer">Your answer</h2>
             <p class="mt-1 text-sm text-slate-500">
               @if (myAnswer() && myAnswer() !== 'NEEDS-ACTION') {
-                You answered <span class="font-medium text-slate-700">{{ label(myAnswer()!) }}</span>.
-                You can change it until the meeting is over.
+                <span i18n="@@meeting.answered">
+                  You answered <span class="font-medium text-slate-700">{{ label(myAnswer()!) }}</span>.
+                  You can change it until the meeting is over.
+                </span>
               } @else {
-                The organiser sees your answer as soon as you give one.
+                <span i18n="@@meeting.answerHint">The organiser sees your answer as soon as you give one.</span>
               }
             </p>
             <div class="mt-4 flex flex-wrap gap-3">
@@ -165,8 +170,13 @@ interface CallParticipant {
           </section>
         }
         @if (m.cancelled && iAmGuest()) {
-          <p class="mt-5 rounded-lg bg-slate-100 px-4 py-3 text-sm text-slate-600 ring-1 ring-slate-200">
+          <p class="mt-5 rounded-lg bg-slate-100 px-4 py-3 text-sm text-slate-600 ring-1 ring-slate-200" i18n="@@meeting.calledOff">
             This meeting was called off by the organiser.
+          </p>
+        }
+        @if (m.expired && !m.cancelled) {
+          <p class="mt-5 rounded-lg bg-slate-100 px-4 py-3 text-sm text-slate-600 ring-1 ring-slate-200" i18n="@@meeting.expiredNote">
+            This meeting link has expired. The organiser still has the record.
           </p>
         }
 
@@ -174,7 +184,7 @@ interface CallParticipant {
         @if (isOrganizer() && !m.cancelled) {
           <section class="mt-5 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
             <h2 class="text-lg font-semibold text-slate-900" i18n="@@meeting.invitations">Invitations</h2>
-            <p class="mt-1 text-sm text-slate-500">
+            <p class="mt-1 text-sm text-slate-500" i18n="@@meeting.invitationsHint">
               {{ m.attendees.length }} guests, {{ acceptedCount(m) }} accepted.
               Resending mails everybody their own link again — answers already given stand.
             </p>
@@ -185,13 +195,14 @@ interface CallParticipant {
                 (click)="resend()"
                 class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-colors"
               >
-                {{ busy() ? 'Sending…' : 'Resend invitations' }}
+                {{ busy() ? sendingLabel : resendLabel }}
               </button>
               <button
                 type="button"
                 [disabled]="busy()"
                 (click)="cancelMeeting()"
                 class="rounded-lg border border-rose-300 px-4 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50 transition-colors"
+                i18n="@@meeting.cancelMeeting"
               >
                 Cancel meeting
               </button>
@@ -201,12 +212,12 @@ interface CallParticipant {
 
         <!-- Guest list -->
         <section class="mt-5 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-          <h2 class="text-lg font-semibold text-slate-900">Guests</h2>
+          <h2 class="text-lg font-semibold text-slate-900" i18n="@@meeting.guests">Guests</h2>
           <table class="mt-3 w-full text-sm">
             <thead>
               <tr class="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-400">
-                <th class="pb-2 font-medium">Guest</th>
-                <th class="pb-2 text-right font-medium">Answer</th>
+                <th class="pb-2 font-medium" i18n="@@meeting.guest">Guest</th>
+                <th class="pb-2 text-right font-medium" i18n="@@meeting.answer">Answer</th>
               </tr>
             </thead>
             <tbody>
@@ -219,7 +230,7 @@ interface CallParticipant {
                         <span class="text-xs text-slate-400">{{ a.address }}</span>
                       }
                       @if (isMe(a.address)) {
-                        <span class="rounded bg-brand-100 px-1.5 py-0.5 text-xs font-medium text-brand-800">you</span>
+                        <span class="rounded bg-brand-100 px-1.5 py-0.5 text-xs font-medium text-brand-800" i18n="@@meeting.you">you</span>
                       }
                     </div>
                   </td>
@@ -234,7 +245,7 @@ interface CallParticipant {
           </table>
         </section>
 
-        @if (!m.cancelled && m.chatConversation) {
+        @if (!m.cancelled && !m.expired && m.chatConversation) {
           <!-- The call is a separate full-screen page. Keeping the details
                page readable is the point: joining is one click from here, and
                the room handles its own gallery, controls and chat sidebar. -->
@@ -347,6 +358,9 @@ export class MeetingRoomComponent implements OnInit, OnDestroy {
   private readonly meterData = new Uint8Array(512);
 
   readonly answerOptions = ['ACCEPTED', 'TENTATIVE', 'DECLINED'] as const;
+  protected readonly linkBelow = $localize`:@@meeting.linkBelow:The link below`;
+  protected readonly sendingLabel = $localize`:@@meeting.sending:Sending…`;
+  protected readonly resendLabel = $localize`:@@meeting.resend:Resend invitations`;
 
   private uid = '';
   private inviteeToken = '';
@@ -469,7 +483,7 @@ export class MeetingRoomComponent implements OnInit, OnDestroy {
         await this.api.rsvp(this.uid, partStat);
       }
       await this.reload();
-      this.note.set(`Answered: ${partStatLabel(partStat)}. The organiser sees it straight away.`);
+      this.note.set($localize`:@@meeting.answeredNote:Answered: ${partStatLabel(partStat)}. The organiser sees it straight away.`);
     } catch (err) {
       this.actionError.set(errorMessage(err));
     } finally {
@@ -511,7 +525,7 @@ export class MeetingRoomComponent implements OnInit, OnDestroy {
     try {
       await this.api.cancel(this.uid);
       await this.reload();
-      this.note.set('Meeting cancelled. Every guest has been mailed the cancellation.');
+      this.note.set($localize`:@@meeting.cancelledNote:Meeting cancelled. Every guest has been mailed the cancellation.`);
     } catch (err) {
       this.actionError.set(errorMessage(err));
     } finally {

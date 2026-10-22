@@ -1,5 +1,5 @@
 import { NgClass } from '@angular/common';
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { ContactsApi } from '../core/contacts/contacts-api';
@@ -69,6 +69,7 @@ function defaults() {
                 [(ngModel)]="title"
                 name="title"
                 placeholder="Design review"
+                i18n-placeholder="@@meetings.titlePlaceholder"
                 class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
             </label>
@@ -104,7 +105,7 @@ function defaults() {
             </div>
 
             <label class="block sm:col-span-2">
-              <span class="text-sm font-medium text-slate-700">
+              <span class="text-sm font-medium text-slate-700" i18n="@@meetings.guestsLabel">
                 Guests <span class="font-normal text-slate-400">— one per line, "Bob &lt;bob&#64;example.com&gt;" or just the address</span>
               </span>
               <textarea
@@ -112,6 +113,7 @@ function defaults() {
                 name="attendees"
                 rows="3"
                 placeholder="bob@example.com&#10;carol@outside.example"
+                i18n-placeholder="@@meetings.guestsPlaceholder"
                 class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               ></textarea>
             </label>
@@ -120,7 +122,7 @@ function defaults() {
                  candidate came from, so an invitee from a personal address
                  book is visibly different from one in the company directory. -->
             <div class="relative sm:col-span-2">
-              <span class="text-sm font-medium text-slate-700">
+              <span class="text-sm font-medium text-slate-700" i18n="@@meetings.contactsLabel">
                 Add from contacts
                 <span class="font-normal text-slate-400">— search your books and the organization directory</span>
               </span>
@@ -131,6 +133,7 @@ function defaults() {
                 [(ngModel)]="contactQuery"
                 (ngModelChange)="searchContacts()"
                 placeholder="Name, address, phone or organization"
+                i18n-placeholder="@@meetings.contactsPlaceholder"
               />
               @if (suggestions().length > 0) {
                 <ul
@@ -166,7 +169,7 @@ function defaults() {
                  created, so a colleague who joins on Tuesday is in Wednesday's
                  meeting without this list being rewritten. -->
             <div class="sm:col-span-2">
-              <span class="text-sm font-medium text-slate-700">
+              <span class="text-sm font-medium text-slate-700" i18n="@@meetings.groupsLabel">
                 Groups <span class="font-normal text-slate-400">— invited whole, at whatever they hold when the invitation goes out</span>
               </span>
               @if (orgGroups().length > 0) {
@@ -188,13 +191,13 @@ function defaults() {
                       />
                       {{ g.name }}
                       <span class="text-xs" [ngClass]="invitedGroups().includes(g.id) ? 'text-brand-600' : 'text-slate-400'">
-                        {{ g.everyone ? 'whole organization' : g.member_count + (g.member_count === 1 ? ' person' : ' people') }}
+                        {{ g.everyone ? wholeOrganization : memberCount(g.member_count) }}
                       </span>
                     </label>
                   }
                 </div>
               } @else {
-                <p class="mt-1 text-sm text-slate-400">
+                <p class="mt-1 text-sm text-slate-400" i18n="@@meetings.noGroups">
                   Your organization has no groups — invite people by address above.
                 </p>
               }
@@ -210,25 +213,43 @@ function defaults() {
                 class="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
               />
               <span>
-                <span class="text-sm font-medium text-slate-700">One-way conference (webinar)</span>
-                <span class="block text-xs text-slate-400">
+                <span class="text-sm font-medium text-slate-700" i18n="@@meetings.oneWay">One-way conference (webinar)</span>
+                <span class="block text-xs text-slate-400" i18n="@@meetings.oneWayHint">
                   Only you speak. Guests stay muted and can raise a hand to ask for the floor.
                 </span>
               </span>
             </label>
 
             <label class="block">
-              <span class="text-sm font-medium text-slate-700">Location <span class="font-normal text-slate-400">(optional; the join link fills in)</span></span>
+              <span class="text-sm font-medium text-slate-700" i18n="@@meetings.expiryLabel">Room available for (hours)</span>
+              <input
+                type="number"
+                min="1"
+                max="24"
+                [(ngModel)]="expiryHours"
+                name="expiryHours"
+                class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              />
+              <span class="mt-1 block text-xs text-slate-400" i18n="@@meetings.expiryHint">
+                The link and room stop working this long after the meeting ends. Default 12, maximum 24.
+              </span>
+            </label>
+
+            <label class="block">
+              <span class="text-sm font-medium text-slate-700" i18n="@@meetings.location">
+                Location <span class="font-normal text-slate-400">(optional; the join link fills in)</span>
+              </span>
               <input
                 type="text"
                 [(ngModel)]="location"
                 name="location"
                 placeholder="Room 3 or a link"
+                i18n-placeholder="@@meetings.locationPlaceholder"
                 class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
             </label>
             <label class="block">
-              <span class="text-sm font-medium text-slate-700">Shown in</span>
+              <span class="text-sm font-medium text-slate-700" i18n="@@meetings.timezone">Shown in</span>
               <input
                 type="text"
                 [(ngModel)]="timezone"
@@ -238,7 +259,9 @@ function defaults() {
             </label>
 
             <label class="block sm:col-span-2">
-              <span class="text-sm font-medium text-slate-700">Description <span class="font-normal text-slate-400">(optional)</span></span>
+              <span class="text-sm font-medium text-slate-700" i18n="@@meetings.description">
+                Description <span class="font-normal text-slate-400">(optional)</span>
+              </span>
               <textarea
                 [(ngModel)]="description"
                 name="description"
@@ -274,12 +297,29 @@ function defaults() {
         <p class="mt-6 text-sm text-rose-600">{{ loadError }}</p>
       }
 
-      <section class="mt-8">
+      <div class="mt-8 flex flex-wrap items-center justify-between gap-3">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500" i18n="@@meetings.listTitle">
+          Your meetings
+        </h2>
+        <label class="inline-flex cursor-pointer items-center gap-2 text-sm text-slate-600">
+          <input
+            type="checkbox"
+            class="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+            [checked]="includeExpired"
+            (change)="toggleExpired()"
+          />
+          <span i18n="@@meetings.showExpired">Show expired</span>
+        </label>
+      </div>
+
+      <section class="mt-3">
         @if (loading()) {
-          <p class="text-sm text-slate-500">Loading…</p>
+          <p class="text-sm text-slate-500" i18n="@@meetings.loading">Loading…</p>
         } @else if (items().length === 0) {
           <div class="rounded-2xl bg-white p-8 text-center shadow-sm ring-1 ring-slate-200">
-            <p class="text-sm text-slate-500">No meetings yet. Create one and the guests are mailed their links.</p>
+            <p class="text-sm text-slate-500" i18n="@@meetings.empty">
+              No meetings yet. Create one and the guests are mailed their links.
+            </p>
           </div>
         } @else {
           <ul class="space-y-3">
@@ -294,13 +334,16 @@ function defaults() {
                       <div class="flex items-center gap-2">
                         <span class="truncate font-medium text-slate-900">{{ m.title }}</span>
                         @if (m.cancelled) {
-                          <span class="rounded bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700">Cancelled</span>
+                          <span class="rounded bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700" i18n="@@meetings.cancelled">Cancelled</span>
+                        }
+                        @if (m.expired) {
+                          <span class="rounded bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600" i18n="@@meetings.expired">Expired</span>
                         }
                         <span
                           class="rounded px-2 py-0.5 text-xs font-medium"
                           [ngClass]="m.role === 'organizer' ? 'bg-brand-100 text-brand-800' : 'bg-slate-100 text-slate-600'"
                         >
-                          {{ m.role === 'organizer' ? 'Organiser' : 'Guest' }}
+                          {{ m.role === 'organizer' ? organiserLabel : guestLabel }}
                         </span>
                       </div>
                       <p class="mt-1 text-sm text-slate-600">{{ when(m) }}</p>
@@ -309,9 +352,9 @@ function defaults() {
                       }
                     </div>
                     <div class="shrink-0 text-right text-sm text-slate-500">
-                      <div>{{ m.acceptedCount }} of {{ m.attendeeCount }} accepted</div>
+                      <div i18n="@@meetings.acceptedCount">{{ m.acceptedCount }} of {{ m.attendeeCount }} accepted</div>
                       @if (m.myPartStat && m.myPartStat !== 'NEEDS-ACTION') {
-                        <div class="mt-0.5 text-slate-400">You: {{ answer(m.myPartStat) }}</div>
+                        <div class="mt-0.5 text-slate-400" i18n="@@meetings.yourAnswer">You: {{ answer(m.myPartStat) }}</div>
                       }
                     </div>
                   </div>
@@ -319,6 +362,31 @@ function defaults() {
               </li>
             }
           </ul>
+          <div class="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
+            <span i18n="@@meetings.pageSummary">
+              {{ total() }} meetings · page {{ page() + 1 }} of {{ pageCount() }}
+            </span>
+            <div class="flex gap-2">
+              <button
+                type="button"
+                [disabled]="page() === 0"
+                (click)="previousPage()"
+                class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                i18n="@@meetings.previous"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                [disabled]="page() + 1 >= pageCount()"
+                (click)="nextPage()"
+                class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                i18n="@@meetings.next"
+              >
+                Next
+              </button>
+            </div>
+          </div>
         }
       </section>
     </main>
@@ -330,10 +398,33 @@ export class MeetingsComponent {
   private readonly orgApi = inject(OrganizationApi);
   private readonly contactsApi = inject(ContactsApi);
 
+  protected readonly organiserLabel = $localize`:@@meetings.organiser:Organiser`;
+  protected readonly guestLabel = $localize`:@@meetings.guest:Guest`;
+  protected readonly wholeOrganization = $localize`:@@meetings.wholeOrganization:whole organization`;
+
+  protected memberCount(count: number): string {
+    if (count === 1) {
+      return $localize`:@@meetings.memberOne:1 person`;
+    }
+    return $localize`:@@meetings.memberMany:${count} people`;
+  }
+
   readonly items = signal<MeetingListItem[]>([]);
   readonly loading = signal(true);
   readonly saving = signal(false);
   readonly creating = signal(false);
+
+  // The list is paged. Expired meetings are hidden by default; they are the
+  // rows whose links no longer work, and they should not push live meetings
+  // off the page.
+  readonly total = signal(0);
+  readonly page = signal(0);
+  readonly pageSize = 20;
+  readonly pageCount = computed(() => Math.max(1, Math.ceil(this.total() / this.pageSize)));
+  includeExpired = false;
+  // The room lifetime chosen in the form, measured from the meeting's end.
+  // The server defaults to 12 and refuses more than 24.
+  expiryHours = 12;
 
   // The organization's groups: the other way to name guests, fetched with the
   // page because the list is short and the form is the only place it is used.
@@ -374,13 +465,44 @@ export class MeetingsComponent {
     this.loading.set(true);
     this.loadError = '';
     try {
-      const res = await this.api.list();
+      const offset = this.page() * this.pageSize;
+      const res = await this.api.list({
+        includeExpired: this.includeExpired,
+        limit: this.pageSize,
+        offset,
+      });
       this.items.set(res.meetings);
+      this.total.set(res.total);
+      // Deleting or hiding the last row of a page leaves the page empty even
+      // though earlier rows exist. Step back to the last real page instead of
+      // showing "no meetings" next to a total that says otherwise.
+      if (res.meetings.length === 0 && res.total > 0 && offset > 0) {
+        this.page.set(Math.max(0, Math.ceil(res.total / this.pageSize) - 1));
+        await this.load();
+      }
     } catch (err) {
       this.loadError = errorMessage(err);
     } finally {
       this.loading.set(false);
     }
+  }
+
+  protected toggleExpired(): void {
+    this.includeExpired = !this.includeExpired;
+    this.page.set(0);
+    void this.load();
+  }
+
+  protected previousPage(): void {
+    if (this.page() === 0) return;
+    this.page.update((p) => p - 1);
+    void this.load();
+  }
+
+  protected nextPage(): void {
+    if (this.page() + 1 >= this.pageCount()) return;
+    this.page.update((p) => p + 1);
+    void this.load();
   }
 
   when(m: MeetingListItem): string {
@@ -395,24 +517,24 @@ export class MeetingsComponent {
     this.formError = '';
     const title = this.title.trim();
     if (!title) {
-      this.formError = 'A meeting needs a title.';
+      this.formError = $localize`:@@meetings.errTitle:A meeting needs a title.`;
       return;
     }
     if (!this.date || !this.startTime || !this.endTime) {
-      this.formError = 'A meeting needs a date and a time.';
+      this.formError = $localize`:@@meetings.errWhen:A meeting needs a date and a time.`;
       return;
     }
     const attendees = this.parseAttendees();
     const groups = this.invitedGroups();
     if (attendees.length === 0 && groups.length === 0) {
-      this.formError = 'Add at least one guest, or invite a group.';
+      this.formError = $localize`:@@meetings.errGuests:Add at least one guest, or invite a group.`;
       return;
     }
 
     const start = new Date(`${this.date}T${this.startTime}:00`);
     const end = new Date(`${this.date}T${this.endTime}:00`);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-      this.formError = 'That date or time could not be read.';
+      this.formError = $localize`:@@meetings.errDate:That date or time could not be read.`;
       return;
     }
     // An end before the start means the meeting runs past midnight: the next
@@ -433,6 +555,7 @@ export class MeetingsComponent {
       // than when the form was filled in.
       groups: groups.length > 0 ? groups : undefined,
       oneWay: this.oneWay || undefined,
+      expiryHours: this.expiryHours,
     };
 
     this.saving.set(true);
@@ -442,7 +565,7 @@ export class MeetingsComponent {
       if (result.inviteFailures?.length) {
         // The meeting exists and the other guests were mailed: this is a
         // result the organiser must see, not an error that hides the success.
-        this.loadError = `Meeting created, but invitations failed for: ${result.inviteFailures.join(', ')}`;
+        this.loadError = $localize`:@@meetings.inviteFailures:Meeting created, but invitations failed for: ${result.inviteFailures.join(', ')}`;
         await this.load();
         return;
       }
