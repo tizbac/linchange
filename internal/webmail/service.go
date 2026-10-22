@@ -289,10 +289,26 @@ func (s *Service) RenameFolder(ctx context.Context, owner string, id int64, name
 		return Folder{}, fmt.Errorf("%w: %s is a standard folder", ErrInvalid, mb.Name)
 	}
 
-	if err := s.mailboxes.RenameChecked(ctx, s.db, id, name); err != nil {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.ContainsAny(name, "/\r\n\x00") {
+		return Folder{}, fmt.Errorf("%w: that is not a usable folder name", ErrInvalid)
+	}
+	// The caller types the leaf. The stored name is the full IMAP path, so a
+	// child of INBOX keeps its parent even when the reader renames "Eventi" to
+	// "Events".
+	fullName := name
+	if mb.ParentID != nil {
+		parent, err := s.mailboxes.GetFolder(ctx, s.db, owner, *mb.ParentID)
+		if err != nil {
+			return Folder{}, translate(err)
+		}
+		fullName = parent.Name + "/" + name
+	}
+
+	if err := s.mailboxes.RenameSubtree(ctx, s.db, id, fullName); err != nil {
 		return Folder{}, translate(err)
 	}
-	s.recordAudit(ctx, owner, "folder.rename", fmt.Sprintf("%s -> %s", mb.Name, name))
+	s.recordAudit(ctx, owner, "folder.rename", fmt.Sprintf("%s -> %s", mb.Name, fullName))
 	return s.folderByID(ctx, owner, id)
 }
 

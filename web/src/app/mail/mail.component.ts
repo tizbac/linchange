@@ -36,6 +36,46 @@ function rankFolder(f: Folder): number {
   return r === undefined ? 100 : r;
 }
 
+// A folder's name is its full IMAP path ("INBOX/Eventi"). The tree shows the
+// leaf; the path belongs to the protocol, not to the reader.
+function folderLabel(f: Folder): string {
+  const cut = f.name.lastIndexOf('/');
+  return cut < 0 ? f.name : f.name.slice(cut + 1);
+}
+
+// flattenFolders walks the parent_id tree and orders siblings the way the flat
+// list used to be ordered: INBOX first, then the special folders, then the
+// rest by name. A child is always emitted directly after its parent, however
+// its full path sorts.
+function flattenFolders(folders: Folder[]): Folder[] {
+  const byID = new Map(folders.map((f) => [f.id, f]));
+  const children = new Map<number | null, Folder[]>();
+  for (const f of folders) {
+    // A parent outside this list (a shared mailbox the user can read but not
+    // fully list, or a deleted parent) is treated as a root rather than
+    // dropped.
+    const parent = f.parent_id !== undefined && f.parent_id !== null && byID.has(f.parent_id)
+      ? f.parent_id
+      : null;
+    const list = children.get(parent) ?? [];
+    list.push(f);
+    children.set(parent, list);
+  }
+  for (const list of children.values()) {
+    list.sort((a, b) => rankFolder(a) - rankFolder(b) || folderLabel(a).localeCompare(folderLabel(b)));
+  }
+
+  const out: Folder[] = [];
+  const walk = (parent: number | null): void => {
+    for (const f of children.get(parent) ?? []) {
+      out.push(f);
+      walk(f.id);
+    }
+  };
+  walk(null);
+  return out;
+}
+
 @Component({
   selector: 'app-mail',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -63,11 +103,11 @@ function rankFolder(f: Folder): number {
                 [class.font-semibold]="selectedFolderId() === f.id"
                 [class.text-brand-800]="selectedFolderId() === f.id"
                 [class.text-slate-700]="selectedFolderId() !== f.id"
-                [style.padding-left.px]="f.parent_id ? 28 : 8"
+                [style.padding-left.px]="folderPadding(f)"
                 (click)="selectFolder(f)"
               >
                 <app-mail-icon [name]="folderIcon(f.special_use)" class="text-slate-400" />
-                <span class="min-w-0 flex-1 truncate">{{ f.name }}</span>
+                <span class="min-w-0 flex-1 truncate">{{ folderLabel(f) }}</span>
                 @if (f.unread > 0) {
                   <span class="rounded-full bg-brand-600 px-1.5 py-0.5 text-[11px] font-semibold text-white">
                     {{ f.unread > 999 ? '999+' : f.unread }}
@@ -75,7 +115,7 @@ function rankFolder(f: Folder): number {
                 }
               </button>
               @if (selectedFolderId() === f.id) {
-                <div class="mb-1 flex flex-wrap gap-x-2 pb-1 pt-0.5" [style.padding-left.px]="f.parent_id ? 28 : 8">
+                <div class="mb-1 flex flex-wrap gap-x-2 pb-1 pt-0.5" [style.padding-left.px]="folderPadding(f)">
                   @if (f.deletable) {
                     <button class="text-[11px] font-medium text-blue-600 hover:underline" (click)="renameFolder(f)">Rename</button>
                   }
@@ -126,7 +166,7 @@ function rankFolder(f: Folder): number {
                   <div>
                     <button
                       class="flex w-full items-center gap-2 rounded-lg py-1.5 pr-2 text-left text-sm transition"
-                      [style.padding-left.px]="f.parent_id ? 28 : 8"
+                      [style.padding-left.px]="folderPadding(f, s.address)"
                       [class.bg-brand-50]="selectedFolderId() === f.id"
                       [class.font-semibold]="selectedFolderId() === f.id"
                       [class.text-brand-800]="selectedFolderId() === f.id"
@@ -134,7 +174,7 @@ function rankFolder(f: Folder): number {
                       (click)="selectFolder(f, s.address)"
                     >
                       <app-mail-icon [name]="folderIcon(f.special_use)" class="text-slate-400" />
-                      <span class="min-w-0 flex-1 truncate">{{ f.name }}</span>
+                      <span class="min-w-0 flex-1 truncate">{{ folderLabel(f) }}</span>
                       @if (f.unread > 0) {
                         <span class="rounded-full bg-brand-600 px-1.5 py-0.5 text-[11px] font-semibold text-white">
                           {{ f.unread > 999 ? '999+' : f.unread }}
@@ -144,7 +184,7 @@ function rankFolder(f: Folder): number {
                       }
                     </button>
                     @if (selectedFolderId() === f.id && s.writable) {
-                      <div class="mb-1 flex flex-wrap gap-x-2 pb-1 pt-0.5" [style.padding-left.px]="f.parent_id ? 28 : 8">
+                      <div class="mb-1 flex flex-wrap gap-x-2 pb-1 pt-0.5" [style.padding-left.px]="folderPadding(f, s.address)">
                         @if (f.deletable) {
                           <button class="text-[11px] font-medium text-blue-600 hover:underline" (click)="renameFolder(f)">Rename</button>
                         }
@@ -514,17 +554,32 @@ export class MailComponent implements OnInit {
 
   protected readonly formatDate = formatDate;
   protected readonly folderIcon = folderIcon;
+  protected readonly folderLabel = folderLabel;
 
-  protected readonly sortedFolders = computed(() =>
-    [...this.folders()].sort((a, b) => rankFolder(a) - rankFolder(b) || a.name.localeCompare(b.name)),
-  );
+  protected readonly sortedFolders = computed(() => flattenFolders(this.folders()));
 
   // sharedSortedFolders is one shared mailbox's tree, ordered the way the
   // user's own is: INBOX first, then the special folders, then the rest.
   protected sharedSortedFolders(address: string): Folder[] {
-    return [...(this.sharedFolders().get(address) ?? [])].sort(
-      (a, b) => rankFolder(a) - rankFolder(b) || a.name.localeCompare(b.name),
-    );
+    return flattenFolders(this.sharedFolders().get(address) ?? []);
+  }
+
+  // folderPadding indents a folder by its real depth, not by whether it has a
+  // parent: INBOX/Eventi/2026 is two steps in, not one. The optional address
+  // chooses the shared mailbox's tree; without it the indentation follows the
+  // signed-in user's own folders even while a shared mailbox is selected.
+  protected folderPadding(f: Folder, address?: string): number {
+    const folders = address ? this.sharedFolders().get(address) ?? [] : this.folders();
+    const byID = new Map(folders.map((folder) => [folder.id, folder]));
+    let depth = 0;
+    let current = f;
+    while (current.parent_id !== undefined && current.parent_id !== null && depth < 32) {
+      const parent = byID.get(current.parent_id);
+      if (!parent) break;
+      depth += 1;
+      current = parent;
+    }
+    return 8 + depth * 16;
   }
 
   protected readonly moveTargets = computed(() =>
@@ -716,8 +771,8 @@ export class MailComponent implements OnInit {
   }
 
   protected async renameFolder(f: Folder): Promise<void> {
-    const name = prompt('Rename folder', f.name);
-    if (!name || !name.trim() || name === f.name) return;
+    const name = prompt('Rename folder', folderLabel(f));
+    if (!name || !name.trim() || name.trim() === folderLabel(f)) return;
     try {
       await this.api.renameFolder(f.id, name.trim(), f.owner);
       await this.refreshFolders();

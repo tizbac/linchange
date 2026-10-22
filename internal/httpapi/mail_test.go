@@ -178,6 +178,35 @@ func TestSubfoldersCanBeCreatedAndStandardFoldersStayFixed(t *testing.T) {
 	if got := num(body, "parent_id"); got != inboxID {
 		t.Errorf("subfolder parent = %d, want %d", got, inboxID)
 	}
+	projectsID := num(body, "id")
+
+	// A grandchild proves the tree is more than one level deep.
+	code, body = do(t, srv, http.MethodPost, "/api/v1/mail/folders",
+		map[string]any{"name": "2026", "parent_id": projectsID}, headers)
+	if code != http.StatusCreated {
+		t.Fatalf("creating a nested subfolder = %d %v, want 201", code, body)
+	}
+	if str(body, "name") != "INBOX/Projects/2026" {
+		t.Errorf("nested name = %q, want INBOX/Projects/2026", str(body, "name"))
+	}
+
+	// Renaming the parent types only the leaf; the parent path and the child
+	// paths have to be carried along.
+	code, body = do(t, srv, http.MethodPatch, fmt.Sprintf("/api/v1/mail/folders/%d", projectsID),
+		map[string]any{"name": "Events"}, headers)
+	if code != http.StatusOK {
+		t.Fatalf("renaming a subfolder = %d %v, want 200", code, body)
+	}
+	if str(body, "name") != "INBOX/Events" {
+		t.Errorf("renamed subfolder = %q, want INBOX/Events", str(body, "name"))
+	}
+	folders = foldersByName(t, srv, headers)
+	if _, ok := folders["INBOX/Events/2026"]; !ok {
+		t.Errorf("the child kept the old path; folders are %v", folders)
+	}
+	if _, ok := folders["INBOX/Projects"]; ok {
+		t.Error("the old parent path is still listed")
+	}
 
 	// The standard folders are named by protocol role and cannot be renamed.
 	code, _ = do(t, srv, http.MethodPatch, fmt.Sprintf("/api/v1/mail/folders/%d", inboxID),

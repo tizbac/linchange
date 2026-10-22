@@ -152,6 +152,53 @@ func (r *MailboxRepo) RenameChecked(ctx context.Context, q store.Querier, id int
 	return nil
 }
 
+// RenameSubtree renames a folder and every child whose full path begins with
+// the old name.
+//
+// The name column carries the IMAP path ("INBOX/Eventi"), while parent_id
+// carries the tree the web client draws. Renaming only the row would leave the
+// children under the old prefix, which is a tree whose labels and parents
+// disagree. Both are updated here, in the same statement for the descendants.
+func (r *MailboxRepo) RenameSubtree(ctx context.Context, q store.Querier, id int64, newName string) error {
+	newName = strings.TrimSpace(newName)
+	if newName == "" {
+		return fmt.Errorf("store: folder name is empty")
+	}
+	if strings.HasPrefix(newName, "/") || strings.HasSuffix(newName, "/") ||
+		strings.Contains(newName, "//") || strings.ContainsAny(newName, "\r\n\x00") {
+		return fmt.Errorf("store: %q is not a usable folder path", newName)
+	}
+
+	var current struct {
+		Name  string `db:"name"`
+		Owner string `db:"owner"`
+	}
+	if err := q.QueryRowxContext(ctx,
+		`SELECT name, owner FROM mailboxes WHERE id = $1`, id).
+		StructScan(&current); err != nil {
+		return fmt.Errorf("store: read mailbox before rename: %w", err)
+	}
+	if current.Name == "INBOX" {
+		return fmt.Errorf("store: INBOX cannot be renamed")
+	}
+	if current.Name == newName {
+		return nil
+	}
+
+	if _, err := q.ExecContext(ctx,
+		`UPDATE mailboxes SET name = $2, updated_at = now() WHERE id = $1`, id, newName); err != nil {
+		return fmt.Errorf("store: rename mailbox: %w", err)
+	}
+	if _, err := q.ExecContext(ctx, `
+		UPDATE mailboxes
+		SET name = $1 || substring(name from length($2) + 1), updated_at = now()
+		WHERE owner = $3 AND id <> $4 AND name LIKE $2 || '/%'`,
+		newName, current.Name, current.Owner, id); err != nil {
+		return fmt.Errorf("store: rename mailbox children: %w", err)
+	}
+	return nil
+}
+
 // SetSpecialUse marks or clears the RFC 6154 role of a folder, which is how a
 // client knows which folder is Sent rather than one the user happens to have
 // named Sent.
