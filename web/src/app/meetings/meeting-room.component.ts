@@ -535,10 +535,9 @@ export class MeetingRoomComponent implements OnInit, OnDestroy {
   private localStream?: MediaStream;
   private readonly peers = new Map<string, RTCPeerConnection>();
   private signalUnsub?: () => void;
-  // A public STUN server is enough to discover a route on most networks. A
-  // deployment that needs TURN for restrictive NATs can add one here; the
-  // server only relays signalling and never sees the media either way.
-  private readonly iceServers: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
+  // A public STUN server is the last-resort fallback; normally the server's
+  // /webrtc/ice endpoint supplies the built-in relay or an external one.
+  private iceServers: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
 
   // Voice activity is measured with one WebAudio analyser per stream, polled
   // a few times a second. It decides which tile is "speaking" and moves it to
@@ -781,6 +780,18 @@ export class MeetingRoomComponent implements OnInit, OnDestroy {
     if (!this.chat.isOpenFor(meeting.chatConversation)) {
       this.callError.set(this.chat.error() || 'The call could not connect.');
       return;
+    }
+
+    // The server decides what ICE servers this deployment uses: its own
+    // STUN/TURN by default, or an external pair named in configuration. A
+    // failure here leaves the fallback in place rather than refusing the call.
+    try {
+      const ice = await this.api.iceServers();
+      if (ice.iceServers?.length) {
+        this.iceServers = ice.iceServers;
+      }
+    } catch {
+      // Keep the fallback.
     }
 
     const webinar = meeting.oneWay === true;

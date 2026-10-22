@@ -47,6 +47,7 @@ import (
 	"github.com/linchange/linchange/internal/meetings"
 	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/webmail"
+	"github.com/linchange/linchange/internal/webrtc"
 )
 
 // maxAuthBody bounds a request body to what an auth payload can plausibly be,
@@ -114,6 +115,10 @@ type Server struct {
 	// WebSocket.
 	chat    *chat.Service
 	chatHub *chat.Hub
+	// webrtc hands the browser its STUN/TURN configuration. It is nil in
+	// tests that do not build one, in which case the endpoint answers with an
+	// empty list and the browser keeps its fallback.
+	webrtc *webrtc.Service
 }
 
 // Options are the inputs to New.
@@ -147,6 +152,9 @@ type Options struct {
 	// Imports is the remote-IMAP import service. Left nil, the import routes
 	// are not mounted.
 	Imports *imapimport.Service
+	// WebRTC is the STUN/TURN service whose configuration the browser fetches
+	// before opening a call. Left nil, the endpoint answers with an empty list.
+	WebRTC *webrtc.Service
 }
 
 // New builds a Server from an open database and a loaded config.
@@ -422,6 +430,7 @@ func New(opts Options) (*Server, error) {
 		meetings:     meetingsService,
 		chat:         chatService,
 		chatHub:      chatHub,
+		webrtc:       opts.WebRTC,
 	}, nil
 }
 
@@ -481,6 +490,11 @@ func (s *Server) Handler() http.Handler {
 		// history and conversation lists, and the WebSocket that carries
 		// messages, typing, receipts and WebRTC signalling.
 		s.mountChat(r)
+
+		// The browser fetches its STUN/TURN configuration from here, so the
+		// built-in relay can be swapped for an external one by configuration
+		// alone.
+		s.mountWebRTC(r)
 	})
 
 	// CalDAV is not part of the REST surface: a calendar client is handed

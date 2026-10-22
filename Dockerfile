@@ -99,6 +99,9 @@ USER linchange
 # 8080   - HTTP
 # 8443   - HTTPS
 EXPOSE 25 143 587 993 110 995 8080 8443
+# STUN/TURN for calls. The relay range is published by docker-compose rather
+# than EXPOSE, which cannot name a range.
+EXPOSE 3478/tcp 3478/udp
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \

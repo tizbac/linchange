@@ -20,6 +20,7 @@ type Config struct {
 	Mail     Mail      `yaml:"mail"`
 	Exchange Exchange  `yaml:"exchange"`
 	Meetings Meetings  `yaml:"meetings"`
+	WebRTC   WebRTC    `yaml:"webrtc"`
 	Log      Log       `yaml:"logging"`
 }
 
@@ -507,6 +508,65 @@ func (c *Config) MeetingsPublicURL() string {
 		return c.Meetings.PublicURL
 	}
 	return "https://" + c.Server.Hostname
+}
+
+// WebRTC configures how browsers reach each other for calls.
+//
+// linchange runs its own STUN/TURN server by default, so a single install needs
+// no external signalling or relay infrastructure. A deployment that already
+// operates one can name its servers in ICEServers instead, and those are handed
+// to the browser in place of the built-in credentials.
+type WebRTC struct {
+	// ICEServers are external STUN/TURN servers. When set, the browser is given
+	// these instead of the built-in server's credentials.
+	ICEServers []ICEServer `yaml:"ice_servers"`
+	// TURN is the built-in STUN/TURN server.
+	TURN TURN `yaml:"turn"`
+}
+
+// ICEServer is one STUN/TURN server as the browser's RTCConfiguration takes it.
+// A STUN server needs only URLs; a TURN server also needs the long-term
+// username and credential it authenticates with.
+type ICEServer struct {
+	URLs       []string `yaml:"urls" json:"urls"`
+	Username   string   `yaml:"username" json:"username,omitempty"`
+	Credential string   `yaml:"credential" json:"credential,omitempty"`
+}
+
+// TURN configures the STUN/TURN server built into linchange.
+//
+// A TURN server relays media when two browsers cannot reach each other
+// directly. It is the part that makes a call work across a symmetric NAT or a
+// corporate firewall, and it is the reason a call does not depend on an
+// external service being run correctly somewhere else.
+type TURN struct {
+	// Enabled runs the built-in server. It is on by default, which is what
+	// makes a single install sufficient; set it to false to run without it.
+	Enabled bool `yaml:"enabled"`
+	// Realm is the authentication realm, sent to clients in the challenge.
+	Realm string `yaml:"realm"`
+	// Listen is the UDP and TCP address of the STUN/TURN listener. 3478 is the
+	// IANA-assigned port for both.
+	Listen Addr `yaml:"listen"`
+	// RelayMinPort and RelayMaxPort bound the ports allocations use. Every port
+	// in the range must be reachable over UDP, so keep it as small as the
+	// expected number of simultaneous calls requires.
+	RelayMinPort int `yaml:"relay_min_port"`
+	RelayMaxPort int `yaml:"relay_max_port"`
+	// ExternalIP is the address clients use to reach the relay. It must be an
+	// address the browsers can route to, not the bind address; it defaults to
+	// server.public_ip.
+	ExternalIP string `yaml:"external_ip"`
+	// Host is the name put in the URLs handed to browsers. It defaults to
+	// ExternalIP; set it when the relay is reached by a name rather than an
+	// address.
+	Host string `yaml:"host"`
+	// Secret signs the short-lived credentials. When empty a random secret is
+	// generated at startup, which invalidates credentials issued before a
+	// restart; set it to keep them valid across restarts.
+	Secret string `yaml:"secret"`
+	// CredentialTTL is how long an issued credential remains valid.
+	CredentialTTL time.Duration `yaml:"credential_ttl"`
 }
 
 // Log configures logging and audit.

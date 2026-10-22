@@ -327,13 +327,13 @@ func New() *Config {
 					Enabled: true,
 					Delay:   4 * time.Hour,
 				},
-				ConnectTimeout:       10 * time.Second,
-				CommandTimeout:       2 * time.Minute,
-				SMTPHost:             "",
-				SMTPPort:             587,
-				SMTPStartTLS:         true,
-				SMTPUsername:         "",
-				SMTPPassword:         "",
+				ConnectTimeout: 10 * time.Second,
+				CommandTimeout: 2 * time.Minute,
+				SMTPHost:       "",
+				SMTPPort:       587,
+				SMTPStartTLS:   true,
+				SMTPUsername:   "",
+				SMTPPassword:   "",
 			},
 			DKIM: DKIM{
 				SelectorPrefix: "s",
@@ -352,6 +352,20 @@ func New() *Config {
 			Autodiscover: Autodiscover{Enabled: true, Path: "/autodiscover/autodiscover.xml"},
 			EWS:          EWS{Enabled: true, Path: "/ews/exchange.asmx"},
 			EAS:          EAS{Enabled: true, Path: "/eas", MaxPingInterval: 3540, MaxSyncItems: 512},
+		},
+		// Calls default to the server's own STUN/TURN so that a single install
+		// works without a second service. The relay range is kept to 100 ports:
+		// every one of them has to be opened in a firewall, and a hundred is
+		// enough for dozens of simultaneous calls.
+		WebRTC: WebRTC{
+			TURN: TURN{
+				Enabled:       true,
+				Realm:         "linchange",
+				Listen:        Addr{Addr: ":3478"},
+				RelayMinPort:  49152,
+				RelayMaxPort:  49251,
+				CredentialTTL: 2 * time.Hour,
+			},
 		},
 		Log: Log{
 			Level:       "info",

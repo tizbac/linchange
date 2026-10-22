@@ -61,6 +61,13 @@ export class MeetingsApi {
     return firstValueFrom(this.http.get<T>(`${API}${path}`));
   }
 
+  // iceServers is the STUN/TURN configuration a call uses. The server decides
+  // whether that is its own relay or an external one; the browser only sees
+  // the resulting list.
+  iceServers(): Promise<{ iceServers: RTCIceServer[] }> {
+    return this.fetch('/webrtc/ice');
+  }
+
   private post<T>(path: string, body: unknown): Promise<T> {
     return firstValueFrom(this.http.post<T>(`${API}${path}`, body));
   }

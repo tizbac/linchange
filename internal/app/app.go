@@ -34,6 +34,7 @@ import (
 	"github.com/linchange/linchange/internal/pop3d"
 	"github.com/linchange/linchange/internal/smtpd"
 	"github.com/linchange/linchange/internal/store"
+	"github.com/linchange/linchange/internal/webrtc"
 )
 
 // App holds the long-lived resources shared by every listener.
@@ -334,6 +335,18 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		return nil, err
 	}
 
+	// STUN/TURN is part of the install: a call falls back to this relay when
+	// two browsers cannot reach each other directly. It is started before the
+	// HTTP API because the API hands its configuration to the browser, and a
+	// failure to bind the port is a startup failure rather than a surprise at
+	// the first call.
+	webRTCService, err := webrtc.New(cfg.WebRTC, cfg.Server.PublicIP, log)
+	if err != nil {
+		a.Close(context.Background())
+		return nil, err
+	}
+	a.OnShutdown(func(context.Context) error { return webRTCService.Close() })
+
 	// The HTTP and HTTPS listeners both serve the REST API and, when a web
 	// build is present, the Angular app. They are two independent servers:
 	// HTTPListen is always plain HTTP, HTTPSListen always speaks TLS. An
@@ -350,6 +363,8 @@ func New(ctx context.Context, opts Options) (*App, error) {
 			MailAuth: mailVerifier,
 			// The import runner, so the HTTP API can enqueue and cancel jobs.
 			Imports: imports,
+			// The STUN/TURN configuration the browser fetches before a call.
+			WebRTC: webRTCService,
 		})
 		if err != nil {
 			a.Close(context.Background())

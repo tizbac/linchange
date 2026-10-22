@@ -272,6 +272,46 @@ exchange:
     http: 0
     https: 0
 
+# Calls between meeting participants use WebRTC. linchange runs its own
+# STUN/TURN server by default, so a single install is enough. STUN lets two
+# browsers find each other; TURN relays the media when they cannot connect
+# directly (a symmetric NAT or a corporate firewall).
+#
+# Required ports when the built-in server is enabled:
+#   3478/udp and 3478/tcp        STUN and TURN
+#   49152-49251/udp              relay allocations; every port in the
+#                                configured range must be reachable
+# The HTTP/HTTPS port of the web app is required as before.
+webrtc:
+  # To use an external STUN/TURN server instead, name it here. This replaces
+  # the built-in server and its credentials. A STUN entry needs only urls; a
+  # TURN entry also needs the long-term username and credential.
+  # ice_servers:
+  #   - urls:
+  #       - "stun:turn.example.com:3478"
+  #       - "turn:turn.example.com:3478?transport=udp"
+  #     username: "linchange"
+  #     credential: "${TURN_PASSWORD}"
+  turn:
+    # On by default. Set false only when ice_servers above supplies the relay,
+    # or when calls are not used at all.
+    enabled: true
+    realm: linchange
+    listen: { addr: ":3478" }
+    relay_min_port: 49152
+    relay_max_port: 49251
+    # The address clients use to reach the relay. It must be an address the
+    # browsers can route to, not the bind address; empty falls back to
+    # server.public_ip.
+    external_ip: ""
+    # The name put in the URLs handed to browsers; empty uses external_ip.
+    host: ""
+    # Signs the short-lived TURN credentials. Empty generates a random secret
+    # at startup, which invalidates credentials on restart; set a stable value
+    # to keep them valid across restarts.
+    secret: ""
+    credential_ttl: 2h
+
 logging:
   level: info
   format: json

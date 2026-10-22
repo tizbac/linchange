@@ -100,4 +100,27 @@ awk -v port="$PORT" '
 ' .e2e-linchange.yaml > .e2e-linchange.yaml.tmp \
   && mv .e2e-linchange.yaml.tmp .e2e-linchange.yaml
 
+# Calls use the built-in STUN/TURN by default. Move it off 3478 so the e2e
+# stack can run beside a development instance, and point the relay at loopback
+# (this stack is only ever reached from the same machine). Any webrtc block the
+# development config already has is replaced rather than duplicated.
+awk '
+  /^webrtc:/ { skip = 1; next }
+  skip && /^[^ ]/ { skip = 0 }
+  !skip { print }
+' .e2e-linchange.yaml > .e2e-linchange.yaml.tmp \
+  && mv .e2e-linchange.yaml.tmp .e2e-linchange.yaml
+cat >> .e2e-linchange.yaml <<'YAML'
+webrtc:
+  turn:
+    enabled: true
+    realm: linchange
+    listen: { addr: ":13478" }
+    relay_min_port: 50000
+    relay_max_port: 50100
+    external_ip: 127.0.0.1
+    secret: e2e-turn-secret
+    credential_ttl: 1h
+YAML
+
 exec ./bin/linchange --config .e2e-linchange.yaml --web-dir web/dist/linchange-web/browser

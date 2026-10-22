@@ -64,6 +64,12 @@ services:
       # HTTP
       - "${LINCHANGE_HTTP_PORT:-58080}:8080"            # HTTP
       - "${LINCHANGE_HTTPS_PORT:-58443}:8443"           # HTTPS
+      # STUN/TURN for calls. The relay range must match
+      # webrtc.turn.relay_min_port/max_port in the config; every port in it
+      # must be reachable over UDP.
+      - "${LINCHANGE_TURN_PORT:-3478}:3478/udp"
+      - "${LINCHANGE_TURN_PORT:-3478}:3478/tcp"
+      - "49152-49251:49152-49251/udp"
     networks:
       - linchange-network
     restart: unless-stopped
@@ -97,6 +103,10 @@ services:
       - "${LINCHANGE_POP3S_PORT:-5995}:995"
       - "${LINCHANGE_HTTP_PORT:-58080}:8080"
       - "${LINCHANGE_HTTPS_PORT:-58443}:8443"
+      # The demo's STUN/TURN matches config/linchange.demo.yaml.
+      - "53478:53478/udp"
+      - "53478:53478/tcp"
+      - "49252-49352:49252-49352/udp"
     networks:
       - linchange-network
     restart: unless-stopped

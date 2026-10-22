@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/linchange/linchange/config"
 	"github.com/linchange/linchange/internal/auth/token"
 	"github.com/linchange/linchange/internal/chat"
 )
@@ -105,6 +106,24 @@ func (s *Server) handleCreateConversation(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.writeJSON(w, http.StatusCreated, conv)
+}
+
+// mountWebRTC adds the endpoint the browser calls for its ICE configuration.
+// The configuration is a server concern: a deployment can run the built-in
+// STUN/TURN or name an external one without the browser knowing the difference.
+func (s *Server) mountWebRTC(r chi.Router) {
+	r.Route("/webrtc", func(r chi.Router) {
+		r.Use(s.requireAuth)
+		r.Get("/ice", s.handleICEServers)
+	})
+}
+
+func (s *Server) handleICEServers(w http.ResponseWriter, r *http.Request) {
+	servers := make([]config.ICEServer, 0)
+	if s.webrtc != nil {
+		servers = append(servers, s.webrtc.ICEServers()...)
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"iceServers": servers})
 }
 
 func (s *Server) handleChatHistory(w http.ResponseWriter, r *http.Request) {

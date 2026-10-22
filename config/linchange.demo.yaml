@@ -155,6 +155,20 @@ exchange:
     http: 58080
     https: 58443
 
+webrtc:
+  turn:
+    enabled: true
+    realm: linchange
+    # The demo publishes a different host port so it can run beside a
+    # development instance; the container listens on that same port.
+    listen: { addr: ":53478" }
+    relay_min_port: 49252
+    relay_max_port: 49352
+    external_ip: 127.0.0.1
+    host: localhost
+    secret: demo-turn-secret
+    credential_ttl: 1h
+
 logging:
   level: debug
   format: json

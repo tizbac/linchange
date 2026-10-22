@@ -51,6 +51,7 @@ func (c *Config) Validate() error {
 	v.validateMail()
 	v.validateExchange()
 	v.validateMeetings()
+	v.validateWebRTC()
 	v.validateLog()
 
 	if len(v.problems) > 0 {
@@ -489,6 +490,47 @@ func (v *validator) validateMeetings() {
 	}
 	if !c.Listener.HTTP.Enabled() && !c.Listener.HTTPS.Enabled() {
 		v.addf("meetings.public_url is set but neither listeners.http nor listeners.https is set")
+	}
+}
+
+// validateWebRTC checks the STUN/TURN settings.
+//
+// The built-in server is on by default, so a bad port range or an external IP
+// that is not an address has to be caught at startup rather than at the first
+// call. External ICE servers are only checked for shape: whether they answer is
+// the browser's problem, not this process's.
+func (v *validator) validateWebRTC() {
+	w := v.cfg.WebRTC
+
+	if w.TURN.Enabled {
+		if w.TURN.Listen.Addr != "" {
+			if _, _, err := net.SplitHostPort(w.TURN.Listen.Addr); err != nil {
+				v.addf("webrtc.turn.listen %q is not a host:port address", w.TURN.Listen.Addr)
+			}
+		}
+		if w.TURN.RelayMinPort < 1 || w.TURN.RelayMaxPort > 65535 ||
+			w.TURN.RelayMinPort > w.TURN.RelayMaxPort {
+			v.addf("webrtc.turn relay range %d-%d is not a valid port range",
+				w.TURN.RelayMinPort, w.TURN.RelayMaxPort)
+		}
+		if w.TURN.ExternalIP != "" && net.ParseIP(w.TURN.ExternalIP) == nil {
+			v.addf("webrtc.turn.external_ip %q must be an IP address", w.TURN.ExternalIP)
+		}
+		if w.TURN.CredentialTTL <= 0 {
+			v.addf("webrtc.turn.credential_ttl must be greater than zero")
+		}
+	}
+
+	for i, server := range w.ICEServers {
+		if len(server.URLs) == 0 {
+			v.addf("webrtc.ice_servers[%d] has no urls", i)
+		}
+		for _, u := range server.URLs {
+			if !strings.HasPrefix(u, "stun:") && !strings.HasPrefix(u, "turn:") &&
+				!strings.HasPrefix(u, "turns:") {
+				v.addf("webrtc.ice_servers[%d] url %q must start with stun:, turn: or turns:", i, u)
+			}
+		}
 	}
 }
 
