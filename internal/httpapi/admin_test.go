@@ -1114,10 +1114,43 @@ func TestAdminCalendarSharesNameTheGroup(t *testing.T) {
 		t.Errorf("subject_group_id = %v, want %d", row["subject_group_id"], groupID)
 	}
 
+	// A member of the group sees the organization's calendar in their own
+	// list, without accepting an offer: the administrator shared the
+	// organization's resource, not their diary. An older row may still be
+	// pending, so force that state; the workgroup calendar still grants.
+	exec(t, db, `UPDATE calendar_shares SET status = 'pending' WHERE id = $1`,
+		int(created["id"].(float64)))
+	seedUser(t, db, "bob@example.com", "local", true, true)
+	setPassword(t, db, "bob@example.com", "correct horse battery staple")
+	code, body := do(t, srv, http.MethodPost,
+		fmt.Sprintf("/api/v1/admin/workgroups/%d/groups/%d/members", wgID, groupID),
+		map[string]any{"address": "bob@example.com"}, headers)
+	if code != http.StatusNoContent {
+		t.Fatalf("adding bob to the group = %d %v, want 204", code, body)
+	}
+	bob := adminToken(t, srv, "bob@example.com")
+	code, body = do(t, srv, http.MethodGet, "/api/v1/calendars", nil, bob)
+	if code != http.StatusOK {
+		t.Fatalf("listing bob's calendars = %d %v", code, body)
+	}
+	found := false
+	for _, raw := range body["calendars"].([]any) {
+		cal := raw.(map[string]any)
+		if int(cal["id"].(float64)) == calID {
+			found = true
+			if got := str(cal, "level"); got != "write" {
+				t.Errorf("bob's level on the organization calendar = %q, want write", got)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("bob does not see the calendar shared with his group: %v", body)
+	}
+
 	// The share the page shows is the share that governs: taking it away takes
 	// the write access with it, and the row goes.
 	shareID := int(row["id"].(float64))
-	code, body := do(t, srv, http.MethodDelete,
+	code, body = do(t, srv, http.MethodDelete,
 		fmt.Sprintf("%s/%d", shares, shareID), nil, headers)
 	if code != http.StatusNoContent {
 		t.Fatalf("removing the share = %d %v, want 204", code, body)

@@ -110,7 +110,9 @@ const calendarShareColumns = `id, calendar_id, subject_kind, subject_address,
 	subject_group_id, level, status, created_at, updated_at`
 
 // grantedClause decides whether a share is worth granting its subject: it is
-// active, or the person it names accepted an offer that was pending.
+// active, the person it names accepted an offer that was pending, or it is a
+// share of a workgroup calendar. The last case has no approver: the
+// organization owns the calendar and only its administrators can share it.
 //
 // Every lookup that answers "may this address use this calendar" asks it, so
 // the list of shared calendars, the access level on one calendar, and the
@@ -125,7 +127,14 @@ func grantedClause(addressParam string) string {
 	OR EXISTS (
 		SELECT 1 FROM calendar_share_decisions d
 		WHERE d.share_id = cs.id AND d.address = %[1]s::citext
-		  AND d.decision = 'accepted'))`, addressParam)
+		  AND d.decision = 'accepted')
+	-- A share of a workgroup calendar is the organization sharing its own
+	-- resource: only an administrator can create one, so there is nobody to
+	-- ask. Older rows may still say pending; granting them here makes the
+	-- calendar visible even before the cleanup migration has run.
+	OR EXISTS (
+		SELECT 1 FROM calendars wc
+		WHERE wc.id = cs.calendar_id AND wc.workgroup_id IS NOT NULL))`, addressParam)
 }
 
 // List returns the shares on one calendar, people first and then groups, each
