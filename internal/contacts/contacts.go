@@ -16,6 +16,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"sort"
 	"strings"
@@ -441,6 +442,192 @@ func (s *Service) GetCard(ctx context.Context, owner string, bookID, id int64) (
 		return Entry{}, translate(err)
 	}
 	return toEntry(row), nil
+}
+
+// VCardPreview is one card read from an import file, before anything is
+// written. Duplicate is true when the address book already holds the same
+// address or UID, or when an earlier card in the same file does.
+type VCardPreview struct {
+	DisplayName string   `json:"displayName"`
+	Emails      []string `json:"emails"`
+	UID         string   `json:"uid,omitempty"`
+	Duplicate   bool     `json:"duplicate"`
+	Match       string   `json:"match,omitempty"`
+}
+
+// VCardImportResult reports what an import wrote and what it left alone.
+type VCardImportResult struct {
+	Imported int      `json:"imported"`
+	Skipped  int      `json:"skipped"`
+	Failed   int      `json:"failed"`
+	Errors   []string `json:"errors,omitempty"`
+}
+
+// PreviewVCardImport parses a file and reports which cards are already
+// present. It writes nothing: the preview is how an administrator sees the
+// duplicates before deciding to import.
+func (s *Service) PreviewVCardImport(ctx context.Context, owner string, bookID int64, data []byte) ([]VCardPreview, error) {
+	if _, ok, err := s.require(ctx, owner, bookID, store.AddressBookShareWrite); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, ErrDenied
+	}
+	cards, err := parseVCards(data)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.books.ListContacts(ctx, s.db, bookID)
+	if err != nil {
+		return nil, err
+	}
+	byEmail, byUID := existingCardKeys(rows)
+	seenEmail, seenUID := map[string]bool{}, map[string]bool{}
+	out := make([]VCardPreview, 0, len(cards))
+	for _, card := range cards {
+		row, err := importRow(bookID, card)
+		if err != nil {
+			return nil, err
+		}
+		preview := VCardPreview{
+			DisplayName: row.DisplayName,
+			Emails:      card.Values(vcard.FieldEmail),
+			UID:         row.UID,
+		}
+		if match := duplicateReason(row, byEmail, byUID, seenEmail, seenUID); match != "" {
+			preview.Duplicate = true
+			preview.Match = match
+		}
+		seenEmail[strings.ToLower(strings.TrimSpace(row.Email))] = true
+		seenUID[row.UID] = true
+		out = append(out, preview)
+	}
+	return out, nil
+}
+
+// ImportVCards writes every card that is not already in the book. A duplicate
+// is skipped rather than updated: an import is a bulk add, and silently
+// replacing a carefully edited existing card is not what "import" promises.
+func (s *Service) ImportVCards(ctx context.Context, owner string, bookID int64, data []byte) (VCardImportResult, error) {
+	if _, ok, err := s.require(ctx, owner, bookID, store.AddressBookShareWrite); err != nil {
+		return VCardImportResult{}, err
+	} else if !ok {
+		return VCardImportResult{}, ErrDenied
+	}
+	cards, err := parseVCards(data)
+	if err != nil {
+		return VCardImportResult{}, err
+	}
+	rows, err := s.books.ListContacts(ctx, s.db, bookID)
+	if err != nil {
+		return VCardImportResult{}, err
+	}
+	byEmail, byUID := existingCardKeys(rows)
+	seenEmail, seenUID := map[string]bool{}, map[string]bool{}
+	var out VCardImportResult
+	for _, card := range cards {
+		row, err := importRow(bookID, card)
+		if err != nil {
+			out.Failed++
+			out.Errors = append(out.Errors, err.Error())
+			continue
+		}
+		if duplicateReason(row, byEmail, byUID, seenEmail, seenUID) != "" {
+			out.Skipped++
+			continue
+		}
+		if _, err := s.books.CreateContact(ctx, s.db, row); err != nil {
+			out.Failed++
+			out.Errors = append(out.Errors, fmt.Sprintf("%s: %v", row.DisplayName, err))
+			continue
+		}
+		out.Imported++
+		seenEmail[strings.ToLower(strings.TrimSpace(row.Email))] = true
+		seenUID[row.UID] = true
+	}
+	return out, nil
+}
+
+func parseVCards(data []byte) ([]vcard.Card, error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil, fmt.Errorf("%w: the file is empty", ErrInvalid)
+	}
+	dec := vcard.NewDecoder(bytes.NewReader(data))
+	var cards []vcard.Card
+	for {
+		card, err := dec.Decode()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%w: the file is not a valid vCard", ErrInvalid)
+		}
+		if card != nil {
+			cards = append(cards, card)
+		}
+		if len(cards) > 5000 {
+			return nil, fmt.Errorf("%w: the file holds too many contacts", ErrInvalid)
+		}
+	}
+	if len(cards) == 0 {
+		return nil, fmt.Errorf("%w: the file holds no contacts", ErrInvalid)
+	}
+	return cards, nil
+}
+
+func importRow(bookID int64, card vcard.Card) (store.AddressContact, error) {
+	if strings.TrimSpace(card.Value(vcard.FieldUID)) == "" {
+		card.SetValue(vcard.FieldUID, newUID())
+	}
+	row, err := rowFromCard(bookID, card)
+	if err != nil {
+		return store.AddressContact{}, err
+	}
+	if len(row.VCard) > maxCardSize {
+		return store.AddressContact{}, fmt.Errorf("%w: the card is too large", ErrInvalid)
+	}
+	return row, nil
+}
+
+func existingCardKeys(rows []store.AddressContact) (map[string]string, map[string]string) {
+	byEmail := make(map[string]string, len(rows))
+	byUID := make(map[string]string, len(rows))
+	for _, row := range rows {
+		if email := strings.ToLower(strings.TrimSpace(row.Email)); email != "" {
+			byEmail[email] = row.DisplayName
+		}
+		if row.UID != "" {
+			byUID[row.UID] = row.DisplayName
+		}
+	}
+	return byEmail, byUID
+}
+
+func duplicateReason(row store.AddressContact, byEmail, byUID map[string]string, seenEmail, seenUID map[string]bool) string {
+	email := strings.ToLower(strings.TrimSpace(row.Email))
+	if email != "" {
+		if name, ok := byEmail[email]; ok {
+			return "already in this book" + nameSuffix(name)
+		}
+		if seenEmail[email] {
+			return "duplicate in this file"
+		}
+	}
+	if row.UID != "" {
+		if name, ok := byUID[row.UID]; ok {
+			return "already in this book" + nameSuffix(name)
+		}
+		if seenUID[row.UID] {
+			return "duplicate in this file"
+		}
+	}
+	return ""
+}
+
+func nameSuffix(name string) string {
+	if strings.TrimSpace(name) == "" {
+		return ""
+	}
+	return " (" + name + ")"
 }
 
 // CreateCard adds a card to a book the caller may write.

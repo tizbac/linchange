@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -35,6 +36,8 @@ func (s *Server) mountContacts(r chi.Router) {
 
 		r.Get("/{id}/contacts", s.handleListContacts)
 		r.Post("/{id}/contacts", s.handleCreateContact)
+		r.Post("/{id}/contacts/import/preview", s.handleContactImportPreview)
+		r.Post("/{id}/contacts/import", s.handleContactImport)
 		r.Get("/{id}/contacts/{contactID}", s.handleGetContact)
 		r.Patch("/{id}/contacts/{contactID}", s.handleUpdateContact)
 		r.Delete("/{id}/contacts/{contactID}", s.handleDeleteContact)
@@ -153,6 +156,65 @@ func (s *Server) handleCreateContact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, http.StatusCreated, entry)
+}
+
+func (s *Server) handleContactImportPreview(w http.ResponseWriter, r *http.Request) {
+	book, ok := s.addressBookFromPath(w, r)
+	if !ok {
+		return
+	}
+	data, ok := readVCardUpload(w, r)
+	if !ok {
+		return
+	}
+	preview, err := s.contacts.PreviewVCardImport(r.Context(), Principal(r.Context()).Address, book.ID, data)
+	if err != nil {
+		s.writeContactError(w, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"contacts": preview, "total": len(preview)})
+}
+
+func (s *Server) handleContactImport(w http.ResponseWriter, r *http.Request) {
+	book, ok := s.addressBookFromPath(w, r)
+	if !ok {
+		return
+	}
+	data, ok := readVCardUpload(w, r)
+	if !ok {
+		return
+	}
+	result, err := s.contacts.ImportVCards(r.Context(), Principal(r.Context()).Address, book.ID, data)
+	if err != nil {
+		s.writeContactError(w, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, result)
+}
+
+func readVCardUpload(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	const maxVCardFile = 5 << 20
+	r.Body = http.MaxBytesReader(w, r.Body, maxVCardFile+(1<<20))
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		http.Error(w, "expected a vCard file upload", http.StatusBadRequest)
+		return nil, false
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "a file field is required", http.StatusBadRequest)
+		return nil, false
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxVCardFile+1))
+	if err != nil {
+		http.Error(w, "could not read the file", http.StatusBadRequest)
+		return nil, false
+	}
+	if len(data) > maxVCardFile {
+		http.Error(w, "the vCard file is too large", http.StatusRequestEntityTooLarge)
+		return nil, false
+	}
+	return data, true
 }
 
 func (s *Server) handleGetContact(w http.ResponseWriter, r *http.Request) {

@@ -8,6 +8,7 @@ import {
   Contact,
   ContactInput,
   Suggestion,
+  VCardPreview,
 } from '../core/contacts/contacts.models';
 import { errorMessage } from '../core/http-error';
 import { OrganizationApi, OrganizationGroup } from '../core/organization/organization-api';
@@ -163,6 +164,15 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
                     >
                       New contact
                     </button>
+                    <label class="cursor-pointer rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                      Import vCard
+                      <input
+                        type="file"
+                        accept=".vcf,text/vcard,text/x-vcard"
+                        class="hidden"
+                        (change)="importVCards($event)"
+                      />
+                    </label>
                   }
                   @if (book.isOwner && book.scope === 'shared') {
                     <button
@@ -461,6 +471,58 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
           </form>
         </section>
       }
+      @if (importPreview(); as preview) {
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" (click)="importPreview.set(null)">
+          <div class="max-h-[80vh] w-full max-w-2xl overflow-auto rounded-2xl bg-white p-5 shadow-xl ring-1 ring-slate-200" (click)="$event.stopPropagation()">
+            <h2 class="text-lg font-semibold text-slate-900">Import contacts</h2>
+            <p class="mt-1 text-sm text-slate-500">
+              {{ preview.length }} contacts in this file.
+              {{ duplicateCount(preview) }} already exist or repeat a card.
+            </p>
+            <table class="mt-4 w-full text-sm">
+              <thead class="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-400">
+                <tr>
+                  <th class="pb-2">Name</th>
+                  <th class="pb-2">Email</th>
+                  <th class="pb-2">Status</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                @for (card of preview; track $index) {
+                  <tr>
+                    <td class="py-2 font-medium text-slate-800">{{ card.displayName }}</td>
+                    <td class="py-2 text-slate-600">{{ (card.emails ?? []).join(', ') }}</td>
+                    <td class="py-2">
+                      @if (card.duplicate) {
+                        <span class="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                          duplicate — {{ card.match }}
+                        </span>
+                      } @else {
+                        <span class="rounded bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
+                          new
+                        </span>
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+            <div class="mt-5 flex justify-end gap-2">
+              <button type="button" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm" (click)="importPreview.set(null)">
+                Cancel
+              </button>
+              <button
+                type="button"
+                [disabled]="importing()"
+                class="rounded-lg bg-brand-700 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                (click)="confirmImport()"
+              >
+                {{ importing() ? 'Importing…' : 'Import new contacts' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      }
     </main>
   `,
 })
@@ -487,6 +549,9 @@ export class ContactsComponent implements OnInit {
   protected readonly busy = signal(false);
   protected readonly error = signal('');
   protected readonly ok = signal('');
+  protected readonly importPreview = signal<VCardPreview[] | null>(null);
+  protected readonly importing = signal(false);
+  protected importFile: File | null = null;
   protected readonly showNewBook = signal(false);
   protected readonly showShare = signal(false);
   protected readonly showEditor = signal(false);
@@ -603,6 +668,66 @@ export class ContactsComponent implements OnInit {
 
   protected groupLabel(id: number | null | undefined): string {
     return $localize`:@@contacts.groupWithId:Group ${id ?? ''}`;
+  }
+
+  protected async importVCards(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0] ?? null;
+    input.value = '';
+    const book = this.selectedBook();
+    if (!book || !file) return;
+    this.error.set('');
+    this.ok.set('');
+    this.importFile = file;
+    try {
+      // A single card is unambiguous and goes straight in. A file with more
+      // than one card gets a preview, because that is where duplicates and
+      // accidental double imports are worth seeing before writing anything.
+      const text = await file.text();
+      const count = (text.match(/BEGIN:VCARD/gi) ?? []).length;
+      if (count > 1) {
+        const res = await this.api.previewImport(book.id, file);
+        this.importPreview.set(res.contacts ?? []);
+        return;
+      }
+      await this.runImport(book, file);
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    }
+  }
+
+  protected duplicateCount(cards: VCardPreview[]): number {
+    return cards.filter((card) => card.duplicate).length;
+  }
+
+  protected async confirmImport(): Promise<void> {
+    const book = this.selectedBook();
+    if (!book || !this.importFile) return;
+    await this.runImport(book, this.importFile);
+    this.importPreview.set(null);
+  }
+
+  private async runImport(book: AddressBook, file: File): Promise<void> {
+    this.importing.set(true);
+    this.error.set('');
+    this.ok.set('');
+    try {
+      const result = await this.api.importContacts(book.id, file);
+      await this.selectBook(book);
+      this.ok.set(
+        `Imported ${result.imported}, skipped ${result.skipped}` +
+          (result.failed ? `, ${result.failed} failed` : '') +
+          '.',
+      );
+      if (result.errors?.length) {
+        this.error.set(result.errors.slice(0, 3).join(' '));
+      }
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.importing.set(false);
+      this.importFile = null;
+    }
   }
 
   protected startCreate(): void {

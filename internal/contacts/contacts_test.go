@@ -236,6 +236,55 @@ func TestBooksPopulatesTheOrganizationDirectory(t *testing.T) {
 	}
 }
 
+func TestVCardImportPreviewsAndSkipsDuplicates(t *testing.T) {
+	db := testdb.Migrated(t)
+	ctx := context.Background()
+	seedUser(t, db, "alice@example.com", false)
+	svc := contacts.New(db, nil)
+	book, err := svc.EnsurePersonal(ctx, "alice@example.com")
+	if err != nil {
+		t.Fatalf("personal book: %v", err)
+	}
+	if _, err := svc.CreateCard(ctx, "alice@example.com", book.ID, contacts.Input{
+		DisplayName: "Bob Existing",
+		Emails:      []contacts.Email{{Value: "bob@example.com"}},
+	}); err != nil {
+		t.Fatalf("existing card: %v", err)
+	}
+
+	data := []byte("BEGIN:VCARD\r\nVERSION:3.0\r\nUID:bob-card\r\nFN:Bob Imported\r\nEMAIL:bob@example.com\r\nEND:VCARD\r\n" +
+		"BEGIN:VCARD\r\nVERSION:3.0\r\nUID:carol-card\r\nFN:Carol New\r\nEMAIL:carol@example.com\r\nEND:VCARD\r\n")
+
+	preview, err := svc.PreviewVCardImport(ctx, "alice@example.com", book.ID, data)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	if len(preview) != 2 {
+		t.Fatalf("preview has %d cards, want 2: %+v", len(preview), preview)
+	}
+	if !preview[0].Duplicate || preview[0].Match == "" {
+		t.Errorf("bob should be flagged as a duplicate: %+v", preview[0])
+	}
+	if preview[1].Duplicate {
+		t.Errorf("carol should be new: %+v", preview[1])
+	}
+
+	result, err := svc.ImportVCards(ctx, "alice@example.com", book.ID, data)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if result.Imported != 1 || result.Skipped != 1 || result.Failed != 0 {
+		t.Errorf("import result = %+v, want 1 imported, 1 skipped, 0 failed", result)
+	}
+	entries, err := svc.Cards(ctx, "alice@example.com", book.ID)
+	if err != nil {
+		t.Fatalf("cards: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Errorf("book has %d cards, want 2: %+v", len(entries), entries)
+	}
+}
+
 func TestSearchPrefersThePersonalBookAndNamesItsSource(t *testing.T) {
 	db := testdb.Migrated(t)
 	ctx := context.Background()

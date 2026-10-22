@@ -9,6 +9,8 @@ import {
   Contact,
   ContactInput,
   Suggestion,
+  VCardImportResult,
+  VCardPreview,
 } from './contacts.models';
 
 const API = '/api/v1';
@@ -53,6 +55,32 @@ export class ContactsApi {
 
   deleteContact(bookID: number, id: number): Promise<void> {
     return this.request('delete', `/address-books/${bookID}/contacts/${id}`);
+  }
+
+  // previewImport parses a vCard file without writing anything. The caller
+  // uses it to show duplicate warnings when the file holds more than one card.
+  previewImport(bookID: number, file: File): Promise<{ contacts: VCardPreview[]; total: number }> {
+    return firstValueFrom(
+      this.http.post<{ contacts: VCardPreview[]; total: number }>(
+        `${API}/address-books/${bookID}/contacts/import/preview`,
+        this.vcardForm(file),
+      ),
+    );
+  }
+
+  importContacts(bookID: number, file: File): Promise<VCardImportResult> {
+    return firstValueFrom(
+      this.http.post<VCardImportResult>(
+        `${API}/address-books/${bookID}/contacts/import`,
+        this.vcardForm(file),
+      ),
+    );
+  }
+
+  private vcardForm(file: File): FormData {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    return form;
   }
 
   // search returns autocomplete candidates from every book the caller can

@@ -65,6 +65,21 @@ export interface Suggestion {
   bookId: number;
 }
 
+export interface VCardPreview {
+  displayName: string;
+  emails: string[];
+  uid?: string;
+  duplicate: boolean;
+  match?: string;
+}
+
+export interface VCardImportResult {
+  imported: number;
+  skipped: number;
+  failed: number;
+  errors?: string[];
+}
+
 export interface AddressBookShare {
   id: number;
   bookId: number;
