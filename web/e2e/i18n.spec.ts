@@ -15,13 +15,15 @@ async function signIn(page: Page): Promise<void> {
 
 test('the web UI switches between English and Italian', async ({ page }) => {
   await signIn(page);
+  await page.goto('/mail');
   const nav = page.getByRole('navigation');
   await expect(nav.getByRole('link', { name: 'Mail', exact: true })).toBeVisible();
+  await expect(page).toHaveTitle('Linchange - Mail');
 
   await page.getByRole('combobox', { name: 'Language' }).selectOption('it');
   await expect(page.locator('html')).toHaveAttribute('lang', 'it', { timeout: 15000 });
   await expect(nav.getByRole('link', { name: 'Posta', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Posta' })).toBeVisible();
+  await expect(page).toHaveTitle('Linchange - Posta');
 
   // The cookie makes the bare root choose Italian on the next visit.
   await page.goto('/');
