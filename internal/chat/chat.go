@@ -23,7 +23,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jmoiron/sqlx"
 
 	"github.com/linchange/linchange/internal/store"
@@ -247,6 +246,14 @@ func (s *Service) Create(ctx context.Context, q store.Querier, req CreateRequest
 	// A group room's members are the group's, read at use time, so there is
 	// nothing to copy here.
 	if len(members) > 0 {
+		// Only a meeting room may contain an external guest. Direct and
+		// ad-hoc group rooms are still a conversation between accounts on
+		// this server, which is what the old foreign key used to enforce.
+		if kind != KindMeeting {
+			if err := s.requireUsers(ctx, q, members); err != nil {
+				return Conversation{}, err
+			}
+		}
 		if err := s.addMembers(ctx, q, conv.ID, members); err != nil {
 			return Conversation{}, err
 		}
@@ -254,21 +261,42 @@ func (s *Service) Create(ctx context.Context, q store.Querier, req CreateRequest
 	return conv, nil
 }
 
+// requireUsers rejects an address that has no account here. It is the
+// membership rule for rooms other than a meeting's.
+func (s *Service) requireUsers(ctx context.Context, q store.Querier, members []string) error {
+	for _, member := range members {
+		var exists bool
+		if err := q.GetContext(ctx, &exists,
+			`SELECT EXISTS (SELECT 1 FROM users WHERE address = $1)`, member); err != nil {
+			return fmt.Errorf("chat: checking member %s: %w", member, err)
+		}
+		if !exists {
+			return fmt.Errorf("%w: %s is not a user of this server", ErrInvalid, member)
+		}
+	}
+	return nil
+}
+
+// EnsureMember adds one address to a room if it is not there yet. It is what a
+// meeting guest's token calls before opening the room, so an invitation issued
+// before guest membership existed still works.
+func (s *Service) EnsureMember(ctx context.Context, conversationID int64, member string) error {
+	member = normalise(member)
+	if member == "" {
+		return fmt.Errorf("%w: a member is required", ErrInvalid)
+	}
+	return s.addMembers(ctx, s.db, conversationID, []string{member})
+}
+
 // addMembers adds the given addresses, leaving existing rows (and their read
 // watermark) untouched.
 func (s *Service) addMembers(ctx context.Context, q store.Querier, conversationID int64, members []string) error {
 	for _, member := range members {
 		if _, err := q.ExecContext(ctx, `
-			INSERT INTO chat_members (conversation_id, member)
-			VALUES ($1, $2)
+			INSERT INTO chat_members (conversation_id, member, user_address)
+			VALUES ($1, $2, (SELECT address FROM users WHERE address = $2))
 			ON CONFLICT (conversation_id, member) DO NOTHING`,
 			conversationID, member); err != nil {
-			// The member column references users, so an address with no
-			// account here is a request error rather than a server fault.
-			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) && pgErr.Code == "23503" {
-				return fmt.Errorf("%w: %s is not a user of this server", ErrInvalid, member)
-			}
 			return fmt.Errorf("chat: adding a member: %w", err)
 		}
 	}
@@ -731,8 +759,8 @@ func (s *Service) MarkRead(ctx context.Context, conversationID int64, member str
 			return ErrNotMember
 		}
 		if _, err := s.db.ExecContext(ctx, `
-			INSERT INTO chat_members (conversation_id, member, last_read_id)
-			VALUES ($1, $2, $3)
+			INSERT INTO chat_members (conversation_id, member, user_address, last_read_id)
+			VALUES ($1, $2, (SELECT address FROM users WHERE address = $2), $3)
 			ON CONFLICT (conversation_id, member)
 			DO UPDATE SET last_read_id = GREATEST(chat_members.last_read_id, EXCLUDED.last_read_id)`,
 			conversationID, member, messageID); err != nil {

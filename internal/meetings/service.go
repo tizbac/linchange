@@ -9,9 +9,10 @@
 // protocols do not carry: the invitation email with a per-guest reply link,
 // and the native chat room a meeting's conversation lives in.
 //
-// The room's members are the organiser and every guest with an account here.
-// An external invitee gets the invitation and the reply link, but no room,
-// because they have no account to open it with.
+// The room's members are the organiser and every guest on the invitation,
+// including guests who have no account here. The per-guest token in the
+// invitation is what authorises such a guest to open the room, so participating
+// in a call does not require signing in to linchange.
 package meetings
 
 import (
@@ -85,8 +86,8 @@ type Draft struct {
 }
 
 // AttendeeStatus is one guest and everything known about them: the answer
-// they have given, and whether they are a user of this server (which is what
-// decides whether they get a chat account alongside the invitation).
+// they have given, and whether they are a user of this server. Local is a
+// display fact; the invitation token is what admits a guest to the room.
 type AttendeeStatus struct {
 	Address     string `json:"address"`
 	DisplayName string `json:"displayName,omitempty"`
@@ -113,9 +114,8 @@ type Meeting struct {
 	Organizer   Attendee  `json:"organizer"`
 	JoinURL     string    `json:"joinUrl"`
 	// ChatConversation is the uid of the meeting's native chat room, empty
-	// when the room could not be opened. It is withheld from the
-	// unauthenticated view: an invitee answers by link and has no account to
-	// open the room with.
+	// when the room could not be opened. It is included in the token-gated
+	// invite view: the token is what authorises the guest to open the room.
 	ChatConversation string `json:"chatConversation,omitempty"`
 	// OneWay marks a webinar: only the presenter speaks unless the presenter
 	// grants a guest the floor.
@@ -338,9 +338,9 @@ func (s *Service) Create(ctx context.Context, who policy.Principal, d Draft) (*C
 		}
 		invitees = invitees[:0]
 		for _, g := range guests {
-			// A guest can open the meeting's chat room exactly when they are a
-			// user of this server. An external address is invited by mail and
-			// answers by link, and has no account to chat with.
+			// Local records whether the address has an account here, which
+			// the guest list displays. It no longer decides who may open the
+			// meeting room: the invitation token does that for everyone.
 			inv := store.MeetingInvite{Address: g.Address}
 			if _, err := store.LoadPrincipal(ctx, tx, g.Address); err == nil {
 				inv.IsLocal = true
@@ -434,9 +434,9 @@ func (s *Service) Get(ctx context.Context, uid string) (*Meeting, error) {
 //
 // The difference from Get is the second check: the address and token have to
 // belong together, so a forwarded link answers for the person it was sent to
-// and for nobody else. The chat room is withheld - the visitor has no chat
-// account, and handing out the group id to whoever holds any token would be
-// handing it out to the internet.
+// and for nobody else. The room id is part of what that token unlocks: a guest
+// can join the meeting's chat and call without registering, and the same
+// address+token check gates the socket and the history.
 func (s *Service) GetByInvite(ctx context.Context, uid, address, token string) (*Meeting, error) {
 	meeting, err := s.meetings.ByUID(ctx, s.db, uid)
 	if err != nil {
@@ -449,12 +449,7 @@ func (s *Service) GetByInvite(ctx context.Context, uid, address, token string) (
 	if err != nil {
 		return nil, err
 	}
-	view, err := s.view(ctx, meeting, invitees)
-	if err != nil {
-		return nil, err
-	}
-	view.ChatConversation = ""
-	return view, nil
+	return s.view(ctx, meeting, invitees)
 }
 
 // Resend mails every guest the invitation again.
@@ -576,6 +571,44 @@ func (s *Service) InviteRSVP(ctx context.Context, uid, address, token, partstat 
 		return "", err
 	}
 	return partstat, nil
+}
+
+// GuestRoom verifies an invitation token and returns the meeting's chat room,
+// ensuring the guest is a member of it.
+//
+// This is the gateway for an accountless guest's socket and history. The
+// address and token have to belong together, exactly as for InviteRSVP; the
+// returned room id is then the only room that guest may use.
+func (s *Service) GuestRoom(ctx context.Context, uid, address, token string) (chat.Conversation, error) {
+	meeting, err := s.meetings.ByUID(ctx, s.db, uid)
+	if err != nil {
+		return chat.Conversation{}, err
+	}
+	if err := s.verifyInvite(ctx, meeting, address, token); err != nil {
+		return chat.Conversation{}, err
+	}
+	if s.chat == nil || meeting.ChatConversation == "" {
+		return chat.Conversation{}, store.ErrNotFound
+	}
+	conv, err := s.chat.ByMeeting(ctx, s.db, meeting.UID)
+	if err != nil {
+		return chat.Conversation{}, store.ErrNotFound
+	}
+	if err := s.chat.EnsureMember(ctx, conv.ID, address); err != nil {
+		return chat.Conversation{}, err
+	}
+	return conv, nil
+}
+
+// GuestChatHistory returns one page of the meeting room's history to a guest
+// holding their invitation link.
+func (s *Service) GuestChatHistory(ctx context.Context, uid, address, token string,
+	before int64, limit int) ([]chat.Message, error) {
+	conv, err := s.GuestRoom(ctx, uid, address, token)
+	if err != nil {
+		return nil, err
+	}
+	return s.chat.History(ctx, conv.ID, before, limit)
 }
 
 // ---------------------------------------------------------------------------
@@ -716,21 +749,23 @@ func (s *Service) displayName(ctx context.Context, address string) string {
 // because there is no account to have one with.
 func (s *Service) openChatRoomBestEffort(ctx context.Context, meeting *store.Meeting,
 	organizer string, invitees []store.MeetingInvite, title string) {
-	if s.chat == nil || meeting.ChatConversation != "" {
+	if s.chat == nil {
 		return
 	}
 	organizer = strings.ToLower(strings.TrimSpace(organizer))
 	members := []string{organizer}
 	for _, inv := range invitees {
-		if !inv.IsLocal {
-			continue
-		}
+		// Every guest is a room member, including an external guest with no
+		// account: the invitation token is what authorises them to open it.
 		address := strings.ToLower(strings.TrimSpace(inv.Address))
 		if address != "" && address != organizer {
 			members = append(members, address)
 		}
 	}
 
+	// Create is idempotent for a meeting room. Calling it even when the room
+	// already exists is what adds guests to rooms created before guest
+	// membership was supported.
 	conv, err := s.chat.Create(ctx, s.db, chat.CreateRequest{
 		Kind:       chat.KindMeeting,
 		Title:      title,
@@ -745,10 +780,12 @@ func (s *Service) openChatRoomBestEffort(ctx context.Context, meeting *store.Mee
 			"meeting", meeting.UID, "error", err)
 		return
 	}
-	if err := s.meetings.SetChatConversation(ctx, s.db, meeting.ID, conv.UID); err != nil {
-		s.log.Warn("meeting chat: recording the room failed",
-			"meeting", meeting.UID, "error", err)
-		return
+	if meeting.ChatConversation == "" {
+		if err := s.meetings.SetChatConversation(ctx, s.db, meeting.ID, conv.UID); err != nil {
+			s.log.Warn("meeting chat: recording the room failed",
+				"meeting", meeting.UID, "error", err)
+			return
+		}
 	}
 	meeting.ChatConversation = conv.UID
 }

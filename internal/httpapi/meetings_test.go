@@ -222,8 +222,22 @@ func TestMeetingsLifecycle(t *testing.T) {
 	if str(view, "title") != "Design review" {
 		t.Errorf("invite view title = %q", str(view, "title"))
 	}
-	if str(view, "chatConversation") != "" {
-		t.Errorf("invite view hands out the chat room id %q to a token holder", str(view, "chatConversation"))
+	if str(view, "chatConversation") == "" {
+		t.Errorf("invite view did not include the chat room id for a token holder")
+	}
+
+	// The same token unlocks the guest's chat history and ICE configuration.
+	// This is what lets an accountless invitee join the call and the room
+	// without signing in.
+	code, history := do(t, srv, "GET",
+		"/api/v1/meeting-invites/"+uid+"/chat?to=carol%40outside.example&token="+token, nil, nil)
+	if code != 200 {
+		t.Errorf("guest chat history = %d %v, want 200", code, history)
+	}
+	code, ice := do(t, srv, "GET",
+		"/api/v1/meeting-invites/"+uid+"/ice?to=carol%40outside.example&token="+token, nil, nil)
+	if code != 200 {
+		t.Errorf("guest ICE configuration = %d %v, want 200", code, ice)
 	}
 
 	// The same link with the wrong answer to either half is a 404, not a

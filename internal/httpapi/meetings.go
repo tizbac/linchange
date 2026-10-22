@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -27,6 +28,13 @@ func (s *Server) mountMeetings(r chi.Router) {
 	r.Route("/meeting-invites", func(r chi.Router) {
 		r.Get("/{uid}", s.handleMeetingInviteView)
 		r.Post("/{uid}/rsvp", s.handleMeetingInviteRSVP)
+		// A guest with no linchange account still has a call and a chat:
+		// these three routes exchange the invitation token for the room's
+		// socket, history and ICE configuration. The token is checked before
+		// anything is upgraded or returned.
+		r.Get("/{uid}/ws", s.handleMeetingInviteSocket)
+		r.Get("/{uid}/chat", s.handleMeetingInviteChat)
+		r.Get("/{uid}/ice", s.handleMeetingInviteICE)
 	})
 
 	r.Route("/meetings", func(r chi.Router) {
@@ -171,4 +179,45 @@ func (s *Server) handleMeetingInviteRSVP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]string{"partStat": partstat})
+}
+
+// handleMeetingInviteSocket upgrades an invited guest's chat/WebRTC socket.
+//
+// The token in the link is the whole identity: it names the address on the
+// invitation, and GuestRoom verifies that the address and token belong
+// together before the connection is accepted. No linchange session is needed.
+func (s *Server) handleMeetingInviteSocket(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	if _, err := s.meetings.GuestRoom(r.Context(), meetingUID(r), q.Get("to"), q.Get("token")); err != nil {
+		s.writeError(w, mapErrorCode(err), err.Error())
+		return
+	}
+	s.chatHub.Accept(w, r, q.Get("to"))
+}
+
+// handleMeetingInviteChat returns the room history to a guest holding their
+// invitation link.
+func (s *Server) handleMeetingInviteChat(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	before, _ := strconv.ParseInt(q.Get("before"), 10, 64)
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	messages, err := s.meetings.GuestChatHistory(r.Context(), meetingUID(r),
+		q.Get("to"), q.Get("token"), before, limit)
+	if err != nil {
+		s.writeError(w, mapErrorCode(err), err.Error())
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"messages": messages})
+}
+
+// handleMeetingInviteICE gives a guest the same STUN/TURN configuration a
+// signed-in participant fetches, after checking the invitation token.
+func (s *Server) handleMeetingInviteICE(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	if _, err := s.meetings.GetByInvite(r.Context(), meetingUID(r),
+		q.Get("to"), q.Get("token")); err != nil {
+		s.writeError(w, mapErrorCode(err), err.Error())
+		return
+	}
+	s.writeICEServers(w)
 }

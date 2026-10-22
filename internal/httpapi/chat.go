@@ -119,6 +119,12 @@ func (s *Server) mountWebRTC(r chi.Router) {
 }
 
 func (s *Server) handleICEServers(w http.ResponseWriter, r *http.Request) {
+	s.writeICEServers(w)
+}
+
+// writeICEServers is the one shape both the signed-in and invitation-gated
+// callers receive.
+func (s *Server) writeICEServers(w http.ResponseWriter) {
 	servers := make([]config.ICEServer, 0)
 	if s.webrtc != nil {
 		servers = append(servers, s.webrtc.ICEServers()...)
