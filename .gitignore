@@ -3,6 +3,8 @@
 /data/
 # Where package.sh and package-docker.sh leave the .deb
 /dist/
+# A package copied out of Docker by hand can land in the repository root.
+*.deb
 
 # Local secrets and generated configuration
 .env
