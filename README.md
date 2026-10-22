@@ -577,6 +577,11 @@ cd web && npm run e2e     # Playwright end-to-end suite
 The end-to-end suite starts its own stack on `127.0.0.1:18080` with a separate
 database and non-standard ports; see `web/e2e/stack.sh`.
 
+Publishing a GitHub release runs `.github/workflows/release-deb.yml`, which
+builds the `.deb` with `package-docker.sh`, checks that both locale shells are
+present, uploads the package as a workflow artifact, and attaches it to the
+release.
+
 ## Project layout
 
 ```text

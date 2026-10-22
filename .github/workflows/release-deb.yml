@@ -1,0 +1,76 @@
+name: Release Debian package
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Package version (a leading "v" is stripped)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-deb-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deb:
+    name: Build .deb in Docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out the release
+        uses: actions/checkout@v4
+        with:
+          # git describe needs the tags, and the package version falls back to
+          # it when a release tag is not a plain number.
+          fetch-depth: 0
+
+      - name: Resolve the package version
+        id: version
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.version || github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          # Debian requires a version that starts with a digit. A tag that does
+          # not is treated the way package-docker.sh treats git describe output.
+          if ! [[ "${version}" =~ ^[0-9] ]]; then
+            version="0.0.g${version//[^A-Za-z0-9.+~-]/.}"
+          fi
+          # A slash cannot appear in a Debian version or an artifact name.
+          version="${version//\//-}"
+          echo "value=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build the package inside Docker
+        run: ./package-docker.sh "${{ steps.version.outputs.value }}" --output-dir dist
+
+      - name: Check the package
+        run: |
+          set -euo pipefail
+          deb="$(find dist -maxdepth 1 -name '*.deb' -print -quit)"
+          test -n "${deb}"
+          dpkg-deb --info "${deb}"
+          # The web application is built for two locales and the packager must
+          # have copied both. A single shell means half the UI is unreadable.
+          dpkg-deb -c "${deb}" | grep -E 'web/(en|it)/index\.html'
+          echo "Package: ${deb}"
+
+      - name: Upload the workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linchange-deb-${{ steps.version.outputs.value }}
+          path: dist/*.deb
+          if-no-files-found: error
+
+      - name: Attach the package to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "${TAG}" dist/*.deb --clobber
