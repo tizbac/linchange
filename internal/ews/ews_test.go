@@ -14,6 +14,7 @@ import (
 	"github.com/linchange/linchange/internal/auth/policy"
 	"github.com/linchange/linchange/internal/calendar"
 	"github.com/linchange/linchange/internal/store"
+	"github.com/linchange/linchange/internal/testdb"
 	"github.com/linchange/linchange/internal/webmail"
 )
 
@@ -375,6 +376,59 @@ func TestInnerBoolReadsThroughTheWrapperElement(t *testing.T) {
 // The explicit false is distinct from an absent element: a client that clears
 // the read flag sends IsRead false, and an update that reads "false, but there"
 // as "false, not there" would clear nothing while insisting it had.
+// Outlook's Automatic Replies dialog uses these two operations. The setting it
+// writes must be the same row the web page and inbound delivery read.
+func TestOutOfOfficeSettingsRoundTrip(t *testing.T) {
+	db := testdb.Migrated(t)
+	ctx := context.Background()
+	if err := store.NewUsers().Create(ctx, db, store.CreateUserRequest{
+		Address: "alice@example.test", Source: policy.SourceLocal,
+	}); err != nil {
+		t.Fatalf("creating alice: %v", err)
+	}
+	e := New(Options{
+		Config: config.New(), DB: db, Policy: policy.Policy{},
+		Auth: fixedAuthenticator{who: policy.Principal{
+			Address: "alice@example.test", MailboxEnabled: true,
+		}},
+	})
+	post := func(operation, inner string) *httptest.ResponseRecorder {
+		body := `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages" xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+ <s:Body><m:` + operation + `>` + inner + `</m:` + operation + `></s:Body></s:Envelope>`
+		req := httptest.NewRequest(http.MethodPost, "/exchange.asmx", strings.NewReader(body))
+		req.Header.Set("Content-Type", "text/xml; charset=utf-8")
+		req.SetBasicAuth("alice@example.test", "pw")
+		rr := httptest.NewRecorder()
+		e.Handler().ServeHTTP(rr, req)
+		return rr
+	}
+
+	set := post("SetUserOofSettings", `
+		<m:Mailbox><t:EmailAddress>alice@example.test</t:EmailAddress></m:Mailbox>
+		<m:OofSettings><t:OofState>Enabled</t:OofState>
+		 <t:InternalReply><t:Message>Gone until Monday</t:Message></t:InternalReply>
+		 <t:ExternalReply><t:Message>Gone until Monday</t:Message></t:ExternalReply>
+		</m:OofSettings>`)
+	if set.Code != http.StatusOK || !strings.Contains(set.Body.String(), "NoError") {
+		t.Fatalf("SetUserOofSettings = %d %s", set.Code, set.Body.String())
+	}
+	saved, err := store.NewOutOfOffice().Get(ctx, db, "alice@example.test")
+	if err != nil || !saved.Enabled || saved.Message != "Gone until Monday" {
+		t.Fatalf("saved setting = %+v, %v", saved, err)
+	}
+
+	get := post("GetUserOofSettings",
+		`<m:Mailbox><t:EmailAddress>alice@example.test</t:EmailAddress></m:Mailbox>`)
+	if get.Code != http.StatusOK {
+		t.Fatalf("GetUserOofSettings = %d %s", get.Code, get.Body.String())
+	}
+	body := get.Body.String()
+	if !strings.Contains(body, "Gone until Monday") || !strings.Contains(body, "Enabled") {
+		t.Errorf("GetUserOofSettings body = %s", body)
+	}
+}
+
 func TestInnerBoolDistinguishesExplicitFalseFromAbsent(t *testing.T) {
 	const setFalse = `<t:Message><t:IsRead>false</t:IsRead></t:Message>`
 	v, ok := innerBool(setFalse, "IsRead")

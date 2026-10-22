@@ -434,6 +434,11 @@ var operations = map[string]func(*EWS, *call) responseCode{
 	"ExpandDL":            (*EWS).expandDL,
 	"GetUserAvailability": (*EWS).getUserAvailability,
 	"GetServerTimeZones":  (*EWS).getServerTimeZones,
+
+	// Automatic replies. Outlook's Automatic Replies dialog speaks these two
+	// operations, including when the mailbox itself is reached over MAPI/HTTP.
+	"GetUserOofSettings": (*EWS).getUserOofSettings,
+	"SetUserOofSettings": (*EWS).setUserOofSettings,
 }
 
 // soapActionName extracts the operation from a SOAPAction header. The header
