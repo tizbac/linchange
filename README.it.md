@@ -58,6 +58,8 @@ chat, riunioni o rubriche da installare: tutto è nello stesso server.
 - Amministrazione di domini, utenti, alias, caselle condivise, workgroup,
   gruppi, quote, autorizzazioni di impersonificazione, coda di invio, registro
   di audit e importazioni.
+- Un'organizzazione può caricare un logo dall'amministrazione; sostituisce il
+  nome nella barra superiore e compare in cima alle sue sale riunioni.
 
 ### Calendario e riunioni
 

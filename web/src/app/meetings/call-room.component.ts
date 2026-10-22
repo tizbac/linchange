@@ -52,9 +52,19 @@ interface CallParticipant {
     </div>
   } @else if (meeting(); as m) {
     <header class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3 sm:px-6">
-      <div class="min-w-0">
-        <h1 class="truncate text-lg font-semibold tracking-tight">{{ m.title }}</h1>
-        <p class="mt-0.5 truncate text-xs text-slate-400">{{ whenText() }}</p>
+      <div class="flex min-w-0 items-center gap-3">
+        @if (m.organizationLogo) {
+          <img
+            [src]="m.organizationLogo"
+            [alt]="m.organizer.name || m.organizer.address"
+            data-testid="room-org-logo"
+            class="h-8 max-w-[160px] shrink-0 object-contain"
+          />
+        }
+        <div class="min-w-0">
+          <h1 class="truncate text-lg font-semibold tracking-tight">{{ m.title }}</h1>
+          <p class="mt-0.5 truncate text-xs text-slate-400">{{ whenText() }}</p>
+        </div>
       </div>
       <div class="flex flex-wrap items-center gap-3 text-xs text-slate-300">
         <span class="flex items-center gap-1.5">

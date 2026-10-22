@@ -90,6 +90,41 @@
                   </admin-button>
                 </div>
 
+                <div class="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  @if (wg.logo_url) {
+                    <img
+                      [src]="wg.logo_url"
+                      [alt]="wg.display_name || wg.name"
+                      data-testid="admin-org-logo"
+                      class="h-10 max-w-[180px] object-contain"
+                    />
+                  } @else {
+                    <span class="text-xs text-slate-500">No logo yet. The organization's name is shown instead.</span>
+                  }
+                  <span class="flex-1"></span>
+                  <label class="cursor-pointer rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100">
+                    {{ wg.logo_url ? 'Replace logo' : 'Upload logo' }}
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/gif,image/webp"
+                      class="hidden"
+                      data-testid="admin-logo-upload"
+                      (change)="uploadLogo(wg, $event)"
+                    />
+                  </label>
+                  @if (wg.logo_url) {
+                    <button
+                      type="button"
+                      (click)="removeLogo(wg)"
+                      [disabled]="busy()"
+                      data-testid="admin-logo-remove"
+                      class="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                    >
+                      Remove
+                    </button>
+                  }
+                </div>
+
                 @if (editing() === wg.id) {
                   <form class="grid gap-4 sm:grid-cols-2" (ngSubmit)="save(wg)">
                     <admin-field label="Name">

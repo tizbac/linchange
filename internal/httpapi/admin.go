@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -141,6 +142,8 @@ func mountAdminRoutes(r chi.Router, s *Server) {
 			r.Get("/", s.getWorkgroup)
 			r.Patch("/", s.updateWorkgroup)
 			r.Delete("/", s.deleteWorkgroup)
+			r.Post("/logo", s.uploadWorkgroupLogo)
+			r.Delete("/logo", s.deleteWorkgroupLogo)
 			r.Get("/members", s.listWorkgroupMembers)
 			r.Post("/members", s.addWorkgroupMember)
 			r.Delete("/members/{address}", s.removeWorkgroupMember)
@@ -1490,6 +1493,121 @@ func (s *Server) deleteWorkgroup(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// maxLogoBytes bounds an organization's logo. A header image has no reason to
+// be larger, and keeping it small keeps the top bar fast.
+const maxLogoBytes = 1 << 20
+
+// uploadWorkgroupLogo stores a raster logo for an organization. SVG is
+// deliberately not accepted: a logo is displayed on every page, and an SVG can
+// carry script.
+func (s *Server) uploadWorkgroupLogo(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	ctx := r.Context()
+	if _, err := s.admin.GetWorkgroup(ctx, Principal(ctx), id); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	if s.blobs == nil {
+		s.writeError(w, http.StatusInternalServerError, "the blob store is not configured")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxLogoBytes+(1<<20))
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		s.writeError(w, http.StatusBadRequest, "expected a multipart image upload")
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "a file field is required")
+		return
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(io.LimitReader(file, maxLogoBytes+1))
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "could not read the image")
+		return
+	}
+	if len(data) == 0 {
+		s.writeError(w, http.StatusBadRequest, "the image is empty")
+		return
+	}
+	if len(data) > maxLogoBytes {
+		s.writeError(w, http.StatusRequestEntityTooLarge, "the image is too large")
+		return
+	}
+	mimeType := header.Header.Get("Content-Type")
+	if strings.TrimSpace(mimeType) == "" {
+		mimeType = http.DetectContentType(data)
+	}
+	switch mimeType {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+	default:
+		s.writeError(w, http.StatusBadRequest, "the logo must be a PNG, JPEG, GIF or WebP image")
+		return
+	}
+
+	digest, _, err := s.blobs.Put(data)
+	if err != nil {
+		s.log.Error("storing organization logo", "error", err, "workgroup", id)
+		s.writeError(w, http.StatusInternalServerError, "could not store the image")
+		return
+	}
+	wg, err := s.workgroups.Get(ctx, s.db, id)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	uid := wg.LogoUID
+	if uid == "" {
+		uid, err = newLogoUID()
+		if err != nil {
+			s.writeError(w, http.StatusInternalServerError, "could not generate a logo id")
+			return
+		}
+	}
+	if err := s.workgroups.SetLogo(ctx, s.db, id, uid, mimeType, digest[:]); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	wg, err = s.workgroups.Get(ctx, s.db, id)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, s.workgroupViewOf(ctx, Principal(ctx), wg))
+}
+
+// deleteWorkgroupLogo removes the reference; the top bar falls back to the
+// organization's name.
+func (s *Server) deleteWorkgroupLogo(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	ctx := r.Context()
+	if _, err := s.admin.GetWorkgroup(ctx, Principal(ctx), id); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	if err := s.workgroups.ClearLogo(ctx, s.db, id); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	wg, err := s.workgroups.Get(ctx, s.db, id)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, s.workgroupViewOf(ctx, Principal(ctx), wg))
+}
+
 func (s *Server) listWorkgroupMembers(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r, "id")
 	if !ok {
@@ -1988,8 +2106,11 @@ type workgroupView struct {
 	DisplayName string `json:"display_name"`
 	Description string `json:"description"`
 	OpenBooking bool   `json:"open_booking"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	// LogoURL is the public image path, empty when the organization has no
+	// logo and the top bar should show its name instead.
+	LogoURL   string `json:"logo_url,omitempty"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 	// Members ride along with the group. Every screen that shows an organization
 	// also shows who belongs to it, so making the client fetch them one group at
 	// a time is a request per row for no benefit.
@@ -2004,6 +2125,7 @@ func viewWorkgroup(w store.Workgroup) workgroupView {
 		DisplayName: w.DisplayName,
 		Description: w.Description,
 		OpenBooking: w.OpenBooking,
+		LogoURL:     w.LogoURL(),
 		CreatedAt:   w.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:   w.UpdatedAt.UTC().Format(time.RFC3339),
 	}

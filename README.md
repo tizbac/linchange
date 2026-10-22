@@ -56,6 +56,8 @@ address-book service to install: everything ships in the same server.
 - Administration for domains, users, aliases, shared mailboxes, workgroups,
   groups, quotas, impersonation grants, the outbound queue, the audit log and
   imports.
+- An organization can upload a logo in administration; it replaces the
+  wordmark in the top bar and appears at the top of its meeting rooms.
 
 ### Calendar and meetings
 

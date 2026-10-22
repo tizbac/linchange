@@ -201,6 +201,9 @@ type meResponse struct {
 	// A domain that belongs to no organization leaves it empty, and the top bar
 	// then shows the product name alone.
 	Organization string `json:"organization,omitempty"`
+	// OrganizationLogo is the public image path for that organization, or
+	// empty when it has none.
+	OrganizationLogo string `json:"organization_logo,omitempty"`
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -232,6 +235,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		if out.Organization == "" {
 			out.Organization = wg.Name
 		}
+		out.OrganizationLogo = wg.LogoURL()
 	}
 	s.writeJSON(w, http.StatusOK, out)
 }

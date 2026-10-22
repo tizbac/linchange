@@ -119,9 +119,13 @@ type Meeting struct {
 	ChatConversation string `json:"chatConversation,omitempty"`
 	// OneWay marks a webinar: only the presenter speaks unless the presenter
 	// grants a guest the floor.
-	OneWay    bool             `json:"oneWay,omitempty"`
-	Attendees []AttendeeStatus `json:"attendees"`
-	CreatedAt time.Time        `json:"createdAt"`
+	OneWay bool `json:"oneWay,omitempty"`
+	// OrganizationLogo is the public image path of the organizer's
+	// organization, shown at the top of the call room. Empty when the
+	// organization has no logo.
+	OrganizationLogo string           `json:"organizationLogo,omitempty"`
+	Attendees        []AttendeeStatus `json:"attendees"`
+	CreatedAt        time.Time        `json:"createdAt"`
 }
 
 // MeetingListItem is one row of the meeting list: everything the list shows,
@@ -178,15 +182,16 @@ type Options struct {
 
 // Service creates, lists and answers meetings.
 type Service struct {
-	db        *sqlx.DB
-	mail      *webmail.Service
-	calendar  *calendar.Service
-	events    *store.Events
-	meetings  *store.Meetings
-	users     *store.Users
-	chat      *chat.Service
-	publicURL string
-	log       *slog.Logger
+	db         *sqlx.DB
+	mail       *webmail.Service
+	calendar   *calendar.Service
+	events     *store.Events
+	meetings   *store.Meetings
+	users      *store.Users
+	workgroups *store.Workgroups
+	chat       *chat.Service
+	publicURL  string
+	log        *slog.Logger
 }
 
 // New builds the meetings service.
@@ -205,13 +210,14 @@ func New(opts Options) (*Service, error) {
 		log = slog.Default()
 	}
 	return &Service{
-		db:       opts.DB,
-		mail:     opts.Mail,
-		calendar: opts.Calendar,
-		events:   store.NewEvents(),
-		meetings: store.NewMeetings(),
-		users:    store.NewUsers(),
-		chat:     opts.Chat,
+		db:         opts.DB,
+		mail:       opts.Mail,
+		calendar:   opts.Calendar,
+		events:     store.NewEvents(),
+		meetings:   store.NewMeetings(),
+		users:      store.NewUsers(),
+		workgroups: store.NewWorkgroups(),
+		chat:       opts.Chat,
 		// One trailing slash is removed so joining a path does not double
 		// the separator. Only one: trimming every trailing slash would turn
 		// a base address that somehow arrived without a host ("https://")
@@ -812,7 +818,7 @@ func (s *Service) view(ctx context.Context, meeting store.Meeting, invitees []st
 		}
 		attendees = append(attendees, status)
 	}
-	return &Meeting{
+	out := &Meeting{
 		UID:              meeting.UID,
 		EventID:          meeting.EventID,
 		Title:            row.Summary,
@@ -829,7 +835,13 @@ func (s *Service) view(ctx context.Context, meeting store.Meeting, invitees []st
 		OneWay:           meeting.OneWay,
 		Attendees:        attendees,
 		CreatedAt:        meeting.CreatedAt,
-	}, nil
+	}
+	// The logo is decoration: an organization that has none, or a lookup that
+	// fails, simply leaves the room with its title alone.
+	if wg, err := s.workgroups.ForAddress(ctx, s.db, meeting.Organizer); err == nil {
+		out.OrganizationLogo = wg.LogoURL()
+	}
+	return out, nil
 }
 
 // calendarAttachment is an iCalendar document queued as an attachment.

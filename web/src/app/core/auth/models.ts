@@ -38,4 +38,6 @@ export interface Me {
   // The organization the signed-in address belongs to, by domain. Empty when
   // the domain belongs to no organization.
   organization?: string;
+  // The public image path of that organization's logo, empty when it has none.
+  organization_logo?: string;
 }

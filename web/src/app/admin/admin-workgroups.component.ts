@@ -135,6 +135,48 @@ export class AdminWorkgroupsComponent implements OnInit {
     return this.domains().filter((d) => d.workgroup_id === wg.id);
   }
 
+  protected async uploadLogo(wg: Workgroup, event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    this.busy.set(true);
+    this.error.set('');
+    this.ok.set('');
+    try {
+      const updated = await this.api.uploadWorkgroupLogo(wg.id, file);
+      this.replaceWorkgroup(updated);
+      this.ok.set('Logo updated.');
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
+      input.value = '';
+    }
+  }
+
+  protected async removeLogo(wg: Workgroup): Promise<void> {
+    this.busy.set(true);
+    this.error.set('');
+    this.ok.set('');
+    try {
+      const updated = await this.api.deleteWorkgroupLogo(wg.id);
+      this.replaceWorkgroup(updated);
+      this.ok.set('Logo removed.');
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  private replaceWorkgroup(updated: Workgroup): void {
+    this.workgroups.update((list) =>
+      list.map((w) =>
+        w.id === updated.id ? { ...w, ...updated, logo_url: updated.logo_url ?? '' } : w,
+      ),
+    );
+  }
+
   protected openEdit(wg: Workgroup): void {
     this.error.set('');
     this.editing.set(this.editing() === wg.id ? null : wg.id);

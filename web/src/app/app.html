@@ -3,9 +3,18 @@
     @if (auth.isAuthenticated()) {
       <header class="border-b border-slate-200 bg-white">
         <div class="mx-auto flex max-w-5xl items-center justify-between px-6 py-3">
-          <span class="text-lg font-semibold tracking-tight text-brand-700">
-            {{ auth.organization() ? auth.organization() + ' - linchange' : 'linchange' }}
-          </span>
+          @if (auth.organizationLogo()) {
+            <img
+              [src]="auth.organizationLogo()"
+              [alt]="auth.organization() || 'linchange'"
+              data-testid="org-logo"
+              class="h-8 max-w-[220px] object-contain"
+            />
+          } @else {
+            <span class="text-lg font-semibold tracking-tight text-brand-700">
+              {{ auth.organization() ? auth.organization() + ' - linchange' : 'linchange' }}
+            </span>
+          }
           <nav class="flex flex-wrap items-center justify-end gap-x-5 gap-y-2">
             <a
               routerLink="/mail"

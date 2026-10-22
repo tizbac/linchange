@@ -41,6 +41,9 @@ export class AuthService {
   // It is empty when the domain belongs to no organization, which is the
   // ordinary case for a deployment that never created one.
   readonly organization = computed(() => this._me()?.organization ?? '');
+  // organizationLogo is the public path of the organization's logo, or empty
+  // when there is none and the top bar should show the name.
+  readonly organizationLogo = computed(() => this._me()?.organization_logo ?? '');
 
   // loadMe refreshes the session description. It is awaited after a sign-in and
   // after a restore so a guard never decides on a stale answer, and it is also

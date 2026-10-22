@@ -89,8 +89,8 @@ func run() error {
 		return fmt.Errorf("creating domain %s: %w", domain, err)
 	}
 	if _, err := db.ExecContext(ctx,
-		`INSERT INTO users (address, address_local, source, mailbox_enabled, enabled)
-		 VALUES ($1, $2, 'local', true, true)`, *user, local); err != nil {
+		`INSERT INTO users (address, address_local, source, mailbox_enabled, enabled, is_domain_admin)
+		 VALUES ($1, $2, 'local', true, true, true)`, *user, local); err != nil {
 		return fmt.Errorf("creating user %s: %w", *user, err)
 	}
 	if err := imapd.NewMailboxRepo().EnsureFolders(ctx, db, *user); err != nil {

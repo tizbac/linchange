@@ -62,6 +62,9 @@ export interface Meeting {
   // oneWay marks a webinar: only the presenter speaks unless a guest is
   // granted the floor.
   oneWay?: boolean;
+  // organizationLogo is the organizer's organization logo, shown at the top
+  // of the call room. Empty when the organization has none.
+  organizationLogo?: string;
   attendees: MeetingAttendee[];
   createdAt: string;
 }

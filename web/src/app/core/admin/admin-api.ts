@@ -334,6 +334,16 @@ export class AdminApi {
     return this.request('delete', `/workgroups/${id}`, null) as Promise<void>;
   }
 
+  uploadWorkgroupLogo(id: number, file: File): Promise<Workgroup> {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    return firstValueFrom(this.http.post<Workgroup>(`${API}/workgroups/${id}/logo`, form));
+  }
+
+  deleteWorkgroupLogo(id: number): Promise<Workgroup> {
+    return firstValueFrom(this.http.delete<Workgroup>(`${API}/workgroups/${id}/logo`));
+  }
+
   listWorkgroupMembers(id: number): Promise<{ members: WorkgroupMember[] }> {
     return this.get(`/workgroups/${id}/members`);
   }

@@ -171,6 +171,8 @@ export interface Workgroup {
   display_name: string;
   description: string;
   open_booking: boolean;
+  // logo_url is the public image path; empty when the organization has no logo.
+  logo_url?: string;
   created_at: string;
   updated_at: string;
   // Named members come back with the group. Everyone in the organization's

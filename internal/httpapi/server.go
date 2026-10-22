@@ -101,6 +101,9 @@ type Server struct {
 	// workgroups answers "which organization is this address in", which the top
 	// bar and the address book both need.
 	workgroups *store.Workgroups
+	// blobs serves organization logos and anything else the web client reads
+	// by a public handle rather than through the mail service.
+	blobs *blobstore.Store
 	// policies is held so a handler can answer a question about this
 	// deployment's switches. It is the same object the login path and the admin
 	// service decide with, so there is one answer rather than three.
@@ -444,6 +447,7 @@ func New(opts Options) (*Server, error) {
 		shared:       store.NewSharedMailboxes(),
 		grants:       store.NewSharedMailboxGrants(),
 		workgroups:   store.NewWorkgroups(),
+		blobs:        opts.Blobs,
 		staticDir:    opts.StaticDir,
 		imports:      opts.Imports,
 		meetings:     meetingsService,
@@ -474,6 +478,11 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/auth/refresh", s.handleRefresh)
 		r.Post("/auth/reset/request", s.handleResetRequest)
 		r.Post("/auth/reset/complete", s.handleResetComplete)
+
+		// Organization logos are shown in the header and in a meeting room,
+		// including to a guest who has no account, so the image route is
+		// public and keyed by an unguessable handle.
+		s.mountBranding(r)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)

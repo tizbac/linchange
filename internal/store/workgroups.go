@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -21,14 +23,19 @@ import (
 //     its address and its description. Booking rights and administrative rights
 //     are deliberately separate, which is what the open_booking flag records.
 type Workgroup struct {
-	ID          int64     `db:"id"`
-	Name        string    `db:"name"`
-	Domain      string    `db:"domain"`
-	DisplayName string    `db:"display_name"`
-	Description string    `db:"description"`
-	OpenBooking bool      `db:"open_booking"`
-	CreatedAt   time.Time `db:"created_at"`
-	UpdatedAt   time.Time `db:"updated_at"`
+	ID          int64  `db:"id"`
+	Name        string `db:"name"`
+	Domain      string `db:"domain"`
+	DisplayName string `db:"display_name"`
+	Description string `db:"description"`
+	OpenBooking bool   `db:"open_booking"`
+	// LogoUID is the public handle of the organization's logo image, empty
+	// when it has none. LogoSHA256 and LogoMIME describe the blob it names.
+	LogoUID    string    `db:"logo_uid"`
+	LogoSHA256 []byte    `db:"logo_sha256"`
+	LogoMIME   string    `db:"logo_mime"`
+	CreatedAt  time.Time `db:"created_at"`
+	UpdatedAt  time.Time `db:"updated_at"`
 }
 
 // Membership roles.
@@ -80,7 +87,9 @@ type CreateWorkgroupRequest struct {
 
 const workgroupColumns = `
 	id, name, domain, display_name, description, open_booking,
-	created_at, updated_at`
+	COALESCE(logo_uid, '') AS logo_uid,
+	COALESCE(logo_mime, '') AS logo_mime,
+	logo_sha256, created_at, updated_at`
 
 // Create adds a workgroup and its founding members.
 func (w *Workgroups) Create(ctx context.Context, q Querier, req CreateWorkgroupRequest) (Workgroup, error) {
@@ -194,6 +203,72 @@ func (w *Workgroups) ForAddress(ctx context.Context, q Querier, address string) 
 		return Workgroup{}, ErrNotFound
 	}
 	return w.ForDomain(ctx, q, domain)
+}
+
+// ByLogoUID resolves the public handle used in a logo URL. It is deliberately
+// separate from Get: the browser holding an image URL knows the handle and
+// nothing else.
+func (w *Workgroups) ByLogoUID(ctx context.Context, q Querier, uid string) (Workgroup, error) {
+	uid = strings.TrimSpace(uid)
+	if uid == "" {
+		return Workgroup{}, ErrNotFound
+	}
+	var out Workgroup
+	err := q.GetContext(ctx, &out,
+		`SELECT `+workgroupColumns+` FROM workgroups WHERE logo_uid = $1`, uid)
+	if IsNotFound(err) {
+		return Workgroup{}, ErrNotFound
+	}
+	if err != nil {
+		return Workgroup{}, fmt.Errorf("store: loading workgroup logo: %w", err)
+	}
+	return out, nil
+}
+
+// SetLogo records the blob that is an organization's logo. The bytes are
+// already in the blob store; this only updates the reference.
+func (w *Workgroups) SetLogo(ctx context.Context, q Querier, id int64, uid, mime string, sha []byte) error {
+	res, err := q.ExecContext(ctx, `
+		UPDATE workgroups
+		SET logo_uid = $2, logo_mime = $3, logo_sha256 = $4, updated_at = now()
+		WHERE id = $1`, id, uid, mime, sha)
+	if err != nil {
+		return fmt.Errorf("store: setting workgroup logo: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ClearLogo removes the reference; the blob itself is left for the store's
+// collector, as every other unreferenced blob is.
+func (w *Workgroups) ClearLogo(ctx context.Context, q Querier, id int64) error {
+	res, err := q.ExecContext(ctx, `
+		UPDATE workgroups
+		SET logo_uid = NULL, logo_mime = NULL, logo_sha256 = NULL, updated_at = now()
+		WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("store: clearing workgroup logo: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// LogoURL is the public path of the organization's logo, or empty when it has
+// none. The digest prefix is a cache key: a new image changes the URL, so a
+// browser that cached the old one fetches the new one.
+func (w Workgroup) LogoURL() string {
+	if w.LogoUID == "" || len(w.LogoSHA256) == 0 {
+		return ""
+	}
+	version := hex.EncodeToString(w.LogoSHA256)
+	if len(version) > 12 {
+		version = version[:12]
+	}
+	return "/api/v1/branding/logo?org=" + url.QueryEscape(w.LogoUID) + "&v=" + version
 }
 
 // Domains returns the domains an organization owns: its home domain first, then
