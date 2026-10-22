@@ -125,6 +125,23 @@ server maps locale-less URLs to the preferred locale, and serves `/en/` and
 - `package.sh` — non-Docker packaging path; keep it consistent with the
   `Dockerfile.build` web output path.
 
+## WebRTC call room
+
+- `RTCRtpSender.replaceTrack()` is asynchronous. Always `await` it before
+  `createOffer()` / `createAnswer()`. Creating the SDP first leaves the
+  camera or screen track out of the negotiation and the remote side keeps a
+  permanently muted receiver.
+- The room auto-joins, so a fresh page load has no user activation. Remote
+  media with sound, and `AudioContext`, are blocked until a gesture. Keep the
+  `enable-audio` banner, call `play()` synchronously in its click handler, and
+  defer AudioContext creation until `audioUnlocked`.
+- Receiver tracks can be created muted and unmute when frames arrive. Add
+  `unmute` / `mute` listeners that write a signal, or the template stays on the
+  avatar and never creates the `<video>`.
+- The call room is a full-screen route (`App.fullScreen`): the app shell header
+  must not render there. "Join meeting" opens the room in a new tab, which is
+  why auth tokens live in `localStorage` rather than `sessionStorage`.
+
 ## General conventions
 
 - Do not reformat pre-existing gofmt offenders (for example
