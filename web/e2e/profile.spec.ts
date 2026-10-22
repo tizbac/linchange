@@ -21,7 +21,7 @@ test('the profile page saves a recovery email and starts a 2FA setup', async ({ 
 
   const recovery = `recover-${RUN}@outside.example`;
   await page.locator('input[name="recoveryEmail"]').fill(recovery);
-  await page.getByRole('button', { name: 'Save' }).click();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByText('Recovery email saved.')).toBeVisible({ timeout: 15000 });
   await expect(page.locator('input[name="recoveryEmail"]')).toHaveValue(recovery);
 
