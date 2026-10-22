@@ -1,16 +1,22 @@
 package httpapi_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/quotedprintable"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
 
+	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/httpapi"
+	"github.com/linchange/linchange/internal/imapimport"
 	"github.com/linchange/linchange/internal/store"
 )
 
@@ -60,6 +66,85 @@ func newAdminServer(t *testing.T) (*httpapi.Server, *sqlx.DB) {
 
 // The administration API must not be reachable without a token. This is the
 // outer wall; the service's own check is the inner one.
+// An invitation is only useful if the link it carries actually sets the
+// password of the account that was created. This follows the whole path: the
+// administrator stores a personal address, the invite is queued as real mail,
+// the token in that message is redeemed, and the new password signs in.
+func TestAdminInvitationSetsAPasswordThatCanSignIn(t *testing.T) {
+	db := testMigratedDB(t)
+	blobs := testBlobs(t)
+	srv, err := httpapi.New(httpapi.Options{
+		DB: db, Config: testConfig(), Blobs: blobs,
+		Imports: imapimport.New(db, blobs, nil, testConfig().Auth.EncryptionKey),
+		Captcha: testCaptcha(t),
+	})
+	if err != nil {
+		t.Fatalf("building the server: %v", err)
+	}
+	_, headers := seedAdmin(t, srv, db)
+
+	code, body := do(t, srv, http.MethodPost, "/api/v1/admin/users", map[string]any{
+		"address":        "bob@example.com",
+		"source":         "local",
+		"password":       "correct horse battery staple",
+		"recovery_email": "bob@personal.example",
+	}, headers)
+	if code != http.StatusCreated {
+		t.Fatalf("creating bob = %d %v", code, body)
+	}
+	if got, _ := body["recovery_email"].(string); got != "bob@personal.example" {
+		t.Errorf("recovery_email = %q, want the stored personal address", got)
+	}
+
+	code, body = do(t, srv, http.MethodPost,
+		"/api/v1/admin/users/bob@example.com/invite", map[string]any{}, headers)
+	if code != http.StatusAccepted {
+		t.Fatalf("inviting bob = %d %v, want 202", code, body)
+	}
+	if got, _ := body["sent_to"].(string); got != "bob@personal.example" {
+		t.Errorf("sent_to = %q, want bob@personal.example", got)
+	}
+
+	var digestBytes []byte
+	var submittedBy string
+	if err := db.QueryRowxContext(t.Context(),
+		`SELECT blob_sha256, submitted_by FROM outbox ORDER BY id DESC LIMIT 1`).
+		Scan(&digestBytes, &submittedBy); err != nil {
+		t.Fatalf("reading the invitation from the outbox: %v", err)
+	}
+	if submittedBy != "noreply.onboarding@example.com" {
+		t.Errorf("invitation sender = %q, want the account domain's onboarding address", submittedBy)
+	}
+	var digest blobstore.Digest
+	copy(digest[:], digestBytes)
+	raw, err := blobs.Get(digest)
+	if err != nil {
+		t.Fatalf("reading the invitation message: %v", err)
+	}
+	decoded, err := io.ReadAll(quotedprintable.NewReader(bytes.NewReader(raw)))
+	if err != nil {
+		t.Fatalf("decoding the invitation body: %v", err)
+	}
+	match := regexp.MustCompile(`reset-password\?token=([A-Za-z0-9_-]+)`).FindSubmatch(decoded)
+	if match == nil {
+		t.Fatalf("the invitation has no reset link:\n%s", raw)
+	}
+	token := string(match[1])
+
+	code, body = do(t, srv, http.MethodPost, "/api/v1/auth/reset/complete", map[string]string{
+		"token": token, "password": "another correct horse battery staple",
+	}, nil)
+	if code != http.StatusOK {
+		t.Fatalf("redeeming the invitation = %d %v, want 200", code, body)
+	}
+	code, body = do(t, srv, http.MethodPost, "/api/v1/auth/login", map[string]string{
+		"login": "bob@example.com", "password": "another correct horse battery staple",
+	}, nil)
+	if code != http.StatusOK {
+		t.Fatalf("signing in with the password set by the invitation = %d %v, want 200", code, body)
+	}
+}
+
 func TestAdminRoutesRequireAToken(t *testing.T) {
 	srv, db := newAdminServer(t)
 	seedAdmin(t, srv, db)

@@ -63,7 +63,9 @@ export class AdminUsersComponent implements OnInit {
 
   protected readonly passwordFor = signal<User | null>(null);
   protected readonly quotaFor = signal<User | null>(null);
+  protected readonly recoveryFor = signal<User | null>(null);
   protected newPassword = '';
+  protected recoveryEmail = '';
   protected quotaMiB: number | null = null;
   protected sendLimit: number | null = null;
 
@@ -72,6 +74,7 @@ export class AdminUsersComponent implements OnInit {
     displayName: string;
     // Phone lives in the organization directory card, not on the user row.
     phone: string;
+    recoveryEmail: string;
     source: string;
     password: string;
     quotaMiB: number | null;
@@ -81,6 +84,7 @@ export class AdminUsersComponent implements OnInit {
     address: '',
     displayName: '',
     phone: '',
+    recoveryEmail: '',
     source: 'local',
     password: '',
     quotaMiB: null,
@@ -133,6 +137,9 @@ export class AdminUsersComponent implements OnInit {
         source,
         display_name: this.draft.displayName.trim(),
         ...(this.draft.phone.trim() ? { phone: this.draft.phone.trim() } : {}),
+        ...(this.draft.recoveryEmail.trim()
+          ? { recovery_email: this.draft.recoveryEmail.trim() }
+          : {}),
         // A password is only sent when one was typed. A domain admin or an
         // LDAP user has no stored credential, and sending an empty string
         // would either fail the minimum length or store a password nobody
@@ -152,6 +159,7 @@ export class AdminUsersComponent implements OnInit {
         address: '',
         displayName: '',
         phone: '',
+        recoveryEmail: '',
         source: 'local',
         password: '',
         quotaMiB: null,
@@ -241,6 +249,48 @@ export class AdminUsersComponent implements OnInit {
     this.quotaMiB = u.quota_bytes === null ? null : Math.round(u.quota_bytes / (1024 * 1024));
     this.sendLimit = u.daily_send_limit;
     this.quotaFor.set(u);
+  }
+
+  protected openRecovery(u: User): void {
+    this.error.set('');
+    this.recoveryEmail = u.recovery_email || '';
+    this.recoveryFor.set(u);
+  }
+
+  // saveRecovery changes only the personal address. The request carries one
+  // field; the server keeps the display name, quota and language it already
+  // has.
+  protected async saveRecovery(): Promise<void> {
+    const target = this.recoveryFor();
+    if (!target) return;
+    this.busy.set(true);
+    this.error.set('');
+    try {
+      await this.api.updateUser(target.address, {
+        recovery_email: this.recoveryEmail.trim(),
+      });
+      this.ok.set(`The personal email for ${target.address} was saved.`);
+      this.recoveryFor.set(null);
+      await this.reload();
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  protected async sendInvite(u: User): Promise<void> {
+    this.busy.set(true);
+    this.error.set('');
+    this.ok.set('');
+    try {
+      const res = await this.api.inviteUser(u.address);
+      this.ok.set(`An invitation was sent to ${res.sent_to}.`);
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
+    }
   }
 
   protected async setQuota(): Promise<void> {

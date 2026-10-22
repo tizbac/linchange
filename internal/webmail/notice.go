@@ -3,8 +3,13 @@ package webmail
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	"github.com/jmoiron/sqlx"
+
+	"github.com/linchange/linchange/internal/delivery"
 	"github.com/linchange/linchange/internal/mail"
+	"github.com/linchange/linchange/internal/store"
 )
 
 // SendInternal files a message into the INBOX of each recipient on this
@@ -48,4 +53,52 @@ func (s *Service) SendInternal(ctx context.Context, from string, recipients []st
 		}
 	}
 	return nil
+}
+
+// SendExternal queues one plain-text notice for delivery outside this server.
+//
+// SendInternal files a message into a local INBOX and cannot reach a personal
+// address on another domain. An account invitation has to get there, so it goes
+// through the ordinary outbox and the delivery worker. It is deliberately not
+// filed in anybody's Sent folder: it is a service notice, not a message the
+// administrator composed.
+func (s *Service) SendExternal(ctx context.Context, from, to, subject, body string) (int64, error) {
+	from = strings.ToLower(strings.TrimSpace(from))
+	to = strings.ToLower(strings.TrimSpace(to))
+	if from == "" || to == "" {
+		return 0, fmt.Errorf("webmail: an external notice needs a sender and a recipient")
+	}
+
+	builder := mail.NewBuilder()
+	builder.From(mail.Address{Address: from})
+	builder.To(mail.Address{Address: to})
+	builder.Subject(subject)
+	builder.Date(nowUTC())
+	builder.MessageID(mail.NewMessageID(s.hostname))
+	builder.Text(body)
+
+	raw, err := builder.Bytes()
+	if err != nil {
+		return 0, fmt.Errorf("webmail: build the notice: %w", err)
+	}
+	digest, size, err := s.blobs.Put(raw)
+	if err != nil {
+		return 0, fmt.Errorf("webmail: store the notice: %w", err)
+	}
+
+	var outboxID int64
+	err = store.InTx(ctx, s.db, func(tx *sqlx.Tx) error {
+		id, err := s.outbox.InsertMessage(ctx, tx, from, from, digest[:], size, []delivery.OutboxRecipient{
+			{Position: 0, Address: to, Kind: delivery.To},
+		})
+		if err != nil {
+			return err
+		}
+		outboxID = id
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return outboxID, nil
 }

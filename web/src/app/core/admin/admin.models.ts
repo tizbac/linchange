@@ -35,6 +35,9 @@ export interface User {
   daily_send_limit: number | null;
   timezone: string;
   language: string;
+  // The person's own address outside this server, or empty. An invitation or
+  // reset link is sent there rather than to the mailbox being set up.
+  recovery_email: string;
   must_change_password: boolean;
   created_at: string;
   quota_used_bytes: number;

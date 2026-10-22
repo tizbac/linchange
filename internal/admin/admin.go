@@ -48,6 +48,7 @@ const (
 	ActionUserQuota         = "user.quota"
 	ActionUserDelete        = "user.delete"
 	ActionUserResetPassword = "user.reset_password"
+	ActionUserInvite        = "user.invite"
 	// ActionUserAdminGrant is its own action rather than part of user.update.
 	// Granting and revoking administration is the change an operator has to be
 	// able to find in the log after an incident, and it should not have to be
@@ -97,6 +98,10 @@ const (
 	// somebody asked for the second go rather than that the queue retried by
 	// itself.
 	ActionOutboxRequeue = "outbox.requeue"
+	// Deleting a filtered queue is destructive and deliberately audited: the
+	// log should say that somebody cleared failures rather than leave their
+	// disappearance unexplained.
+	ActionOutboxDelete = "outbox.delete"
 )
 
 // ErrDenied is returned when the caller is not permitted to do what they

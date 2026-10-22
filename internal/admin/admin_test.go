@@ -637,8 +637,9 @@ func TestUpdateUserCannotDisableTheAccount(t *testing.T) {
 		t.Fatalf("creating a user: %v", err)
 	}
 
+	displayName, timezone, language := "Robert", "Europe/Rome", "it"
 	if _, err := svc.UpdateUser(ctx, adm, "bob@example.com", admin.UpdateUserRequest{
-		DisplayName: "Robert", Timezone: "Europe/Rome", Language: "it",
+		DisplayName: &displayName, Timezone: &timezone, Language: &language,
 	}); err != nil {
 		t.Fatalf("updating a user: %v", err)
 	}

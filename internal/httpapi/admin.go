@@ -17,6 +17,7 @@ import (
 
 	"github.com/linchange/linchange/internal/admin"
 	"github.com/linchange/linchange/internal/auth/policy"
+	"github.com/linchange/linchange/internal/auth/reset"
 	"github.com/linchange/linchange/internal/delivery"
 	"github.com/linchange/linchange/internal/store"
 )
@@ -160,6 +161,10 @@ func mountAdminRoutes(r chi.Router, s *Server) {
 			r.Put("/enabled", s.setUserEnabled)
 			r.Put("/quota", s.setUserQuota)
 			r.Put("/password", s.resetUserPassword)
+			// The invitation is a set-password link sent to the person's own
+			// address, not to the mailbox being created: somebody who has never
+			// signed in cannot read that mailbox yet.
+			r.Post("/invite", s.inviteUser)
 		})
 	})
 
@@ -446,6 +451,9 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		Timezone           string `json:"timezone"`
 		Language           string `json:"language"`
 		IsDomainAdmin      bool   `json:"is_domain_admin"`
+		// RecoveryEmail is the person's own address outside this server, used
+		// for an invitation or a reset link.
+		RecoveryEmail string `json:"recovery_email"`
 	}
 	if err := decodeAdmin(w, r, &in); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
@@ -462,6 +470,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		Timezone:           in.Timezone,
 		Language:           in.Language,
 		IsDomainAdmin:      in.IsDomainAdmin,
+		RecoveryEmail:      in.RecoveryEmail,
 	})
 	if err != nil {
 		adminErrors(w, s, err)
@@ -494,15 +503,18 @@ func (s *Server) getUser(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		DisplayName    string `json:"display_name"`
-		QuotaBytes     *int64 `json:"quota_bytes"`
-		DailySendLimit *int   `json:"daily_send_limit"`
-		Timezone       string `json:"timezone"`
-		Language       string `json:"language"`
+		DisplayName    *string `json:"display_name"`
+		QuotaBytes     *int64  `json:"quota_bytes"`
+		DailySendLimit *int    `json:"daily_send_limit"`
+		Timezone       *string `json:"timezone"`
+		Language       *string `json:"language"`
 		// IsDomainAdmin is a pointer so that an update which does not mention it
 		// leaves the grant alone. A plain bool would read as "false" for a
 		// request that only meant to rename somebody.
 		IsDomainAdmin *bool `json:"is_domain_admin"`
+		// RecoveryEmail is likewise optional: omitted leaves the current value,
+		// and an empty string clears it.
+		RecoveryEmail *string `json:"recovery_email"`
 	}
 	if err := decodeAdmin(w, r, &in); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
@@ -516,6 +528,7 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 			Timezone:       in.Timezone,
 			Language:       in.Language,
 			IsDomainAdmin:  in.IsDomainAdmin,
+			RecoveryEmail:  in.RecoveryEmail,
 		})
 	if err != nil {
 		adminErrors(w, s, err)
@@ -570,6 +583,57 @@ func (s *Server) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// inviteUser sends a set-password link to the account's personal email. The
+// link is an ordinary reset token, so accepting it uses the same form and the
+// same password rules as a self-service reset. The token never comes back in
+// the response: it is a credential, and the administrator does not need it.
+func (s *Server) inviteUser(w http.ResponseWriter, r *http.Request) {
+	address := pathParam(r, "address")
+	user, err := s.admin.InviteUser(r.Context(), Principal(r.Context()), address)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	invite, err := s.reset.IssueInvite(r.Context(), s.db, user.Address, user.RecoveryEmail)
+	if err != nil {
+		switch {
+		case errors.Is(err, reset.ErrDisabled):
+			s.writeError(w, http.StatusConflict, "password reset is disabled on this server")
+		case errors.Is(err, reset.ErrNotResetable):
+			s.writeError(w, http.StatusBadRequest, "this account's password is not held here")
+		default:
+			s.log.ErrorContext(r.Context(), "issuing an invitation failed", "address", user.Address, "error", err)
+			s.writeError(w, http.StatusInternalServerError, "could not prepare the invitation")
+		}
+		return
+	}
+
+	link := s.publicURL + "/reset-password?token=" + url.QueryEscape(invite.Token)
+	body := fmt.Sprintf(`Hello,
+
+An administrator created or updated the linchange account %s. Use the link
+below to choose your password. It works once and expires at %s.
+
+%s
+
+If you were not expecting this, you can ignore this message.
+`, user.Address, invite.ExpiresAt.UTC().Format("2006-01-02 15:04 UTC"), link)
+	// The invitation is a service notice, not a message from the administrator
+	// personally, so it comes from the account domain's onboarding address.
+	// The local part is fixed: replies to a no-reply address are discarded, as
+	// the name says.
+	_, domain, _ := strings.Cut(user.Address, "@")
+	from := "noreply.onboarding@" + strings.ToLower(domain)
+	if _, err := s.mail.SendExternal(r.Context(), from,
+		user.RecoveryEmail, "Set your password for "+user.Address, body); err != nil {
+		s.log.ErrorContext(r.Context(), "sending an invitation failed",
+			"address", user.Address, "to", user.RecoveryEmail, "error", err)
+		s.writeError(w, http.StatusInternalServerError, "the invitation could not be sent")
+		return
+	}
+	s.writeJSON(w, http.StatusAccepted, map[string]string{"sent_to": user.RecoveryEmail})
 }
 
 func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
@@ -1469,6 +1533,7 @@ type userView struct {
 	DailySendLimit     *int   `json:"daily_send_limit"`
 	Timezone           string `json:"timezone"`
 	Language           string `json:"language"`
+	RecoveryEmail      string `json:"recovery_email"`
 	MustChangePassword bool   `json:"must_change_password"`
 	CreatedAt          string `json:"created_at"`
 	QuotaUsedBytes     int64  `json:"quota_used_bytes"`
@@ -1488,6 +1553,7 @@ func viewUser(u admin.UserView) userView {
 		DailySendLimit:     u.DailySendLimit,
 		Timezone:           u.Timezone,
 		Language:           u.Language,
+		RecoveryEmail:      u.RecoveryEmail,
 		MustChangePassword: u.MustChangePassword,
 		CreatedAt:          u.CreatedAt.UTC().Format(time.RFC3339),
 		QuotaUsedBytes:     u.QuotaUsedBytes,

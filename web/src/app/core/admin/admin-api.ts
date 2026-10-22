@@ -115,6 +115,8 @@ export class AdminApi {
     timezone?: string;
     language?: string;
     must_change_password?: boolean;
+    // The person's own address outside this server.
+    recovery_email?: string;
     // Whether the new user may administer the domain. A domain_admin source
     // always is, and the server refuses it for a shared mailbox.
     is_domain_admin?: boolean;
@@ -143,6 +145,11 @@ export class AdminApi {
 
   resetUserPassword(address: string, password: string): Promise<unknown> {
     return this.request('put', `/users/${encodeURIComponent(address)}/password`, { password });
+  }
+
+  // inviteUser sends a set-password link to the account's personal email.
+  inviteUser(address: string): Promise<{ sent_to: string }> {
+    return this.post(`/users/${encodeURIComponent(address)}/invite`, {});
   }
 
   deleteUser(address: string): Promise<unknown> {

@@ -46,6 +46,19 @@
                 placeholder="+39 02 1234 5678"
               />
             </admin-field>
+            <admin-field
+              label="Personal email (optional)"
+              hint="Used for the invitation link and password resets. It must be an address outside this mailbox."
+            >
+              <input
+                class="{{ inputClass }}"
+                name="recoveryEmail"
+                type="email"
+                autocomplete="email"
+                [(ngModel)]="draft.recoveryEmail"
+                placeholder="alice@personal.example"
+              />
+            </admin-field>
             <admin-field label="Source">
               <select class="{{ inputClass }}" name="source" [(ngModel)]="draft.source">
                 <option value="local">local — a password is stored here</option>
@@ -139,6 +152,9 @@
                     @if (u.display_name) {
                       <span class="block text-xs text-slate-500">{{ u.display_name }}</span>
                     }
+                    @if (u.recovery_email) {
+                      <span class="block text-xs text-slate-400">personal: {{ u.recovery_email }}</span>
+                    }
                   </td>
                   <td class="{{ cell }}">
                     {{ u.source }}
@@ -173,6 +189,12 @@
                       <span trigger>Actions</span>
                       <admin-dropdown-item (pressed)="openPassword(u)">Password</admin-dropdown-item>
                       <admin-dropdown-item (pressed)="openQuota(u)">Quota</admin-dropdown-item>
+                      <admin-dropdown-item (pressed)="openRecovery(u)">Personal email</admin-dropdown-item>
+                      @if (u.recovery_email) {
+                        <admin-dropdown-item [disabled]="busy()" (pressed)="sendInvite(u)">
+                          Send invitation
+                        </admin-dropdown-item>
+                      }
                       @if (canGrantAdmin(u)) {
                         <admin-dropdown-item
                           [variant]="u.is_domain_admin ? 'default' : 'default'"
@@ -217,6 +239,29 @@
             </admin-field>
             <admin-button variant="primary" type="submit" [disabled]="busy()">Set password</admin-button>
             <admin-button (pressed)="passwordFor.set(null)">Cancel</admin-button>
+          </form>
+        </admin-panel>
+      }
+
+      @if (recoveryFor(); as target) {
+        <admin-panel title="Personal email for {{ target.address }}">
+          <form class="flex flex-wrap items-end gap-3" (ngSubmit)="saveRecovery()">
+            <admin-field
+              label="Personal email"
+              class="min-w-64 flex-1"
+              hint="The invitation link and password resets go here. Empty clears it. Send the invitation from the Actions menu once it is saved."
+            >
+              <input
+                class="{{ inputClass }}"
+                name="recoveryEmail"
+                type="email"
+                autocomplete="email"
+                [(ngModel)]="recoveryEmail"
+                placeholder="alice@personal.example"
+              />
+            </admin-field>
+            <admin-button variant="primary" type="submit" [disabled]="busy()">Save</admin-button>
+            <admin-button (pressed)="recoveryFor.set(null)">Cancel</admin-button>
           </form>
         </admin-panel>
       }

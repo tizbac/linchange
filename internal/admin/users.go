@@ -39,6 +39,9 @@ type CreateUserRequest struct {
 	// domain_admin source and has to be asked for otherwise, since the usual
 	// administrator of a small deployment holds mail and is created as local.
 	IsDomainAdmin bool
+	// RecoveryEmail is the person's own address outside this server, where an
+	// administrator can send an invitation or a reset link.
+	RecoveryEmail string
 }
 
 // CreateUser provisions a principal. The user row, the password and the audit
@@ -53,6 +56,10 @@ func (s *Service) CreateUser(ctx context.Context, actor policy.Principal, req Cr
 	}
 	if !req.Source.Valid() {
 		return store.User{}, fmt.Errorf("%w: unknown user source %q", ErrInvalid, req.Source)
+	}
+	recovery, perr := normalisePersonalEmail(req.RecoveryEmail)
+	if perr != nil {
+		return store.User{}, perr
 	}
 
 	// A local user needs a password. A directory or shared principal is
@@ -100,6 +107,12 @@ func (s *Service) CreateUser(ctx context.Context, actor policy.Principal, req Cr
 		if err != nil {
 			return mapStore(err)
 		}
+		if recovery != "" {
+			if err := s.users.SetRecoveryEmail(ctx, q, user.Address, recovery); err != nil {
+				return fmt.Errorf("admin: storing the personal email: %w", err)
+			}
+			user.RecoveryEmail = recovery
+		}
 
 		if hash != "" {
 			if err := s.credentia.Set(ctx, q, user.Address, hash); err != nil {
@@ -141,12 +154,16 @@ func (s *Service) CreateUser(ctx context.Context, actor policy.Principal, req Cr
 // administration is a grant, and an update that left it out would quietly
 // revoke it.
 type UpdateUserRequest struct {
-	DisplayName    string
+	// The string fields are pointers so an update that only changes one thing
+	// leaves the rest alone. A caller sending {"recovery_email": ...} must not
+	// erase the display name, timezone and language by omission.
+	DisplayName    *string
 	QuotaBytes     *int64
 	DailySendLimit *int
-	Timezone       string
-	Language       string
+	Timezone       *string
+	Language       *string
 	IsDomainAdmin  *bool
+	RecoveryEmail  *string
 }
 
 // UpdateUser changes a user in place.
@@ -171,16 +188,45 @@ func (s *Service) UpdateUser(ctx context.Context, actor policy.Principal, addres
 		if req.IsDomainAdmin != nil {
 			grant = *req.IsDomainAdmin
 		}
+		displayName := before.DisplayName
+		if req.DisplayName != nil {
+			displayName = *req.DisplayName
+		}
+		timezone := before.Timezone
+		if req.Timezone != nil {
+			timezone = *req.Timezone
+		}
+		language := before.Language
+		if req.Language != nil {
+			language = *req.Language
+		}
+		quota := before.QuotaBytes
+		if req.QuotaBytes != nil {
+			quota = req.QuotaBytes
+		}
+		dailyLimit := before.DailySendLimit
+		if req.DailySendLimit != nil {
+			dailyLimit = req.DailySendLimit
+		}
+		if req.RecoveryEmail != nil {
+			personal, err := normalisePersonalEmail(*req.RecoveryEmail)
+			if err != nil {
+				return err
+			}
+			if err := s.users.SetRecoveryEmail(ctx, q, address, personal); err != nil {
+				return fmt.Errorf("admin: storing the personal email: %w", err)
+			}
+		}
 		if err := s.users.Update(ctx, q, address, store.UpdateUserRequest{
-			DisplayName: req.DisplayName,
+			DisplayName: displayName,
 			// Carried over from the row just read: see UpdateUserRequest.
 			Enabled:        before.Enabled,
 			MailboxEnabled: before.MailboxEnabled,
 			IsDomainAdmin:  grant,
-			QuotaBytes:     req.QuotaBytes,
-			DailySendLimit: req.DailySendLimit,
-			Timezone:       req.Timezone,
-			Language:       req.Language,
+			QuotaBytes:     quota,
+			DailySendLimit: dailyLimit,
+			Timezone:       timezone,
+			Language:       language,
 		}); err != nil {
 			return mapStore(err)
 		}
@@ -369,6 +415,60 @@ func (s *Service) ListUsers(ctx context.Context, actor policy.Principal) ([]User
 // validAddress rejects anything that is not a plain address, so a mistake at
 // the API boundary is reported rather than becoming a row the delivery path
 // will keep failing on.
+// normalisePersonalEmail accepts an address the administrator typed for the
+// person, outside this server. An empty value is allowed and means "none".
+func normalisePersonalEmail(email string) (string, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return "", nil
+	}
+	addr, err := mail.ParseAddress(email)
+	if err != nil || !strings.EqualFold(addr.Address, email) || addr.Name != "" {
+		return "", fmt.Errorf("%w: %q is not a valid personal email address", ErrInvalid, email)
+	}
+	return email, nil
+}
+
+// InviteUser records an invitation and returns the account it is for. The
+// caller sends the mail: the admin service has no transport, and the HTTP layer
+// already holds the outbox and the public URL the link has to point at.
+func (s *Service) InviteUser(ctx context.Context, actor policy.Principal, address string) (store.User, error) {
+	if err := requireAdmin(actor); err != nil {
+		return store.User{}, err
+	}
+	var invited store.User
+	err := store.InTx(ctx, s.db, func(q *sqlx.Tx) error {
+		user, err := s.users.Get(ctx, q, address)
+		if err != nil {
+			return mapStore(err)
+		}
+		if !user.Enabled {
+			return fmt.Errorf("%w: the account is disabled", ErrInvalid)
+		}
+		if user.RecoveryEmail == "" {
+			return fmt.Errorf("%w: set a personal email before inviting this account", ErrInvalid)
+		}
+		if _, err := normalisePersonalEmail(user.RecoveryEmail); err != nil {
+			return err
+		}
+		if err := s.record(ctx, q, actor, change{
+			action:     ActionUserInvite,
+			targetType: "user",
+			targetID:   user.Address,
+			target:     user.Address,
+			detail:     map[string]any{"sent_to": user.RecoveryEmail},
+		}); err != nil {
+			return err
+		}
+		invited = user
+		return nil
+	})
+	if err != nil {
+		return store.User{}, err
+	}
+	return invited, nil
+}
+
 func validAddress(address string) error {
 	trimmed := strings.TrimSpace(address)
 	if trimmed == "" {

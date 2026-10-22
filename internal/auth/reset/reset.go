@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/linchange/linchange/config"
@@ -34,7 +35,16 @@ var (
 	ErrExpired = errors.New("reset: this reset link has expired")
 	// ErrAlreadyUsed means the link was already redeemed.
 	ErrAlreadyUsed = errors.New("reset: this reset link has already been used")
+	// ErrDisabled means this deployment has self-service passwords switched off.
+	ErrDisabled = errors.New("reset: password reset is disabled")
+	// ErrNotResetable means the account's password is not held here.
+	ErrNotResetable = errors.New("reset: this account's password is not held here")
 )
+
+// InviteTTL is how long an administrator's invitation stays usable. It is
+// longer than a self-service link: the person may not read that personal
+// mailbox for a day or two, and an invitation is not something they asked for.
+const InviteTTL = 72 * time.Hour
 
 // Sinker delivers the reset email. The production one is an outbox send (P3);
 // a development setup or a test stands in something that logs or records it.
@@ -205,6 +215,45 @@ func (r *Resetter) Request(ctx context.Context, q store.Querier, req Request) (R
 	r.log.InfoContext(ctx, "reset requested",
 		"address", req.Address, "to", to, "expires_at", expiresAt)
 	return out, nil
+}
+
+// IssuedInvite is a link an administrator asked the server to send.
+type IssuedInvite struct {
+	Token     string
+	ExpiresAt time.Time
+}
+
+// IssueInvite creates a token for an administrator's invitation. It does not
+// send anything: the caller owns the transport, because an invitation may go to
+// an address outside this server. The token is the same one the reset form
+// redeems, so there is one set-password path rather than two.
+func (r *Resetter) IssueInvite(ctx context.Context, q store.Querier, address, to string) (IssuedInvite, error) {
+	if !r.enabled {
+		return IssuedInvite{}, ErrDisabled
+	}
+	principal, err := store.LoadPrincipal(ctx, q, address)
+	if err != nil || (principal.Source != policy.SourceLocal && principal.Source != policy.SourceDomainAdmin) {
+		return IssuedInvite{}, ErrNotResetable
+	}
+	to = strings.ToLower(strings.TrimSpace(to))
+	if to == "" {
+		return IssuedInvite{}, errors.New("reset: an invitation needs a recipient")
+	}
+	token, err := secret.GenerateToken()
+	if err != nil {
+		return IssuedInvite{}, fmt.Errorf("reset: generating a token: %w", err)
+	}
+	expiresAt := r.now().Add(InviteTTL)
+	if _, err := r.tokens.Create(ctx, q, store.CreateResetTokenRequest{
+		Address:   address,
+		TokenHash: secret.Hash(token),
+		SentTo:    to,
+		ExpiresAt: expiresAt,
+	}); err != nil {
+		return IssuedInvite{}, err
+	}
+	r.log.InfoContext(ctx, "account invitation issued", "address", address, "to", to, "expires_at", expiresAt)
+	return IssuedInvite{Token: token, ExpiresAt: expiresAt}, nil
 }
 
 // CompleteRequest is what the reset form posts back: the link's token and the
