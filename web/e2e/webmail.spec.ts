@@ -113,8 +113,9 @@ test.describe('webmail', () => {
     await signIn(page);
     await page.goto('/mail');
 
-    page.once('dialog', (d) => void d.accept(name));
     await page.getByRole('button', { name: 'New folder' }).click();
+    await page.getByRole('dialog').getByLabel('Name').fill(name);
+    await page.getByRole('dialog').getByRole('button', { name: 'Create' }).click();
     await expect(folderButton(page, name)).toBeVisible();
 
     await folderButton(page, name).click();

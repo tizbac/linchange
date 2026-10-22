@@ -216,12 +216,15 @@ func (s *Service) EnsureFolders(ctx context.Context, owner string) error {
 	return s.mailboxes.EnsureFolders(ctx, s.db, owner)
 }
 
-// CreateFolder makes a new folder for an owner.
-//
-// The name is checked against the folder that already exists rather than
-// against a rule about which names are legal, so the answer a caller gets is
-// "that name is taken" instead of a constraint violation.
+// CreateFolder makes a new top-level folder for an owner.
 func (s *Service) CreateFolder(ctx context.Context, owner, name string) (Folder, error) {
+	return s.CreateFolderIn(ctx, owner, name, nil)
+}
+
+// CreateFolderIn makes a folder inside parentID, or at the top level when
+// parentID is nil. The stored name is the full path ("INBOX/Projects"), which
+// is also the IMAP name; parent_id carries the tree for the web client.
+func (s *Service) CreateFolderIn(ctx context.Context, owner, name string, parentID *int64) (Folder, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return Folder{}, fmt.Errorf("%w: a folder needs a name", ErrInvalid)
@@ -229,28 +232,36 @@ func (s *Service) CreateFolder(ctx context.Context, owner, name string) (Folder,
 	if strings.ContainsAny(name, "/\r\n\x00") {
 		return Folder{}, fmt.Errorf("%w: %q is not a usable folder name", ErrInvalid, name)
 	}
-	if strings.EqualFold(name, "INBOX") {
+	fullName := name
+	if parentID != nil {
+		parent, err := s.mailboxes.GetFolder(ctx, s.db, owner, *parentID)
+		if err != nil {
+			return Folder{}, fmt.Errorf("%w: the parent folder does not exist", ErrInvalid)
+		}
+		fullName = parent.Name + "/" + name
+	}
+	if strings.EqualFold(fullName, "INBOX") {
 		return Folder{}, fmt.Errorf("%w: INBOX always exists", ErrInvalid)
 	}
 
-	if _, err := s.mailboxes.GetByName(ctx, s.db, owner, name); err == nil {
-		return Folder{}, fmt.Errorf("%w: a folder called %q already exists", ErrInvalid, name)
+	if _, err := s.mailboxes.GetByName(ctx, s.db, owner, fullName); err == nil {
+		return Folder{}, fmt.Errorf("%w: a folder called %q already exists", ErrInvalid, fullName)
 	} else if !store.IsNotFound(err) {
 		return Folder{}, err
 	}
 
 	const insert = `
-		INSERT INTO mailboxes (owner, name, uidvalidity, uidnext, created_by)
-		VALUES ($1, $2, 1, 1, $1)
+		INSERT INTO mailboxes (owner, name, parent_id, uidvalidity, uidnext, created_by)
+		VALUES ($1, $2, $3, 1, 1, $1)
 		RETURNING id`
 	var id int64
-	if err := s.db.GetContext(ctx, &id, insert, owner, name); err != nil {
+	if err := s.db.GetContext(ctx, &id, insert, owner, fullName, parentID); err != nil {
 		if store.IsConflict(err) {
-			return Folder{}, fmt.Errorf("%w: a folder called %q already exists", ErrInvalid, name)
+			return Folder{}, fmt.Errorf("%w: a folder called %q already exists", ErrInvalid, fullName)
 		}
 		return Folder{}, fmt.Errorf("webmail: create folder: %w", err)
 	}
-	s.recordAudit(ctx, owner, "folder.create", name)
+	s.recordAudit(ctx, owner, "folder.create", fullName)
 
 	folders, err := s.Folders(ctx, owner)
 	if err != nil {

@@ -38,8 +38,11 @@ export class MailApi {
     return this.fetch(`/folders${query({ owner })}`);
   }
 
-  createFolder(name: string, owner?: string): Promise<Folder> {
-    return this.post(`/folders${query({ owner })}`, { name });
+  createFolder(name: string, owner?: string, parentId?: number): Promise<Folder> {
+    return this.post(`/folders${query({ owner })}`, {
+      name,
+      ...(parentId ? { parent_id: parentId } : {}),
+    });
   }
 
   renameFolder(id: number, name: string, owner?: string): Promise<Folder> {

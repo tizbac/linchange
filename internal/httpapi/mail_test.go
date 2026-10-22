@@ -160,6 +160,33 @@ func TestFolderCountsBelongToTheirOwnFolder(t *testing.T) {
 // A draft is a partly written message. The two things a sent message must have
 // are the two things a draft most often does not, and refusing one for missing
 // either throws away the user's own work for not being finished yet.
+func TestSubfoldersCanBeCreatedAndStandardFoldersStayFixed(t *testing.T) {
+	db := testMigratedDB(t)
+	srv := newServer(t, db)
+	headers := mailUser(t, srv, db, "alice@example.com")
+
+	folders := foldersByName(t, srv, headers)
+	inboxID := int64(folders["INBOX"]["id"].(float64))
+	code, body := do(t, srv, http.MethodPost, "/api/v1/mail/folders",
+		map[string]any{"name": "Projects", "parent_id": inboxID}, headers)
+	if code != http.StatusCreated {
+		t.Fatalf("creating a subfolder = %d %v, want 201", code, body)
+	}
+	if str(body, "name") != "INBOX/Projects" {
+		t.Errorf("subfolder name = %q, want INBOX/Projects", str(body, "name"))
+	}
+	if got := num(body, "parent_id"); got != inboxID {
+		t.Errorf("subfolder parent = %d, want %d", got, inboxID)
+	}
+
+	// The standard folders are named by protocol role and cannot be renamed.
+	code, _ = do(t, srv, http.MethodPatch, fmt.Sprintf("/api/v1/mail/folders/%d", inboxID),
+		map[string]any{"name": "Inbox renamed"}, headers)
+	if code != http.StatusBadRequest {
+		t.Errorf("renaming a standard folder = %d, want 400", code)
+	}
+}
+
 func TestDraftsSaveWithoutARecipientOrABody(t *testing.T) {
 	cases := []struct {
 		name string

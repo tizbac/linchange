@@ -76,7 +76,9 @@ function rankFolder(f: Folder): number {
               </button>
               @if (selectedFolderId() === f.id) {
                 <div class="mb-1 flex flex-wrap gap-x-2 pb-1 pt-0.5" [style.padding-left.px]="f.parent_id ? 28 : 8">
-                  <button class="text-[11px] font-medium text-blue-600 hover:underline" (click)="renameFolder(f)">Rename</button>
+                  @if (f.deletable) {
+                    <button class="text-[11px] font-medium text-blue-600 hover:underline" (click)="renameFolder(f)">Rename</button>
+                  }
                   @if (f.total > 0) {
                     <button class="text-[11px] font-medium text-blue-600 hover:underline" (click)="emptyFolder(f)">Empty</button>
                   }
@@ -143,7 +145,9 @@ function rankFolder(f: Folder): number {
                     </button>
                     @if (selectedFolderId() === f.id && s.writable) {
                       <div class="mb-1 flex flex-wrap gap-x-2 pb-1 pt-0.5" [style.padding-left.px]="f.parent_id ? 28 : 8">
-                        <button class="text-[11px] font-medium text-blue-600 hover:underline" (click)="renameFolder(f)">Rename</button>
+                        @if (f.deletable) {
+                          <button class="text-[11px] font-medium text-blue-600 hover:underline" (click)="renameFolder(f)">Rename</button>
+                        }
                         @if (f.total > 0) {
                           <button class="text-[11px] font-medium text-blue-600 hover:underline" (click)="emptyFolder(f)">Empty</button>
                         }
@@ -406,6 +410,50 @@ function rankFolder(f: Folder): number {
         (changed)="refreshAll()"
         (closed)="onReaderClosed()"
       />
+
+      @if (folderFormOpen()) {
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" (click)="folderFormOpen.set(false)">
+          <form
+            role="dialog"
+            aria-label="New folder"
+            class="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl ring-1 ring-slate-200"
+            (click)="$event.stopPropagation()"
+            (ngSubmit)="createFolder()"
+          >
+            <h2 class="text-lg font-semibold text-slate-900">New folder</h2>
+            <label class="mt-4 block">
+              <span class="text-sm font-medium text-slate-700">Name</span>
+              <input
+                class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                name="folderName"
+                [(ngModel)]="folderName"
+                autofocus
+                required
+              />
+            </label>
+            <label class="mt-3 block">
+              <span class="text-sm font-medium text-slate-700">Inside</span>
+              <select class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" name="folderParent" [(ngModel)]="folderParent">
+                <option [ngValue]="0">Top level</option>
+                @for (f of currentFolders(); track f.id) {
+                  <option [ngValue]="f.id">{{ f.name }}</option>
+                }
+              </select>
+            </label>
+            @if (error()) {
+              <p class="mt-3 text-sm text-rose-600">{{ error() }}</p>
+            }
+            <div class="mt-5 flex justify-end gap-2">
+              <button type="button" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm" (click)="folderFormOpen.set(false)">
+                Cancel
+              </button>
+              <button type="submit" [disabled]="!folderName.trim()" class="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50">
+                Create
+              </button>
+            </div>
+          </form>
+        </div>
+      }
     </div>
   `,
   styles: [
@@ -447,6 +495,9 @@ export class MailComponent implements OnInit {
   readonly sharedFolders = signal<Map<string, Folder[]>>(new Map());
   readonly selectedShared = signal<string | null>(null);
   readonly selectedFolderId = signal<number | null>(null);
+  readonly folderFormOpen = signal(false);
+  readonly folderParent = signal(0);
+  folderName = '';
   readonly selection = signal<MailSelection>({ kind: 'none' });
   readonly searchQuery = signal<string | null>(null);
   readonly unreadOnly = signal(false);
@@ -641,15 +692,22 @@ export class MailComponent implements OnInit {
 
   // --- folder operations -------------------------------------------------------
 
-  protected async newFolder(): Promise<void> {
-    const name = prompt('New folder name');
-    if (!name || !name.trim()) return;
+  protected newFolder(): void {
+    // Start inside the selected folder, which is what "new folder" means in a
+    // tree: the user can still choose Top level in the dialog.
+    this.folderParent.set(this.selectedFolderId() ?? 0);
+    this.folderName = '';
+    this.error.set('');
+    this.folderFormOpen.set(true);
+  }
+
+  protected async createFolder(): Promise<void> {
+    const name = this.folderName.trim();
+    if (!name) return;
     try {
-      // Use the current folder's owner, which is already set by the server
-      // and correctly reflects whether we're in a shared mailbox or not.
-      const folder = this.currentFolders().find(f => f.id === this.selectedFolderId());
-      const owner = folder?.owner ?? this.owner();
-      await this.api.createFolder(name.trim(), owner);
+      const parent = this.folderParent() || undefined;
+      await this.api.createFolder(name, this.currentOwner(), parent);
+      this.folderFormOpen.set(false);
       await this.refreshFolders();
       await this.refreshSharedFolders();
     } catch (err) {

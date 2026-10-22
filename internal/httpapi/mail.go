@@ -479,14 +479,15 @@ func (s *Server) handleListFolders(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name string `json:"name"`
+		Name     string `json:"name"`
+		ParentID *int64 `json:"parent_id"`
 	}
 	if err := decodeJSON(w, r, &in); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
 		return
 	}
 
-	folder, err := s.mail.CreateFolder(r.Context(), mailOwner(r), in.Name)
+	folder, err := s.mail.CreateFolderIn(r.Context(), mailOwner(r), in.Name, in.ParentID)
 	if err != nil {
 		s.writeMailError(w, r, err)
 		return
