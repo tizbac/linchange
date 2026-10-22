@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* The app chooses light or dark itself and records it on the root as
+   data-theme. Tailwind's default dark variant asks the operating system, which
+   would leave a page dark on a light OS or, worse, apply a dark surface while
+   the [data-theme="dark"] remaps below stay off. Bind the variant to the same
+   switch the rest of the palette uses. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 @theme {
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;

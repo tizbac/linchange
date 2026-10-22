@@ -674,7 +674,7 @@ import { CalIcon } from '../core/calendar/ui';
     }
     .fc .fc-toolbar-title { color: #111827; }
     .fc .fc-button { color: white; }
-    .dark .fc {
+    [data-theme="dark"] .fc {
       --fc-border-color: #374151;
       --fc-button-bg-color: #3b82f6;
       --fc-button-border-color: #3b82f6;
@@ -691,50 +691,50 @@ import { CalIcon } from '../core/calendar/ui';
       --fc-page-bg-color: #111827;
       --fc-neutral-text-color: #f3f4f6;
     }
-    .dark .fc .fc-toolbar-title { color: #f3f4f6; }
-    .dark .fc .fc-button { color: white; }
-    .dark .fc .fc-col-header-cell { background-color: #1f2937; color: #f3f4f6; }
-    .dark .fc .fc-daygrid-day-number { color: #f3f4f6; }
-    .dark .fc .fc-timegrid-slot-label { color: #9ca3af; }
-    .dark .fc .fc-timegrid-axis { background-color: #1f2937; }
-    .dark .fc .fc-timegrid-divider { border-color: #374151; }
+    [data-theme="dark"] .fc .fc-toolbar-title { color: #f3f4f6; }
+    [data-theme="dark"] .fc .fc-button { color: white; }
+    [data-theme="dark"] .fc .fc-col-header-cell { background-color: #1f2937; color: #f3f4f6; }
+    [data-theme="dark"] .fc .fc-daygrid-day-number { color: #f3f4f6; }
+    [data-theme="dark"] .fc .fc-timegrid-slot-label { color: #9ca3af; }
+    [data-theme="dark"] .fc .fc-timegrid-axis { background-color: #1f2937; }
+    [data-theme="dark"] .fc .fc-timegrid-divider { border-color: #374151; }
     /* Dark theme for event detail modal and edit modal */
-    .dark .fixed.bg-white.dark\:bg-gray-900 { background-color: #1f2937; }
-    .dark .fixed .bg-white.dark\:bg-gray-900 { background-color: #1f2937; }
-    .dark .fixed .border-b { border-color: #374151; }
-    .dark .fixed .border-t { border-color: #374151; }
-    .dark .fixed label { color: #d1d5db; }
-    .dark .fixed .text-gray-500 { color: #9ca3af; }
-    .dark .fixed .text-gray-700 { color: #d1d5db; }
-    .dark .fixed .text-sm { color: #d1d5db; }
-    .dark .fixed input,
-    .dark .fixed select,
-    .dark .fixed textarea {
+    [data-theme="dark"] .fixed.bg-white.dark\:bg-gray-900 { background-color: #1f2937; }
+    [data-theme="dark"] .fixed .bg-white.dark\:bg-gray-900 { background-color: #1f2937; }
+    [data-theme="dark"] .fixed .border-b { border-color: #374151; }
+    [data-theme="dark"] .fixed .border-t { border-color: #374151; }
+    [data-theme="dark"] .fixed label { color: #d1d5db; }
+    [data-theme="dark"] .fixed .text-gray-500 { color: #9ca3af; }
+    [data-theme="dark"] .fixed .text-gray-700 { color: #d1d5db; }
+    [data-theme="dark"] .fixed .text-sm { color: #d1d5db; }
+    [data-theme="dark"] .fixed input,
+    [data-theme="dark"] .fixed select,
+    [data-theme="dark"] .fixed textarea {
       background-color: #374151;
       border-color: #4b5563;
       color: #f3f4f6;
     }
-    .dark .fixed input:focus,
-    .dark .fixed select:focus {
+    [data-theme="dark"] .fixed input:focus,
+    [data-theme="dark"] .fixed select:focus {
       border-color: #3b82f6;
       box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
     }
-    .dark .fixed input::placeholder { color: #9ca3af; }
-    .dark .fixed .bg-gray-100.dark\:bg-gray-800 { background-color: #374151; }
-    .dark .fixed .hover\:bg-gray-200.dark\:hover\:bg-gray-700:hover { background-color: #4b5563; }
-    .dark .fixed .hover\:bg-gray-800:hover { background-color: #374151; }
-    .dark .fixed .bg-gray-800 { background-color: #1f2937; }
-    .dark .fixed .bg-red-50 { background-color: rgba(127, 29, 29, 0.3); }
-    .dark .fixed .hover\:bg-red-100:hover { background-color: rgba(127, 29, 29, 0.5); }
-    .dark .fixed .text-gray-400 { color: #9ca3af; }
-    .dark .fixed .text-gray-300 { color: #d1d5db; }
-    .dark .fixed .text-gray-600 { color: #9ca3af; }
-    .dark .fixed .text-gray-900 { color: #f3f4f6; }
-    .dark .fixed .text-blue-600 { color: #60a5fa; }
-    .dark .fixed .focus\:ring-blue-500:focus { box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3); }
-    .dark .fixed .border-gray-300 { border-color: #4b5563; }
-    .dark .fixed .border-gray-200 { border-color: #374151; }
-    .dark .fixed .text-red-600 { color: #f87171; }
+    [data-theme="dark"] .fixed input::placeholder { color: #9ca3af; }
+    [data-theme="dark"] .fixed .bg-gray-100.dark\:bg-gray-800 { background-color: #374151; }
+    [data-theme="dark"] .fixed .hover\:bg-gray-200.dark\:hover\:bg-gray-700:hover { background-color: #4b5563; }
+    [data-theme="dark"] .fixed .hover\:bg-gray-800:hover { background-color: #374151; }
+    [data-theme="dark"] .fixed .bg-gray-800 { background-color: #1f2937; }
+    [data-theme="dark"] .fixed .bg-red-50 { background-color: rgba(127, 29, 29, 0.3); }
+    [data-theme="dark"] .fixed .hover\:bg-red-100:hover { background-color: rgba(127, 29, 29, 0.5); }
+    [data-theme="dark"] .fixed .text-gray-400 { color: #9ca3af; }
+    [data-theme="dark"] .fixed .text-gray-300 { color: #d1d5db; }
+    [data-theme="dark"] .fixed .text-gray-600 { color: #9ca3af; }
+    [data-theme="dark"] .fixed .text-gray-900 { color: #f3f4f6; }
+    [data-theme="dark"] .fixed .text-blue-600 { color: #60a5fa; }
+    [data-theme="dark"] .fixed .focus\:ring-blue-500:focus { box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3); }
+    [data-theme="dark"] .fixed .border-gray-300 { border-color: #4b5563; }
+    [data-theme="dark"] .fixed .border-gray-200 { border-color: #374151; }
+    [data-theme="dark"] .fixed .text-red-600 { color: #f87171; }
   `]
 })
 export class CalendarComponent implements AfterViewInit, OnDestroy {
