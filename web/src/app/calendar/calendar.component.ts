@@ -57,7 +57,7 @@ import { CalIcon } from '../core/calendar/ui';
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   template: `
-    <div class="h-[calc(100vh-80px)] flex flex-col min-h-[500px]">
+    <div class="h-[calc(100vh-80px)] flex flex-col min-h-[500px] px-4 pb-4 sm:px-6">
       <!-- Toolbar -->
       <div class="flex items-center justify-between p-4 border-b bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100">
         <div class="flex items-center gap-4">
