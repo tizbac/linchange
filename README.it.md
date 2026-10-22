@@ -94,6 +94,8 @@ chat, riunioni o rubriche da installare: tutto è nello stesso server.
 - Chat nativa su WebSocket, salvata nello stesso database della posta: messaggi
   diretti, gruppi ad hoc, gruppi dell'organizzazione e sale riunioni.
 - Cronologia, indicatori di digitazione e conferme di lettura.
+- Allegati nelle sale, salvati nel blob store content-addressed e scaricabili
+  solo dai membri della sala.
 - Le sale riunioni usano lo stesso canale di segnalazione per offerte, risposte
   e candidati ICE WebRTC; non serve alcun servizio esterno di chat o
   segnalazione.

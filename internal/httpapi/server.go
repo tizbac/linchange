@@ -358,7 +358,7 @@ func New(opts Options) (*Server, error) {
 	// Chat is native: it is built here, over the same database, and there is no
 	// external chat server to configure or to be down. The hub is the live
 	// socket layer; the service is the durable one.
-	chatService := chat.New(opts.DB, log)
+	chatService := chat.New(opts.DB, opts.Blobs, log)
 	chatHub := chat.NewHub(chatService, log)
 
 	// The meetings service turns a calendar event into an invitation: one

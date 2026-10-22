@@ -25,6 +25,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
+	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/store"
 )
 
@@ -68,12 +69,14 @@ type Conversation struct {
 	CreatedAt time.Time `db:"created_at" json:"createdAt"`
 }
 
-// Message is one chat message.
+// Message is one chat message. A message may carry one file; the body may be
+// empty when it does.
 type Message struct {
-	ID        int64     `db:"id" json:"id"`
-	Sender    string    `db:"sender" json:"sender"`
-	Body      string    `db:"body" json:"body"`
-	CreatedAt time.Time `db:"created_at" json:"createdAt"`
+	ID         int64       `db:"id" json:"id"`
+	Sender     string      `db:"sender" json:"sender"`
+	Body       string      `db:"body" json:"body"`
+	CreatedAt  time.Time   `db:"created_at" json:"createdAt"`
+	Attachment *Attachment `json:"attachment,omitempty"`
 }
 
 // Summary is a conversation as the conversation list draws it: the room, the
@@ -113,15 +116,17 @@ type CreateRequest struct {
 type Service struct {
 	db     *sqlx.DB
 	groups *store.Groups
+	blobs  *blobstore.Store
 	log    *slog.Logger
 }
 
-// New builds the service.
-func New(db *sqlx.DB, log *slog.Logger) *Service {
+// New builds the service. A nil blob store disables attachments; every other
+// chat operation still works.
+func New(db *sqlx.DB, blobs *blobstore.Store, log *slog.Logger) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Service{db: db, groups: store.NewGroups(), log: log}
+	return &Service{db: db, groups: store.NewGroups(), blobs: blobs, log: log}
 }
 
 // Create opens a conversation, or returns the existing one when it is a direct
@@ -672,6 +677,54 @@ func (s *Service) IsMember(ctx context.Context, conversationID int64, member str
 	return exists, nil
 }
 
+// messageColumns is the one projection shared by history and by the copy of a
+// message a sender gets back, so a message with a file and one without are
+// read the same way.
+const messageColumns = `
+	m.id, m.sender, m.body, m.created_at,
+	a.id AS attachment_id, a.uid AS attachment_uid,
+	a.conversation_id AS attachment_conversation_id,
+	a.uploader AS attachment_uploader,
+	a.blob_sha256 AS attachment_blob_sha256,
+	a.name AS attachment_name, a.mime AS attachment_mime,
+	a.size AS attachment_size, a.created_at AS attachment_created_at`
+
+// messageRow is the flat shape the join produces before it is folded into the
+// Message/Attachment pair a client sees.
+type messageRow struct {
+	ID                       int64          `db:"id"`
+	Sender                   string         `db:"sender"`
+	Body                     string         `db:"body"`
+	CreatedAt                time.Time      `db:"created_at"`
+	AttachmentID             sql.NullInt64  `db:"attachment_id"`
+	AttachmentUID            sql.NullString `db:"attachment_uid"`
+	AttachmentConversationID sql.NullInt64  `db:"attachment_conversation_id"`
+	AttachmentUploader       sql.NullString `db:"attachment_uploader"`
+	AttachmentBlob           []byte         `db:"attachment_blob_sha256"`
+	AttachmentName           sql.NullString `db:"attachment_name"`
+	AttachmentMIME           sql.NullString `db:"attachment_mime"`
+	AttachmentSize           sql.NullInt64  `db:"attachment_size"`
+	AttachmentCreatedAt      sql.NullTime   `db:"attachment_created_at"`
+}
+
+func (r messageRow) message() Message {
+	m := Message{ID: r.ID, Sender: r.Sender, Body: r.Body, CreatedAt: r.CreatedAt}
+	if r.AttachmentID.Valid {
+		m.Attachment = &Attachment{
+			ID:             r.AttachmentID.Int64,
+			UID:            r.AttachmentUID.String,
+			ConversationID: r.AttachmentConversationID.Int64,
+			Uploader:       r.AttachmentUploader.String,
+			BlobSHA256:     r.AttachmentBlob,
+			Name:           r.AttachmentName.String,
+			MIME:           r.AttachmentMIME.String,
+			Size:           r.AttachmentSize.Int64,
+			CreatedAt:      r.AttachmentCreatedAt.Time,
+		}
+	}
+	return m
+}
+
 // History returns messages in a conversation, newest page first but returned in
 // ascending order so a client can append them to the transcript directly.
 //
@@ -684,33 +737,46 @@ func (s *Service) History(ctx context.Context, conversationID int64, beforeID in
 	if beforeID < 0 {
 		beforeID = 0
 	}
-	var rows []Message
+	var rows []messageRow
 	err := s.db.SelectContext(ctx, &rows, `
-		SELECT id, sender, body, created_at
-		FROM chat_messages
-		WHERE conversation_id = $1 AND ($2 = 0 OR id < $2)
-		ORDER BY id DESC
+		SELECT `+messageColumns+`
+		FROM chat_messages m
+		LEFT JOIN chat_attachments a ON a.id = m.attachment_id
+		WHERE m.conversation_id = $1 AND ($2 = 0 OR m.id < $2)
+		ORDER BY m.id DESC
 		LIMIT $3`, conversationID, beforeID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("chat: loading history: %w", err)
 	}
+	out := make([]Message, len(rows))
+	for i, row := range rows {
+		out[i] = row.message()
+	}
 	// The query walks backwards so the page is the newest one; reverse it into
 	// reading order.
-	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
-		rows[i], rows[j] = rows[j], rows[i]
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
 	}
-	return rows, nil
+	return out, nil
 }
 
-// Append stores a message and returns it as written, so every recipient sees
-// the same id and timestamp the database assigned.
+// Append stores a text message. It is the common case in front of
+// AppendWithAttachment.
 func (s *Service) Append(ctx context.Context, conversationID int64, sender, body string) (Message, error) {
+	return s.AppendWithAttachment(ctx, conversationID, sender, body, "")
+}
+
+// AppendWithAttachment stores a message and returns it as written, so every
+// recipient sees the same id, timestamp and attachment. A message may carry a
+// file, text, or both; only an empty message with no file is refused.
+func (s *Service) AppendWithAttachment(ctx context.Context, conversationID int64, sender, body, attachmentUID string) (Message, error) {
 	sender = normalise(sender)
 	body = strings.TrimSpace(body)
+	attachmentUID = strings.TrimSpace(attachmentUID)
 	if sender == "" {
 		return Message{}, fmt.Errorf("%w: a sender is required", ErrInvalid)
 	}
-	if body == "" {
+	if body == "" && attachmentUID == "" {
 		return Message{}, fmt.Errorf("%w: a message cannot be empty", ErrInvalid)
 	}
 	if len(body) > maxBody {
@@ -724,18 +790,35 @@ func (s *Service) Append(ctx context.Context, conversationID int64, sender, body
 	if !member {
 		return Message{}, ErrNotMember
 	}
+	attachmentID, err := s.linkAttachment(ctx, conversationID, attachmentUID, sender)
+	if err != nil {
+		return Message{}, err
+	}
 
-	var msg Message
+	var attachment any
+	if attachmentID != 0 {
+		attachment = attachmentID
+	}
+	var id int64
 	err = s.db.QueryRowxContext(ctx, `
-		INSERT INTO chat_messages (conversation_id, sender, body)
-		VALUES ($1, $2, $3)
-		RETURNING id, sender, body, created_at`,
-		conversationID, sender, body,
-	).Scan(&msg.ID, &msg.Sender, &msg.Body, &msg.CreatedAt)
+		INSERT INTO chat_messages (conversation_id, sender, body, attachment_id)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id`,
+		conversationID, sender, body, attachment,
+	).Scan(&id)
 	if err != nil {
 		return Message{}, fmt.Errorf("chat: storing message: %w", err)
 	}
-	return msg, nil
+
+	var row messageRow
+	if err := s.db.GetContext(ctx, &row, `
+		SELECT `+messageColumns+`
+		FROM chat_messages m
+		LEFT JOIN chat_attachments a ON a.id = m.attachment_id
+		WHERE m.id = $1`, id); err != nil {
+		return Message{}, fmt.Errorf("chat: reading stored message: %w", err)
+	}
+	return row.message(), nil
 }
 
 // MarkRead advances the member's read watermark. It never moves backwards, so a

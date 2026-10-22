@@ -15,7 +15,7 @@ import {
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { AuthService } from '../core/auth/auth.service';
-import { ChatAccess, ChatMessage, ChatService, ChatSignal } from '../core/chat/chat.service';
+import { ChatAccess, ChatAttachment, ChatMessage, ChatService, ChatSignal } from '../core/chat/chat.service';
 import { errorMessage } from '../core/http-error';
 import { MeetingsApi } from '../core/meetings/meetings-api';
 import { Meeting } from '../core/meetings/meetings.models';
@@ -293,9 +293,31 @@ interface CallParticipant {
                   </div>
                   <div class="min-w-0" [ngClass]="isSelf(msg) ? 'text-right' : ''">
                     <div class="text-[11px] text-slate-400">{{ msg.sender }}</div>
-                    <div class="mt-0.5 inline-block rounded-lg px-3 py-1.5 text-sm whitespace-pre-wrap" [ngClass]="isSelf(msg) ? 'bg-brand-600 text-white' : 'bg-slate-800 text-slate-100'">
-                      {{ msg.body }}
-                    </div>
+                    @if (msg.body) {
+                      <div class="mt-0.5 inline-block rounded-lg px-3 py-1.5 text-sm whitespace-pre-wrap" [ngClass]="isSelf(msg) ? 'bg-brand-600 text-white' : 'bg-slate-800 text-slate-100'">
+                        {{ msg.body }}
+                      </div>
+                    }
+                    @if (msg.attachment; as att) {
+                      <div data-testid="chat-attachment" class="mt-1 inline-block max-w-full rounded-lg border border-white/10 bg-slate-900/70 p-2 text-left">
+                        @if (att.mime.startsWith('image/') && attachmentUrls()[att.uid]) {
+                          <img [src]="attachmentUrls()[att.uid]" [alt]="att.name" class="mb-2 max-h-48 max-w-full rounded" />
+                        }
+                        <div class="flex items-center gap-2">
+                          <svg viewBox="0 0 24 24" class="h-4 w-4 shrink-0 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+                            <path d="M14 2v6h6" />
+                          </svg>
+                          <div class="min-w-0">
+                            <p class="truncate text-xs font-medium text-slate-100">{{ att.name }}</p>
+                            <p class="text-[10px] text-slate-400">{{ fileSize(att.size) }}</p>
+                          </div>
+                          <button type="button" (click)="downloadAttachment(att)" class="ml-2 shrink-0 rounded px-2 py-1 text-[11px] font-medium text-brand-300 hover:bg-white/10">
+                            Download
+                          </button>
+                        </div>
+                      </div>
+                    }
                     <div class="mt-0.5 text-[10px] text-slate-500">{{ timeOf(msg) }}</div>
                   </div>
                 </div>
@@ -304,7 +326,21 @@ interface CallParticipant {
                 <p class="text-[11px] italic text-slate-500">{{ chat.typing() }} is typing…</p>
               }
             </div>
-            <form class="flex gap-2 border-t border-white/10 p-3" (ngSubmit)="sendChat()">
+            <form class="flex items-center gap-2 border-t border-white/10 p-3" (ngSubmit)="sendChat()">
+              <input #chatFile type="file" class="hidden" (change)="attachFile($event)" />
+              <button
+                type="button"
+                (click)="chatFile.click()"
+                [disabled]="chatBusy()"
+                data-testid="attach-file"
+                aria-label="Attach a file"
+                title="Attach a file (up to 25 MB)"
+                class="rounded-lg border border-white/10 px-2.5 py-2 text-slate-300 hover:bg-white/10 disabled:opacity-50"
+              >
+                <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="m21.4 11.6-8.5 8.5a6 6 0 0 1-8.5-8.5l8.5-8.5a4 4 0 0 1 5.7 5.7l-8.5 8.5a2 2 0 0 1-2.8-2.8l7.8-7.8" />
+                </svg>
+              </button>
               <input
                 type="text"
                 [(ngModel)]="draftText"
@@ -352,6 +388,10 @@ export class CallRoomComponent implements OnInit, OnDestroy {
   readonly chatBusy = signal(false);
   readonly chatError = signal('');
   readonly chatOpen = signal(true);
+  // attachmentUrls caches object URLs for image previews. The bytes are fetched
+  // through the ChatService so the request carries the session or guest token.
+  readonly attachmentUrls = signal<Record<string, string>>({});
+  private readonly attachmentLoading = new Set<string>();
 
   // --- call state ---
   readonly inCall = signal(false);
@@ -467,6 +507,19 @@ export class CallRoomComponent implements OnInit, OnDestroy {
         el.scrollTop = el.scrollHeight;
       }
     });
+
+    // Image attachments get a preview, fetched with the same credentials as
+    // the rest of the chat. A non-image or a failed fetch keeps the file chip
+    // and its download button, so this is an enhancement rather than a
+    // requirement.
+    effect(() => {
+      for (const msg of this.chat.messages()) {
+        const att = msg.attachment;
+        if (!att || !att.mime.startsWith('image/')) continue;
+        if (this.attachmentUrls()[att.uid] || this.attachmentLoading.has(att.uid)) continue;
+        void this.loadAttachmentPreview(att.uid);
+      }
+    });
   }
 
   async ngOnInit(): Promise<void> {
@@ -496,6 +549,10 @@ export class CallRoomComponent implements OnInit, OnDestroy {
 
   async ngOnDestroy(): Promise<void> {
     // A call and its camera must not outlive the page.
+    for (const url of Object.values(this.attachmentUrls())) {
+      URL.revokeObjectURL(url);
+    }
+    this.attachmentUrls.set({});
     this.cleanupCall();
     this.chat.close();
   }
@@ -545,6 +602,65 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     this.chat.send(text);
     this.draftText = '';
     this.chatBusy.set(false);
+  }
+
+  // attachFile uploads a chosen file and then sends a message that references
+  // it. The draft text, if any, travels with the file rather than being lost.
+  async attachFile(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file || this.chatBusy()) return;
+    this.chatBusy.set(true);
+    this.chatError.set('');
+    try {
+      const att = await this.chat.upload(file);
+      this.chat.send(this.draftText, att);
+      this.draftText = '';
+    } catch (err) {
+      this.chatError.set(errorMessage(err));
+    } finally {
+      this.chatBusy.set(false);
+      input.value = '';
+    }
+  }
+
+  async downloadAttachment(att: ChatAttachment): Promise<void> {
+    try {
+      const blob = await this.chat.attachmentBlob(att.uid);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = att.name || 'attachment';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      // Give the browser a moment to start the download before releasing the
+      // object URL.
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      this.chatError.set(errorMessage(err));
+    }
+  }
+
+  private async loadAttachmentPreview(uid: string): Promise<void> {
+    if (this.attachmentUrls()[uid] || this.attachmentLoading.has(uid)) return;
+    this.attachmentLoading.add(uid);
+    try {
+      const blob = await this.chat.attachmentBlob(uid);
+      const url = URL.createObjectURL(blob);
+      this.attachmentUrls.update((urls) => ({ ...urls, [uid]: url }));
+    } catch {
+      // The file chip and its download button remain available.
+    } finally {
+      this.attachmentLoading.delete(uid);
+    }
+  }
+
+  fileSize(bytes: number): string {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   isSelf(msg: ChatMessage): boolean {

@@ -18,11 +18,21 @@ export interface ChatAccess {
   guestToken: string;
 }
 
+export interface ChatAttachment {
+  uid: string;
+  uploader: string;
+  name: string;
+  mime: string;
+  size: number;
+  createdAt: string;
+}
+
 export interface ChatMessage {
   id: number;
   sender: string;
   body: string;
   createdAt: string;
+  attachment?: ChatAttachment;
   // clientId is set on a message this tab sent, so the optimistic copy can be
   // replaced by the stored one rather than shown twice.
   clientId?: string;
@@ -135,9 +145,9 @@ export class ChatService {
     this.state.set('idle');
   }
 
-  send(body: string): void {
+  send(body: string, attachment?: ChatAttachment): void {
     const text = body.trim();
-    if (!text || !this.ready()) {
+    if ((!text && !attachment) || !this.ready()) {
       return;
     }
     const clientId = newClientId();
@@ -149,9 +159,46 @@ export class ChatService {
       body: text,
       createdAt: new Date().toISOString(),
       clientId,
+      ...(attachment ? { attachment } : {}),
     };
     this.messages.update((list) => [...list, pending]);
-    this.frame({ type: 'send', conversation: this.conversation, body: text, clientId });
+    this.frame({
+      type: 'send',
+      conversation: this.conversation,
+      body: text,
+      clientId,
+      ...(attachment ? { attachmentUid: attachment.uid } : {}),
+    });
+  }
+
+  // upload stores a file for the open conversation. The returned metadata is
+  // then referenced by uid when the message is sent, so an upload can be
+  // retried without duplicating the message.
+  async upload(file: File): Promise<ChatAttachment> {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    const path = this.access
+      ? `${API}/meeting-invites/${encodeURIComponent(this.access.guestUid)}/chat/attachments?` +
+        new URLSearchParams({
+          to: this.access.guestTo,
+          token: this.access.guestToken,
+        }).toString()
+      : `${API}/chat/conversations/${encodeURIComponent(this.conversation)}/attachments`;
+    return firstValueFrom(this.http.post<ChatAttachment>(path, form));
+  }
+
+  // attachmentBlob fetches a file through the HttpClient, so a signed-in
+  // request carries its bearer token and a guest request carries its invitation
+  // token in the query. A bare <img> or <a> cannot do either.
+  attachmentBlob(uid: string): Promise<Blob> {
+    const path = this.access
+      ? `${API}/meeting-invites/${encodeURIComponent(this.access.guestUid)}/chat/attachments/${encodeURIComponent(uid)}?` +
+        new URLSearchParams({
+          to: this.access.guestTo,
+          token: this.access.guestToken,
+        }).toString()
+      : `${API}/chat/attachments/${encodeURIComponent(uid)}`;
+    return firstValueFrom(this.http.get(path, { responseType: 'blob' as const }));
   }
 
   // notifyTyping tells the room somebody is writing. It is throttled, so a

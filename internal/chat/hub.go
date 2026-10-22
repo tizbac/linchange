@@ -56,14 +56,17 @@ type client struct {
 
 // frame is one client-to-server message.
 type frame struct {
-	Type         string          `json:"type"`
-	Conversation string          `json:"conversation,omitempty"`
-	Body         string          `json:"body,omitempty"`
-	MessageID    int64           `json:"messageId,omitempty"`
-	To           string          `json:"to,omitempty"`
-	SDP          json.RawMessage `json:"sdp,omitempty"`
-	Candidate    json.RawMessage `json:"candidate,omitempty"`
-	ClientID     string          `json:"clientId,omitempty"`
+	Type         string `json:"type"`
+	Conversation string `json:"conversation,omitempty"`
+	Body         string `json:"body,omitempty"`
+	MessageID    int64  `json:"messageId,omitempty"`
+	To           string `json:"to,omitempty"`
+	// AttachmentUID, when set, attaches a previously uploaded file to the
+	// message. The service checks it belongs to this room and sender.
+	AttachmentUID string          `json:"attachmentUid,omitempty"`
+	SDP           json.RawMessage `json:"sdp,omitempty"`
+	Candidate     json.RawMessage `json:"candidate,omitempty"`
+	ClientID      string          `json:"clientId,omitempty"`
 }
 
 // outFrame is one server-to-client message. One struct serves every event type
@@ -219,15 +222,15 @@ func (h *Hub) sendMessage(ctx context.Context, c *client, in frame) error {
 	if err != nil {
 		return err
 	}
-	_, err = h.SendMessage(ctx, conv, c.member, in.Body, in.ClientID)
+	_, err = h.SendMessage(ctx, conv, c.member, in.Body, in.AttachmentUID, in.ClientID)
 	return err
 }
 
 // SendMessage stores a message and fans it out to the room. It is the one path
 // a message takes, whether it arrived over a socket or over HTTP, so a client
 // reading the socket sees an HTTP-sent message just like any other.
-func (h *Hub) SendMessage(ctx context.Context, conv Conversation, sender, body, clientID string) (Message, error) {
-	msg, err := h.svc.Append(ctx, conv.ID, sender, body)
+func (h *Hub) SendMessage(ctx context.Context, conv Conversation, sender, body, attachmentUID, clientID string) (Message, error) {
+	msg, err := h.svc.AppendWithAttachment(ctx, conv.ID, sender, body, attachmentUID)
 	if err != nil {
 		return Message{}, err
 	}

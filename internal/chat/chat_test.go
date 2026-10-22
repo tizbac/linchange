@@ -28,7 +28,7 @@ func TestDirectConversation(t *testing.T) {
 	seedUser(t, db, "alice@example.com")
 	seedUser(t, db, "bob@example.com")
 	seedUser(t, db, "carol@example.com")
-	svc := chat.New(db, nil)
+	svc := chat.New(db, nil, nil)
 
 	conv, err := svc.Create(ctx, db, chat.CreateRequest{
 		Kind:      chat.KindDirect,
@@ -131,7 +131,7 @@ func TestGroupConversationFollowsTheGroup(t *testing.T) {
 		}
 	}
 
-	svc := chat.New(db, nil)
+	svc := chat.New(db, nil, nil)
 	conv, err := svc.Create(ctx, db, chat.CreateRequest{
 		Kind:      chat.KindGroup,
 		GroupID:   project.ID,

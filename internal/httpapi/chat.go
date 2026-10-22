@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -34,6 +36,11 @@ func (s *Server) mountChat(r chi.Router) {
 			r.Post("/conversations", s.handleCreateConversation)
 			r.Get("/conversations/{uid}/messages", s.handleChatHistory)
 			r.Post("/conversations/{uid}/messages", s.handleSendChatMessage)
+			// A file is uploaded first and then attached to a message by id,
+			// so the live socket stays a text protocol and the upload can be
+			// retried without duplicating the message.
+			r.Post("/conversations/{uid}/attachments", s.handleUploadChatAttachment)
+			r.Get("/attachments/{attachment}", s.handleChatAttachment)
 			r.Get("/conversations/{uid}/members", s.handleChatMembers)
 			r.Post("/conversations/{uid}/read", s.handleMarkConversationRead)
 		})
@@ -160,18 +167,84 @@ func (s *Server) handleSendChatMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Body string `json:"body"`
+		Body          string `json:"body"`
+		AttachmentUID string `json:"attachmentUid"`
 	}
 	if err := decodeChatJSON(w, r, &in); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
 		return
 	}
-	msg, err := s.chatHub.SendMessage(r.Context(), conv, Principal(r.Context()).Address, in.Body, "")
+	msg, err := s.chatHub.SendMessage(r.Context(), conv, Principal(r.Context()).Address, in.Body, in.AttachmentUID, "")
 	if err != nil {
 		s.writeChatError(w, err)
 		return
 	}
 	s.writeJSON(w, http.StatusCreated, msg)
+}
+
+// maxChatUpload bounds a multipart upload: the file limit plus room for the
+// multipart envelope.
+const maxChatUpload = chat.MaxAttachmentBytes + (1 << 20)
+
+// handleUploadChatAttachment stores a file for a conversation. The response is
+// the attachment metadata; sending it is a separate message, which is what
+// lets the caller retry a message without uploading the bytes again.
+func (s *Server) handleUploadChatAttachment(w http.ResponseWriter, r *http.Request) {
+	conv, ok := s.chatConversationFor(w, r)
+	if !ok {
+		return
+	}
+	name, mimeType, data, ok := s.readChatUpload(w, r)
+	if !ok {
+		return
+	}
+	att, err := s.chat.Attach(r.Context(), conv.ID, Principal(r.Context()).Address, name, mimeType, data)
+	if err != nil {
+		s.writeChatError(w, err)
+		return
+	}
+	s.writeJSON(w, http.StatusCreated, att)
+}
+
+// readChatUpload reads the one file field a chat upload carries. It writes the
+// error response itself and reports whether the caller should continue.
+func (s *Server) readChatUpload(w http.ResponseWriter, r *http.Request) (string, string, []byte, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxChatUpload)
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		s.writeError(w, http.StatusBadRequest, "expected a multipart file upload")
+		return "", "", nil, false
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "a file field is required")
+		return "", "", nil, false
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(io.LimitReader(file, chat.MaxAttachmentBytes+1))
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "could not read the file")
+		return "", "", nil, false
+	}
+	if len(data) > chat.MaxAttachmentBytes {
+		s.writeError(w, http.StatusRequestEntityTooLarge, "the file is too large")
+		return "", "", nil, false
+	}
+	mimeType := header.Header.Get("Content-Type")
+	if strings.TrimSpace(mimeType) == "" {
+		mimeType = http.DetectContentType(data)
+	}
+	return header.Filename, mimeType, data, true
+}
+
+// handleChatAttachment serves a file to a member of the room it was sent to.
+func (s *Server) handleChatAttachment(w http.ResponseWriter, r *http.Request) {
+	att, data, err := s.chat.AttachmentFor(r.Context(), chi.URLParam(r, "attachment"), Principal(r.Context()).Address)
+	if err != nil {
+		s.writeChatError(w, err)
+		return
+	}
+	serveDownload(w, att.MIME, att.Name, data)
 }
 
 func (s *Server) handleChatMembers(w http.ResponseWriter, r *http.Request) {

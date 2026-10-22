@@ -34,6 +34,8 @@ func (s *Server) mountMeetings(r chi.Router) {
 		// anything is upgraded or returned.
 		r.Get("/{uid}/ws", s.handleMeetingInviteSocket)
 		r.Get("/{uid}/chat", s.handleMeetingInviteChat)
+		r.Post("/{uid}/chat/attachments", s.handleMeetingInviteUploadAttachment)
+		r.Get("/{uid}/chat/attachments/{attachment}", s.handleMeetingInviteAttachment)
 		r.Get("/{uid}/ice", s.handleMeetingInviteICE)
 	})
 
@@ -220,4 +222,42 @@ func (s *Server) handleMeetingInviteICE(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.writeICEServers(w)
+}
+
+// handleMeetingInviteUploadAttachment stores a file for a guest's room. The
+// invitation token is the identity, exactly as it is for the guest socket.
+func (s *Server) handleMeetingInviteUploadAttachment(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	conv, err := s.meetings.GuestRoom(r.Context(), meetingUID(r), q.Get("to"), q.Get("token"))
+	if err != nil {
+		s.writeError(w, mapErrorCode(err), err.Error())
+		return
+	}
+	name, mimeType, data, ok := s.readChatUpload(w, r)
+	if !ok {
+		return
+	}
+	att, err := s.chat.Attach(r.Context(), conv.ID, q.Get("to"), name, mimeType, data)
+	if err != nil {
+		s.writeChatError(w, err)
+		return
+	}
+	s.writeJSON(w, http.StatusCreated, att)
+}
+
+// handleMeetingInviteAttachment serves a guest a file from their room.
+func (s *Server) handleMeetingInviteAttachment(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	// GuestRoom verifies the token and makes sure the address is on the room,
+	// which is the same membership AttachmentFor then checks.
+	if _, err := s.meetings.GuestRoom(r.Context(), meetingUID(r), q.Get("to"), q.Get("token")); err != nil {
+		s.writeError(w, mapErrorCode(err), err.Error())
+		return
+	}
+	att, data, err := s.chat.AttachmentFor(r.Context(), chi.URLParam(r, "attachment"), q.Get("to"))
+	if err != nil {
+		s.writeChatError(w, err)
+		return
+	}
+	serveDownload(w, att.MIME, att.Name, data)
 }

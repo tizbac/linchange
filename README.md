@@ -90,6 +90,8 @@ address-book service to install: everything ships in the same server.
 - Native chat over WebSocket, stored in the same database as mail: direct
   messages, ad-hoc groups, organization groups and meeting rooms.
 - History, typing indicators and read receipts.
+- File attachments in a room, stored in the content-addressed blob store and
+  downloadable only by its members.
 - Meeting rooms use the same signalling channel for WebRTC offers, answers and
   ICE candidates; no external chat or signalling service is involved.
 - The meeting chat sits beside the video grid, so the conversation stays

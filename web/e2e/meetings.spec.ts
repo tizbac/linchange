@@ -104,6 +104,25 @@ test.describe('meetings', () => {
     await anon.locator('form').filter({ has: guestComposer }).getByRole('button', { name: 'Send' }).click();
     await expect(page.locator('#chatLog').getByText(guestMarker)).toBeVisible({ timeout: 15000 });
 
+    // The invitation token also authorises a file upload and download, even
+    // though the guest has no account here.
+    await anon.setInputFiles('input[type="file"]', {
+      name: 'guest-note.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from(`guest file ${RUN}`),
+    });
+    const guestFile = page.getByTestId('chat-attachment').filter({ hasText: 'guest-note.txt' });
+    await expect(guestFile).toBeVisible({ timeout: 15000 });
+    const [guestDownload] = await Promise.all([
+      anon.waitForEvent('download'),
+      anon
+        .getByTestId('chat-attachment')
+        .filter({ hasText: 'guest-note.txt' })
+        .getByRole('button', { name: 'Download' })
+        .click(),
+    ]);
+    expect(guestDownload.suggestedFilename()).toBe('guest-note.txt');
+
     // The room collapses the sidebar without dropping the call.
     await page.getByRole('button', { name: 'Collapse chat' }).click();
     await expect(page.locator('input[name="draftText"]')).toHaveCount(0);
