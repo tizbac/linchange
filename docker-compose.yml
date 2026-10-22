@@ -42,6 +42,10 @@ services:
       DB_PASSWORD: ${POSTGRES_PASSWORD:-linchange}
       # JWT secret - CHANGE IN PRODUCTION
       JWT_SECRET: ${JWT_SECRET:-changeme-in-production-use-long-random-string}
+      # Encrypt TOTP secrets and DKIM keys at rest. Required by the example
+      # config; generate each with: openssl rand -base64 32
+      AUTH_ENCRYPTION_KEY: ${AUTH_ENCRYPTION_KEY:-}
+      DKIM_ENCRYPTION_KEY: ${DKIM_ENCRYPTION_KEY:-}
       # LDAP bind password (if using LDAP)
       LDAP_BIND_PASSWORD: ${LDAP_BIND_PASSWORD:-}
     volumes:

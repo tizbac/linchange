@@ -22,25 +22,30 @@ database:
 listeners:
   smtp_inbound:
     addr: ":25"
-    max_message_bytes: 52428800
+  # Largest message accepted by the inbound MTA.
+  smtp_inbound_max_bytes: 52428800
   smtp_submission:
     addr: ":587"
+  # These TLS-only listeners are disabled until a certificate is configured
+  # under tls:. Set the standard address (":465", ":993", ":995") to enable.
   smtp_submission_tls:
-    addr: ":465"
+    addr: ""
   imap:
     addr: ":143"
   imaps:
-    addr: ":993"
+    addr: ""
   pop3:
     addr: ":110"
   pop3s:
-    addr: ":995"
+    addr: ""
   lmtp:
     addr: "127.0.0.1:24"
   http:
     addr: ":8080"
+  # Enable only when tls.cert_file/key_file or ACME is configured. TLS is
+  # normally terminated by a reverse proxy in front of this container.
   https:
-    addr: ":8443"
+    addr: ""
 
 tls:
   cert_file: ""
@@ -52,6 +57,8 @@ tls:
     cache_dir: /var/lib/linchange/acme
 
 auth:
+  # Encrypts TOTP secrets at rest. Required because totp.enabled is true.
+  encryption_key: ${AUTH_ENCRYPTION_KEY}
   local:
     argon2:
       memory_kib: 65536
@@ -72,9 +79,6 @@ auth:
   reset_password:
     enabled: true
     token_ttl: 30m
-  rate_limit:
-    per_ip: 10
-    window: 15m
   session:
     idle_timeout: 30m
     absolute_timeout: 12h
@@ -116,14 +120,20 @@ mail:
     dsn:
       enabled: true
       delay: 4h
+      # A real address at a domain you control; remote servers reject
+      # bounces from a domain with no mailbox.
+      from_address: postmaster@example.com
   dkim:
     selector_prefix: s
     key_bits: 2048
+  # Encrypts DKIM private keys at rest. Required because signing is on.
+  dkim_private_key_encryption_key: ${DKIM_ENCRYPTION_KEY}
   default_quota_bytes: 10737418240
   max_quota_bytes: 107374182400
 
 exchange:
   enabled: true
+  organization: Example Ltd
   autodiscover:
     path: /autodiscover/autodiscover.xml
   ews:
