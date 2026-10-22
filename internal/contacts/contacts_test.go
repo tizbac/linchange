@@ -3,8 +3,10 @@ package contacts_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
+	"github.com/emersion/go-vcard"
 	"github.com/jmoiron/sqlx"
 
 	"github.com/linchange/linchange/internal/auth/policy"
@@ -285,4 +287,47 @@ func containsBook(books []store.AddressBookAccess, id int64) bool {
 		}
 	}
 	return false
+}
+
+func TestUpdateCardPreservingKeepsPropertiesItDoesNotModel(t *testing.T) {
+	db := testdb.Migrated(t)
+	ctx := context.Background()
+	seedUser(t, db, "alice@example.com", false)
+	svc := contacts.New(db, nil)
+	book, err := svc.EnsurePersonal(ctx, "alice@example.com")
+	if err != nil {
+		t.Fatalf("EnsurePersonal: %v", err)
+	}
+
+	card := vcard.Card{}
+	card.SetValue(vcard.FieldVersion, "3.0")
+	card.SetValue(vcard.FieldUID, "external-card")
+	card.SetValue(vcard.FieldFormattedName, "Alice Example")
+	card.SetValue(vcard.FieldEmail, "alice@example.com")
+	card.SetValue("X-PHONE-SYNC", "keep-me")
+	card.SetValue("CATEGORIES", "friends")
+	if _, err := svc.PutCard(ctx, "alice@example.com", book.ID, "external-card", card); err != nil {
+		t.Fatalf("PutCard: %v", err)
+	}
+	existing, err := svc.GetCardByUID(ctx, "alice@example.com", book.ID, "external-card")
+	if err != nil {
+		t.Fatalf("GetCardByUID: %v", err)
+	}
+
+	updated, err := svc.UpdateCardPreserving(ctx, "alice@example.com", book.ID, existing.ID, contacts.Input{
+		DisplayName: "Alice Renamed",
+		Emails:      []contacts.Email{{Type: "work", Value: "alice@example.com"}},
+		Title:       "Engineer",
+	})
+	if err != nil {
+		t.Fatalf("UpdateCardPreserving: %v", err)
+	}
+	if updated.DisplayName != "Alice Renamed" || updated.Title != "Engineer" {
+		t.Fatalf("updated = %+v", updated)
+	}
+	for _, want := range []string{"X-PHONE-SYNC:keep-me", "CATEGORIES:friends", "Alice Renamed"} {
+		if !strings.Contains(updated.VCard, want) {
+			t.Errorf("vCard lost %q:\n%s", want, updated.VCard)
+		}
+	}
 }

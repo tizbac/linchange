@@ -42,8 +42,10 @@ type Options struct {
 	Messages  *imapd.MessageRepo
 	Mailboxes *imapd.MailboxRepo
 	Users     *store.Users
-	// Contacts is the organization directory the GAL adds titles and phone
-	// numbers from. Left nil, the GAL is the user list alone.
+	// Contacts is the address-book store. The GAL adds titles and phone
+	// numbers from its organization directory, and the mailbox store exposes
+	// the account's books as Outlook contact folders. Left nil, the GAL is
+	// the user list alone and there are no contact folders.
 	Contacts *contacts.Service
 	Hostname string
 	Auth     transport.Authenticator

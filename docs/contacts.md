@@ -71,12 +71,27 @@ book:
 - **EWS `ResolveNames`**: the same directory entries resolve, with company,
   job title and phone numbers in the returned contact.
 
-The web Contacts page and CardDAV are the ways to read and write personal and
-shared books. Desktop Outlook does not speak CardDAV natively, and its own
-**Contacts folder** is a MAPI store folder; mapping those folders into the MAPI
-message store is a separate feature and is not implemented here. Outlook's
-address book, name resolution and autocomplete do use the organization
-directory above. ActiveSync (EAS) contacts are likewise not implemented.
+The web Contacts page, CardDAV and the MAPI store are the ways to read and
+write personal and shared books. Desktop Outlook does not speak CardDAV, so
+its **Contacts folder** is served by the MAPI store itself:
+
+- The personal book is the well-known Contacts folder
+  (`PRIVATE_FID_CONTACTS`), and every other book the account can read appears
+  as an `IPF.Contact` folder under `IPM_SUBTREE`: the organization directory
+  and the named books shared with the account. The store advertises the
+  personal folder through `PR_IPM_CONTACT_ENTRYID`, and `IPM.Contact` resolves
+  to it through `RopGetReceiveFolder`.
+- Contact rows carry the standard contact properties (name, company, title,
+  department, phone numbers, postal addresses, birthday, web page, notes) and
+  the `PSETID_Address` named properties for the first three e-mail addresses.
+  Outlook can therefore display, synchronize and search the folders it already
+  knows how to use.
+- Creating, editing and deleting a contact in Outlook writes the vCard in the
+  same store CardDAV and the web client use. A book the account can only read
+  is still visible, but a write is refused, as it is on every other path.
+
+Outlook's address book, name resolution and autocomplete also use the
+organization directory above. ActiveSync (EAS) contacts are not implemented.
 
 ## Ports
 

@@ -53,8 +53,9 @@ type Options struct {
 	Messages  *imapd.MessageRepo
 	Mailboxes *imapd.MailboxRepo
 	Users     *store.Users
-	// Contacts is the organization directory the address book enriches its
-	// rows from.
+	// Contacts is the address-book store. The address book enriches its rows
+	// from the organization directory, and the mailbox endpoint exposes the
+	// account's books as MAPI contact folders.
 	Contacts *contacts.Service
 	// Hostname is the public name this server is reachable at, without a
 	// scheme. It appears in the URLs the address book's GetMailboxUrl and
@@ -117,6 +118,7 @@ func New(opts Options) *Transport {
 			Messages:  opts.Messages,
 			Mailboxes: opts.Mailboxes,
 			Users:     opts.Users,
+			Contacts:  opts.Contacts,
 			Hostname:  opts.Hostname,
 		},
 		nspi: &nspi.Backend{

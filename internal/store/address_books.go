@@ -620,6 +620,15 @@ func (b *AddressBooks) ListContacts(ctx context.Context, q Querier, bookID int64
 	return out, nil
 }
 
+// CountContacts returns how many cards a book holds, without loading them.
+func (b *AddressBooks) CountContacts(ctx context.Context, q Querier, bookID int64) (int, error) {
+	var n int
+	if err := q.GetContext(ctx, &n, `SELECT count(*) FROM contacts WHERE book_id = $1`, bookID); err != nil {
+		return 0, fmt.Errorf("store: counting contacts: %w", err)
+	}
+	return n, nil
+}
+
 // GetContact returns one contact in a book.
 func (b *AddressBooks) GetContact(ctx context.Context, q Querier, bookID, id int64) (AddressContact, error) {
 	var out AddressContact

@@ -12,6 +12,9 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/linchange/linchange/internal/contacts"
+	"github.com/linchange/linchange/internal/store"
 )
 
 // runROP dispatches one ROP. It consumes the request body from req (the shared
@@ -36,6 +39,10 @@ func runROP(ctx context.Context, st *sessionState, back *Backend, log *slog.Logg
 		return hOpenFolder(ctx, st, back, log, hindex, req, handles, out)
 	case ropOpenMessage:
 		return hOpenMessage(ctx, st, back, log, hindex, req, handles, out)
+	case ropCreateMessage:
+		return hCreateMessage(ctx, st, back, log, hindex, req, handles, out)
+	case ropSaveChangesMessage:
+		return hSaveChangesMessage(ctx, st, back, log, hindex, req, handles, out)
 	case ropGetHierarchyTable:
 		return hGetTable(ctx, st, back, log, hindex, req, handles, out, true)
 	case ropGetContentsTable:
@@ -47,9 +54,9 @@ func runROP(ctx context.Context, st *sessionState, back *Backend, log *slog.Logg
 	case ropGetPropertiesList:
 		return hGetPropsList(ctx, st, back, log, hindex, req, handles, out)
 	case ropSetProperties:
-		return hSetProps(ctx, st, back, log, hindex, req, out)
+		return hSetProps(ctx, st, back, log, hindex, req, handles, out)
 	case ropDeleteProperties:
-		return hDeleteProps(ctx, st, back, log, hindex, req, out)
+		return hDeleteProps(ctx, st, back, log, hindex, req, handles, out)
 	case ropSetColumns:
 		return hSetColumns(ctx, st, back, log, hindex, req, handles, out)
 	case ropSortTable:
@@ -82,6 +89,14 @@ func runROP(ctx context.Context, st *sessionState, back *Backend, log *slog.Logg
 		return hOpenStream(ctx, st, back, log, hindex, req, handles, out)
 	case ropReadStream:
 		return hReadStream(ctx, st, back, log, hindex, req, handles, out)
+	case ropWriteStream:
+		return hWriteStream(ctx, st, back, log, hindex, req, handles, out)
+	case ropSeekStream:
+		return hSeekStream(ctx, st, back, log, hindex, req, handles, out)
+	case ropSetStreamSize:
+		return hSetStreamSize(ctx, st, back, log, hindex, req, handles, out)
+	case ropCommitStream:
+		return hCommitStream(ctx, st, back, log, hindex, handles, out)
 	case ropQueryColumnsAll:
 		return hQueryColumnsAll(ctx, st, back, log, hindex, handles, out)
 	case ropGetNamesFromPropertyIds:
@@ -338,6 +353,38 @@ func hOpenMessage(ctx context.Context, st *sessionState, back *Backend, log *slo
 		writeROPResponse(out, ropOpenMessage, ohindex, ecNotFound, nil)
 		return nil
 	}
+	if fo.book != nil {
+		if back.Contacts == nil {
+			writeROPResponse(out, ropOpenMessage, ohindex, ecNotFound, nil)
+			return nil
+		}
+		entry, err := back.Contacts.GetCard(ctx, st.owner, fo.book.ID, int64(fidValue(messageID)))
+		if err != nil {
+			writeROPResponse(out, ropOpenMessage, ohindex, ecNotFound, nil)
+			return nil
+		}
+		mo := &messageObj{
+			id:          entry.ID,
+			folderValue: fo.value,
+			bookID:      fo.book.ID,
+			contact:     &entry,
+		}
+		if !allocHandle(st, ohindex, handles, &mapiObject{kind: objMessage, message: mo}) {
+			return rpcAbort(ecInvalidObject)
+		}
+		writeROPResponse(out, ropOpenMessage, ohindex, ecSuccess, func(w *writer) error {
+			w.u8(1) // has_named_properties: the PSETID_Address e-mail slots
+			w.typedStr("")
+			w.typedStr(entry.DisplayName)
+			w.u16(0) // recipient_count
+			if err := w.proptags(nil); err != nil {
+				return err
+			}
+			w.u8(0) // recipient row count
+			return nil
+		})
+		return nil
+	}
 	row, err := st.folders.messageRow(fidValue(messageID))
 	if err != nil {
 		writeROPResponse(out, ropOpenMessage, ohindex, ecNotFound, nil)
@@ -357,6 +404,96 @@ func hOpenMessage(ctx context.Context, st *sessionState, back *Backend, log *slo
 			return err
 		}
 		w.u8(0) // recipient row count
+		return nil
+	})
+	return nil
+}
+
+// hCreateMessage handles RopCreateMessage (MS-OXCROPS 2.2.6.2.1):
+//
+//	u8  ohindex
+//	u16 cpid
+//	u64 folder_id
+//	u8  associated_flag
+//
+// Only contact folders have a message store behind them here. The created
+// object is an unsaved card; RopSetProperties fills it in and
+// RopSaveChangesMessage writes it, so an abandoned new contact leaves no row.
+func hCreateMessage(ctx context.Context, st *sessionState, back *Backend, log *slog.Logger,
+	hindex uint8, req *reader, handles []uint32, out *bytes.Buffer) error {
+
+	ohindex, err := req.u8()
+	if err != nil {
+		return err
+	}
+	if _, err = req.u16(); err != nil { // cpid
+		return err
+	}
+	folderID, err := req.u64()
+	if err != nil {
+		return err
+	}
+	if _, err = req.u8(); err != nil { // associated_flag
+		return err
+	}
+	if loggedOut(st) {
+		writeROPResponse(out, ropCreateMessage, ohindex, ecLoginFailure, nil)
+		return nil
+	}
+	fo, err := st.folders.open(folderID)
+	if err != nil || fo.book == nil || back.Contacts == nil {
+		writeROPResponse(out, ropCreateMessage, ohindex, ecNotSupported, nil)
+		return nil
+	}
+	if fo.book.Level != store.AddressBookShareWrite && !fo.book.IsOwner {
+		writeROPResponse(out, ropCreateMessage, ohindex, ecAccessDenied, nil)
+		return nil
+	}
+	mo := &messageObj{folderValue: fo.value, bookID: fo.book.ID, newContact: true}
+	if !allocHandle(st, ohindex, handles, &mapiObject{kind: objMessage, message: mo}) {
+		return rpcAbort(ecInvalidObject)
+	}
+	writeROPResponse(out, ropCreateMessage, ohindex, ecSuccess, func(w *writer) error {
+		w.u8(0) // HasMessageId: the id arrives from SaveChangesMessage
+		return nil
+	})
+	return nil
+}
+
+// hSaveChangesMessage handles RopSaveChangesMessage (MS-OXCROPS 2.2.6.3.1).
+// The input handle is the byte after the response handle, so the object is
+// resolved from the body rather than from the dispatch's hindex.
+func hSaveChangesMessage(ctx context.Context, st *sessionState, back *Backend, log *slog.Logger,
+	hindex uint8, req *reader, handles []uint32, out *bytes.Buffer) error {
+
+	inputIndex, err := req.u8()
+	if err != nil {
+		return err
+	}
+	if _, err = req.u8(); err != nil { // save_flags
+		return err
+	}
+	obj := objAt(st, handles, inputIndex)
+	if obj == nil || obj.message == nil ||
+		(obj.message.contact == nil && !obj.message.newContact) {
+		writeROPResponse(out, ropSaveChangesMessage, hindex, ecNotSupported, nil)
+		return nil
+	}
+	m := obj.message
+	entry, err := st.folders.saveContact(ctx, st, st.owner, m)
+	if err != nil {
+		writeROPResponse(out, ropSaveChangesMessage, hindex, translateContactError(err), nil)
+		return nil
+	}
+	m.contact = &entry
+	m.newContact = false
+	m.id = entry.ID
+	m.bookID = entry.BookID
+	m.pending = nil
+	m.deleted = nil
+	writeROPResponse(out, ropSaveChangesMessage, hindex, ecSuccess, func(w *writer) error {
+		w.u8(inputIndex)
+		w.u64(fidFromValue(uint64(entry.ID)))
 		return nil
 	})
 	return nil
@@ -389,7 +526,7 @@ func hGetTable(ctx context.Context, st *sessionState, back *Backend, log *slog.L
 		writeROPResponse(out, tag, ohindex, ecNullObject, nil)
 		return nil
 	}
-	records, err := st.folders.tableRecords(parent.folder, hierarchy)
+	records, err := st.folders.tableRecords(st, parent.folder, hierarchy)
 	if err != nil {
 		writeROPResponse(out, tag, ohindex, ecError, nil)
 		return nil
@@ -549,11 +686,7 @@ func hQueryRows(ctx context.Context, st *sessionState, back *Backend, log *slog.
 	}
 	columns := tbl.columns
 	if len(columns) == 0 {
-		if tbl.hierarchy {
-			columns = hierarchyDefaultColumns
-		} else {
-			columns = contentsDefaultColumns
-		}
+		columns = tbl.defaultColumns()
 	}
 
 	forward := forwardRead != 0
@@ -803,8 +936,21 @@ func hDeleteMessages(ctx context.Context, st *sessionState, back *Backend, log *
 	if _, err := req.u8(); err != nil { // notify_non_read
 		return err
 	}
-	if _, err := req.eids(); err != nil { // message ids
+	ids, err := req.eids()
+	if err != nil {
 		return err
+	}
+	if obj := objAt(st, handles, hindex); obj != nil && obj.folder != nil &&
+		obj.folder.book != nil && back.Contacts != nil {
+		if obj.folder.book.Level != store.AddressBookShareWrite && !obj.folder.book.IsOwner {
+			writeROPResponse(out, ropDeleteMessages, hindex, ecAccessDenied, nil)
+			return nil
+		}
+		for _, id := range ids {
+			if err := back.Contacts.DeleteCard(ctx, st.owner, obj.folder.book.ID, int64(fidValue(id))); err != nil {
+				log.DebugContext(ctx, "mapi/rop: contact delete failed", "id", fidValue(id), "error", err)
+			}
+		}
 	}
 	writeROPResponse(out, ropDeleteMessages, hindex, ecSuccess, func(w *writer) error {
 		w.u16(0) // no problems
@@ -823,6 +969,16 @@ func hGetMessageStatus(ctx context.Context, st *sessionState, back *Backend, log
 	if loggedOut(st) {
 		writeROPResponse(out, ropSetMessageStatus, hindex, ecLoginFailure, nil)
 		return nil
+	}
+	if obj := objAt(st, handles, hindex); obj != nil && obj.folder != nil &&
+		obj.folder.book != nil && back.Contacts != nil {
+		if _, err := back.Contacts.GetCard(ctx, st.owner, obj.folder.book.ID, int64(fidValue(messageID))); err == nil {
+			writeROPResponse(out, ropSetMessageStatus, hindex, ecSuccess, func(w *writer) error {
+				w.u32(msgFlagRead)
+				return nil
+			})
+			return nil
+		}
 	}
 	row, err := st.folders.messageRow(fidValue(messageID))
 	if err != nil {
@@ -871,6 +1027,9 @@ func receiveFolderFor(cls string) uint64 {
 	case strings.HasPrefix(cls, "IPM.Appointment"),
 		strings.HasPrefix(cls, "IPM.Schedule"):
 		return fidFromValue(PRIVATE_FID_CALENDAR)
+	case strings.HasPrefix(cls, "IPM.Contact"),
+		strings.HasPrefix(cls, "IPM.DistList"):
+		return fidFromValue(PRIVATE_FID_CONTACTS)
 	default:
 		return fidFromValue(PRIVATE_FID_INBOX)
 	}
@@ -885,14 +1044,27 @@ func hGetReceiveFolderTable(ctx context.Context, st *sessionState, back *Backend
 		return nil
 	}
 	cols := []uint32{pidTagFolderID, prMessageClassA, prLastModificationTime}
-	row := map[uint32]any{
-		pidTagFolderID:         uint64(fidFromValue(PRIVATE_FID_INBOX)),
-		prMessageClassA:        "IPM.Note",
-		prLastModificationTime: time.Now(),
+	now := time.Now()
+	rows := []map[uint32]any{
+		{
+			pidTagFolderID:         uint64(fidFromValue(PRIVATE_FID_INBOX)),
+			prMessageClassA:        "IPM.Note",
+			prLastModificationTime: now,
+		},
+		{
+			pidTagFolderID:         uint64(fidFromValue(PRIVATE_FID_CONTACTS)),
+			prMessageClassA:        "IPM.Contact",
+			prLastModificationTime: now,
+		},
 	}
 	writeROPResponse(out, ropGetReceiveFolderTable, hindex, ecSuccess, func(w *writer) error {
-		w.u32(1)
-		return writePropRow(w, cols, row)
+		w.u32(uint32(len(rows)))
+		for _, row := range rows {
+			if err := writePropRow(w, cols, row); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	return nil
 }
@@ -940,6 +1112,24 @@ func propsOf(ctx context.Context, st *sessionState, back *Backend, obj *mapiObje
 	case objFolder:
 		return st.folders.folderPropsOf(obj.folder)
 	case objMessage:
+		if m := obj.message; m.contact != nil || m.newContact {
+			entry := contacts.Entry{}
+			if m.contact != nil {
+				entry = *m.contact
+			}
+			props := st.folders.contactProps(st, entry, m.folderValue)
+			for tag, value := range m.pending {
+				if value == nil {
+					delete(props, tag)
+				} else {
+					props[tag] = value
+				}
+			}
+			for tag := range m.deleted {
+				delete(props, tag)
+			}
+			return props
+		}
 		obj.message.loadDetail(ctx, back, st.owner)
 		return st.folders.messageDetailProps(obj.message)
 	case objStream:
@@ -1031,13 +1221,57 @@ func hGetPropsList(ctx context.Context, st *sessionState, back *Backend, log *sl
 }
 
 func hSetProps(ctx context.Context, st *sessionState, back *Backend, log *slog.Logger,
-	hindex uint8, req *reader, out *bytes.Buffer) error {
+	hindex uint8, req *reader, handles []uint32, out *bytes.Buffer) error {
+
 	size, err := req.u16()
 	if err != nil {
 		return err
 	}
-	if _, err = req.bytes(int(size)); err != nil {
+	obj := objAt(st, handles, hindex)
+	isContact := obj != nil && obj.message != nil &&
+		(obj.message.contact != nil || obj.message.newContact)
+	if !isContact {
+		// Mail changes are not persisted by this store; consume the value
+		// array without interpreting it, as before.
+		if _, err = req.bytes(int(size)); err != nil {
+			return err
+		}
+		writeROPResponse(out, ropSetProperties, hindex, ecSuccess, func(w *writer) error {
+			w.u16(0) // no problems
+			return nil
+		})
+		return nil
+	}
+	if size < 2 {
+		return formatError
+	}
+	count, err := req.u16()
+	if err != nil {
 		return err
+	}
+	values, err := req.bytes(int(size) - 2)
+	if err != nil {
+		return err
+	}
+	vr := newReader(values)
+	m := obj.message
+	if m.pending == nil {
+		m.pending = map[uint32]any{}
+	}
+	if m.deleted == nil {
+		m.deleted = map[uint32]bool{}
+	}
+	for i := uint16(0); i < count; i++ {
+		tag, err := vr.u32()
+		if err != nil {
+			return err
+		}
+		value, err := decodePropVal(vr, tag)
+		if err != nil {
+			return err
+		}
+		m.pending[tag] = value
+		delete(m.deleted, tag)
 	}
 	writeROPResponse(out, ropSetProperties, hindex, ecSuccess, func(w *writer) error {
 		w.u16(0) // no problems
@@ -1047,9 +1281,23 @@ func hSetProps(ctx context.Context, st *sessionState, back *Backend, log *slog.L
 }
 
 func hDeleteProps(ctx context.Context, st *sessionState, back *Backend, log *slog.Logger,
-	hindex uint8, req *reader, out *bytes.Buffer) error {
-	if _, err := req.proptags(); err != nil {
+	hindex uint8, req *reader, handles []uint32, out *bytes.Buffer) error {
+	tags, err := req.proptags()
+	if err != nil {
 		return err
+	}
+	if obj := objAt(st, handles, hindex); obj != nil && obj.message != nil &&
+		(obj.message.contact != nil || obj.message.newContact) {
+		m := obj.message
+		if m.deleted == nil {
+			m.deleted = map[uint32]bool{}
+		}
+		for _, tag := range tags {
+			m.deleted[tag] = true
+			if m.pending != nil {
+				delete(m.pending, tag)
+			}
+		}
 	}
 	writeROPResponse(out, ropDeleteProperties, hindex, ecSuccess, func(w *writer) error {
 		w.u16(0)
@@ -1080,22 +1328,43 @@ func hOpenStream(ctx context.Context, st *sessionState, back *Backend, log *slog
 		return nil
 	}
 	m := parent.message
-	m.loadDetail(ctx, back, st.owner)
-	if m.detail == nil {
-		writeROPResponse(out, ropOpenStream, ohindex, ecNotFound, nil)
-		return nil
-	}
 	var content []byte
-	switch propID(proptag) {
-	case propID(prBody):
-		content = utf16LE(m.detail.TextBody)
-	case propID(prBodyHTML):
-		content = []byte(m.detail.HTMLBody)
-	default:
-		writeROPResponse(out, ropOpenStream, ohindex, ecNotFound, nil)
-		return nil
+	if m.contact != nil || m.newContact {
+		notes := ""
+		if m.contact != nil {
+			notes = m.contact.Notes
+		}
+		if value, ok := m.pending[prBody]; ok {
+			notes = stringValue(value)
+		}
+		switch propID(proptag) {
+		case propID(prBody):
+			content = utf16LE(notes)
+		default:
+			writeROPResponse(out, ropOpenStream, ohindex, ecNotFound, nil)
+			return nil
+		}
+	} else {
+		m.loadDetail(ctx, back, st.owner)
+		if m.detail == nil {
+			writeROPResponse(out, ropOpenStream, ohindex, ecNotFound, nil)
+			return nil
+		}
+		switch propID(proptag) {
+		case propID(prBody):
+			content = utf16LE(m.detail.TextBody)
+		case propID(prBodyHTML):
+			content = []byte(m.detail.HTMLBody)
+		default:
+			writeROPResponse(out, ropOpenStream, ohindex, ecNotFound, nil)
+			return nil
+		}
 	}
-	if !allocHandle(st, ohindex, handles, &mapiObject{kind: objStream, stream: &streamObj{data: content}}) {
+	if !allocHandle(st, ohindex, handles, &mapiObject{kind: objStream, stream: &streamObj{
+		data: content,
+		msg:  m,
+		prop: proptag,
+	}}) {
 		return rpcAbort(ecInvalidObject)
 	}
 	writeROPResponse(out, ropOpenStream, ohindex, ecSuccess, func(w *writer) error {
@@ -1141,6 +1410,151 @@ func hReadStream(ctx context.Context, st *sessionState, back *Backend, log *slog
 	return nil
 }
 
+// maxStreamBytes bounds a stream this server will hold in memory. Outlook
+// writes contact notes and mail bodies through streams, and a stream is
+// resized from a client-supplied length, so the bound is what keeps a
+// malformed request from asking for an arbitrary allocation.
+const maxStreamBytes = 64 << 20
+
+func hWriteStream(ctx context.Context, st *sessionState, back *Backend, log *slog.Logger,
+	hindex uint8, req *reader, handles []uint32, out *bytes.Buffer) error {
+
+	size, err := req.u16()
+	if err != nil {
+		return err
+	}
+	data, err := req.bytes(int(size))
+	if err != nil {
+		return err
+	}
+	obj := objAt(st, handles, hindex)
+	if obj == nil || obj.stream == nil {
+		writeROPResponse(out, ropWriteStream, hindex, ecNullObject, nil)
+		return nil
+	}
+	s := obj.stream
+	end := s.pos + int64(len(data))
+	if end > maxStreamBytes {
+		writeROPResponse(out, ropWriteStream, hindex, ecBufferTooSmall, nil)
+		return nil
+	}
+	if end > int64(len(s.data)) {
+		grown := make([]byte, end)
+		copy(grown, s.data)
+		s.data = grown
+	}
+	copy(s.data[s.pos:], data)
+	s.pos = end
+	s.dirty = true
+	writeROPResponse(out, ropWriteStream, hindex, ecSuccess, func(w *writer) error {
+		w.u16(uint16(len(data)))
+		return nil
+	})
+	return nil
+}
+
+func hSetStreamSize(ctx context.Context, st *sessionState, back *Backend, log *slog.Logger,
+	hindex uint8, req *reader, handles []uint32, out *bytes.Buffer) error {
+
+	size, err := req.u64()
+	if err != nil {
+		return err
+	}
+	obj := objAt(st, handles, hindex)
+	if obj == nil || obj.stream == nil {
+		writeROPResponse(out, ropSetStreamSize, hindex, ecNullObject, nil)
+		return nil
+	}
+	if size > maxStreamBytes {
+		writeROPResponse(out, ropSetStreamSize, hindex, ecBufferTooSmall, nil)
+		return nil
+	}
+	s := obj.stream
+	switch {
+	case int64(size) < int64(len(s.data)):
+		s.data = s.data[:size]
+	case int64(size) > int64(len(s.data)):
+		s.data = append(s.data, make([]byte, int(size)-len(s.data))...)
+	}
+	if s.pos > int64(size) {
+		s.pos = int64(size)
+	}
+	s.dirty = true
+	writeROPResponse(out, ropSetStreamSize, hindex, ecSuccess, nil)
+	return nil
+}
+
+func hSeekStream(ctx context.Context, st *sessionState, back *Backend, log *slog.Logger,
+	hindex uint8, req *reader, handles []uint32, out *bytes.Buffer) error {
+
+	origin, err := req.u8()
+	if err != nil {
+		return err
+	}
+	offset, err := req.u64()
+	if err != nil {
+		return err
+	}
+	obj := objAt(st, handles, hindex)
+	if obj == nil || obj.stream == nil {
+		writeROPResponse(out, ropSeekStream, hindex, ecNullObject, nil)
+		return nil
+	}
+	s := obj.stream
+	base := 0
+	switch origin {
+	case 0: // STREAM_SEEK_SET
+		base = 0
+	case 1: // STREAM_SEEK_CUR
+		base = int(s.pos)
+	case 2: // STREAM_SEEK_END
+		base = len(s.data)
+	default:
+		writeROPResponse(out, ropSeekStream, hindex, ecInvalidParam, nil)
+		return nil
+	}
+	pos := base + int(int64(offset))
+	if pos < 0 {
+		pos = 0
+	}
+	if pos > len(s.data) {
+		pos = len(s.data)
+	}
+	s.pos = int64(pos)
+	writeROPResponse(out, ropSeekStream, hindex, ecSuccess, func(w *writer) error {
+		w.u64(uint64(pos))
+		return nil
+	})
+	return nil
+}
+
+func hCommitStream(ctx context.Context, st *sessionState, back *Backend, log *slog.Logger,
+	hindex uint8, handles []uint32, out *bytes.Buffer) error {
+
+	obj := objAt(st, handles, hindex)
+	if obj == nil || obj.stream == nil {
+		writeROPResponse(out, ropCommitStream, hindex, ecNullObject, nil)
+		return nil
+	}
+	s := obj.stream
+	if s.dirty && s.msg != nil && (s.msg.contact != nil || s.msg.newContact) &&
+		propID(s.prop) == propID(prBody) {
+		data := s.data
+		for len(data) >= 2 && data[len(data)-1] == 0 && data[len(data)-2] == 0 {
+			data = data[:len(data)-2]
+		}
+		if text, err := utf16BytesToString(data); err == nil {
+			if s.msg.pending == nil {
+				s.msg.pending = map[uint32]any{}
+			}
+			s.msg.pending[prBody] = text
+		}
+	}
+	s.dirty = false
+	writeROPResponse(out, ropCommitStream, hindex, ecSuccess, nil)
+	return nil
+}
+
 func hGetStreamSize(ctx context.Context, st *sessionState, back *Backend, log *slog.Logger,
 	hindex uint8, handles []uint32, out *bytes.Buffer) error {
 	obj := objAt(st, handles, hindex)
@@ -1169,9 +1583,10 @@ func hGetPropIDsFromNames(ctx context.Context, st *sessionState, back *Backend, 
 	}
 	ids := make([]uint16, len(names))
 	for i := range names {
-		// Named properties are assigned in the 0x8000-0x8FFF range and get
-		// the same id on every call, so the ids are stable within a session.
-		ids[i] = 0x8000 + uint16(i)
+		// The id is allocated once per (GUID, name) and kept for the rest
+		// of the session, so a client can use it in later GetProperties
+		// calls and read it back with GetNamesFromPropertyIds.
+		ids[i] = st.assignNamed(names[i])
 	}
 	writeROPResponse(out, ropGetPropertyIdsFromNames, hindex, ecSuccess, func(w *writer) error {
 		return w.propids(ids)
@@ -1188,8 +1603,12 @@ func hGetNamesFromPropIDs(ctx context.Context, st *sessionState, back *Backend, 
 	}
 	pns := make([]propName, len(ids))
 	for i, id := range ids {
-		// The store does not retain name mappings yet, so a named id is
-		// echoed back as an MNID_ID with the same LID.
+		if pn, ok := st.namedNames[id]; ok {
+			pns[i] = pn
+			continue
+		}
+		// An id this session did not hand out: echo it back in the shape
+		// gromox uses for an unknown named property.
 		pns[i] = propName{Kind: 0, GUID: "", LID: uint32(id)}
 	}
 	writeROPResponse(out, ropGetNamesFromPropertyIds, hindex, ecSuccess, func(w *writer) error {
@@ -1207,11 +1626,7 @@ func hQueryColumnsAll(ctx context.Context, st *sessionState, back *Backend, log 
 	}
 	tags := tbl.columns
 	if len(tags) == 0 {
-		if tbl.hierarchy {
-			tags = hierarchyDefaultColumns
-		} else {
-			tags = contentsDefaultColumns
-		}
+		tags = tbl.defaultColumns()
 	}
 	writeROPResponse(out, ropQueryColumnsAll, hindex, ecSuccess, func(w *writer) error {
 		return w.proptags(tags)

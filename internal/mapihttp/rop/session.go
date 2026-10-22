@@ -11,8 +11,11 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"sort"
+	"strings"
 
+	"github.com/linchange/linchange/internal/contacts"
 	"github.com/linchange/linchange/internal/imapd"
+	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/webmail"
 )
 
@@ -35,7 +38,15 @@ type sessionState struct {
 	storeGUID  string // mailbox_guid (PR_STORE_RECORD_KEY), stable per user
 	nextHandle uint32
 	objects    map[uint32]*mapiObject
-	folders    *folderResolver // per-login, resolves fid -> mailbox
+	folders    *folderResolver // per-login, resolves fid -> mailbox or address book
+
+	// Named-property registry. Outlook learns a named property's numeric id
+	// through RopGetPropertyIdsFromNames and then refers to it by that id,
+	// so the mapping has to stay stable for the life of the session (and be
+	// reversible for RopGetNamesFromPropertyIds).
+	namedIDs   map[string]uint16
+	namedNames map[uint16]propName
+	nextNamed  uint16
 }
 
 type mapiObject struct {
@@ -55,6 +66,7 @@ type folderObj struct {
 	name    string
 	pseudo  bool // root / IPM subtree / outbox
 	mailbox *imapd.Mailbox
+	book    *store.AddressBookAccess // contact folder, when this is an address book
 }
 
 // tableObj is an open hierarchy or contents table.
@@ -80,12 +92,24 @@ type messageObj struct {
 	row         *imapd.Message
 	detail      *webmail.MessageDetail // lazily filled
 	err         error                  // lazy-load error
+
+	// Contact items are not mail rows. They carry the address-book card
+	// they stand for, and (while a new card is being composed) the
+	// properties the client has set but not yet saved.
+	contact    *contacts.Entry
+	bookID     int64
+	newContact bool
+	pending    map[uint32]any
+	deleted    map[uint32]bool
 }
 
 type streamObj struct {
-	name string
-	data []byte
-	pos  int64
+	name  string
+	data  []byte
+	pos   int64
+	msg   *messageObj // the message a writable body stream belongs to
+	prop  uint32      // the property tag the stream stands for
+	dirty bool
 }
 
 // folderResolver maps eid values onto the owner's mailboxes.
@@ -95,6 +119,12 @@ type folderResolver struct {
 	ctx    context.Context
 	byVal  map[uint64]*imapd.Mailbox // custom zone fid value -> mailbox
 	byMail map[int64]*imapd.Mailbox
+
+	// Address books are folders too. The personal book takes the standard
+	// PRIVATE_FID_CONTACTS value so Outlook finds it without enumerating,
+	// and every other book gets a value in the contact zone.
+	byBook     map[uint64]store.AddressBookAccess
+	bookValues map[int64]uint64
 }
 
 // StoreGUID returns the stable store GUID for an owner. It is derived from the
@@ -165,18 +195,23 @@ const (
 	PRIVATE_FID_INBOX           = 0x0d
 	PRIVATE_FID_DRAFT           = 0x0e
 	PRIVATE_FID_CALENDAR        = 0x0f
+	PRIVATE_FID_CONTACTS        = 0x10
 	PRIVATE_FID_JUNK            = 0x17
 
 	// customZoneBase is where real mailbox rows are assigned their eid value
 	// (CUSTOM_EID_BEGIN in gromox): fid value = 0x100 + mailbox ID.
 	customZoneBase = 0x100
+	// contactZoneBase is where address books other than the personal one get
+	// their eid value. It is well above the mailbox zone so the two id
+	// spaces cannot collide at realistic mailbox counts.
+	contactZoneBase = 0x100000
 )
 
-// PR_FOLDER_TYPE values (MS-OXCFOLD).
+// PR_FOLDER_TYPE values (MS-OXCFOLD 2.2.2.2.1).
 const (
-	folderRoot    = 0x1
-	folderGeneric = 0x2
-	folderSearch  = 0x3
+	folderRoot    = 0x0
+	folderGeneric = 0x1
+	folderSearch  = 0x2
 )
 
 func fidFromValue(v uint64) uint64 { return uint64(1)<<48 | v }
@@ -188,16 +223,39 @@ func newFolderResolver(ctx context.Context, back *Backend, owner string) (*folde
 		return nil, err
 	}
 	r := &folderResolver{
-		back:   back,
-		owner:  owner,
-		ctx:    ctx,
-		byVal:  map[uint64]*imapd.Mailbox{},
-		byMail: map[int64]*imapd.Mailbox{},
+		back:       back,
+		owner:      owner,
+		ctx:        ctx,
+		byVal:      map[uint64]*imapd.Mailbox{},
+		byMail:     map[int64]*imapd.Mailbox{},
+		byBook:     map[uint64]store.AddressBookAccess{},
+		bookValues: map[int64]uint64{},
 	}
 	for i := range boxes {
 		mb := boxes[i]
 		r.byMail[mb.ID] = &mb
 		r.byVal[customZoneBase+uint64(mb.ID)] = &mb
+	}
+	if back.Contacts != nil {
+		books, err := back.Contacts.Books(ctx, owner)
+		if err != nil {
+			return nil, err
+		}
+		for i := range books {
+			book := books[i]
+			// Books() reports organizational books as read for everyone;
+			// Book() asks the same access rule a write will use, so an
+			// administrator gets the write level the store actually grants.
+			if access, err := back.Contacts.Book(ctx, owner, book.ID); err == nil {
+				book = access
+			}
+			value := contactZoneBase + uint64(book.ID)
+			if book.Scope == store.AddressBookPersonal && strings.EqualFold(book.Owner, owner) {
+				value = PRIVATE_FID_CONTACTS
+			}
+			r.byBook[value] = book
+			r.bookValues[book.ID] = value
+		}
 	}
 	return r, nil
 }
@@ -244,6 +302,10 @@ func (r *folderResolver) bySpecial(s string) *imapd.Mailbox {
 // open resolves an eid (replid<<48|value) to a folder object.
 func (r *folderResolver) open(fid uint64) (*folderObj, error) {
 	value := fid & 0x0000FFFFFFFFFFFF
+	if book, ok := r.byBook[value]; ok {
+		b := book
+		return &folderObj{value: value, fid: fid, name: b.Name, book: &b}, nil
+	}
 	if value >= customZoneBase {
 		mb, ok := r.byVal[value]
 		if !ok {
@@ -336,11 +398,22 @@ func (r *folderResolver) allMailboxes(stats map[int64]imapd.FolderCounts) ([]tab
 	}
 	sort.Slice(boxes, func(i, j int) bool { return boxes[i].Name < boxes[j].Name })
 	parent := &folderObj{value: PRIVATE_FID_IPMSUBTREE, fid: fidFromValue(PRIVATE_FID_IPMSUBTREE), name: "IPM_SUBTREE", pseudo: true}
-	out := make([]tableRecord, 0, len(boxes))
+	out := make([]tableRecord, 0, len(boxes)+len(r.byBook))
 	for i := range boxes {
 		mb := boxes[i]
 		fv := customZoneBase + uint64(mb.ID)
 		fc := &folderObj{value: fv, fid: fidFromValue(fv), name: mb.Name, mailbox: &mb}
+		out = append(out, tableRecord{props: r.folderProps(fc, parent, stats)})
+	}
+	books := make([]store.AddressBookAccess, 0, len(r.byBook))
+	for _, book := range r.byBook {
+		books = append(books, book)
+	}
+	sort.Slice(books, func(i, j int) bool { return books[i].Name < books[j].Name })
+	for i := range books {
+		book := books[i]
+		fv := r.bookValues[book.ID]
+		fc := &folderObj{value: fv, fid: fidFromValue(fv), name: book.Name, book: &book}
 		out = append(out, tableRecord{props: r.folderProps(fc, parent, stats)})
 	}
 	return out, nil
@@ -358,6 +431,30 @@ func (r *folderResolver) folderProps(fo *folderObj, parent *folderObj, stats map
 	if fo.value == PRIVATE_FID_ROOT || fo.value == PRIVATE_FID_IPMSUBTREE {
 		props[prFolderType] = int32(folderRoot)
 	}
+	if fo.value == PRIVATE_FID_ROOT {
+		// Some clients read the special-folder entry ids from the root
+		// folder rather than from the store object.
+		props[prIPMContactEntryID] = r.folderEntryID(PRIVATE_FID_CONTACTS)
+	}
+	if fo.book != nil {
+		props[prContainerClass] = "IPF.Contact"
+		props[prContentCount] = int32(0)
+		props[prContentUnread] = int32(0)
+		props[prSubfolders] = false
+		// Read-only books still appear in Outlook, but are marked so the
+		// client does not offer to create or edit items there.
+		access := int32(0x00000002) // MAPI_ACCESS_READ
+		if fo.book.IsOwner || fo.book.Level == store.AddressBookShareWrite {
+			access = 0x0000001F // modify, read, delete, create hierarchy, create contents
+		}
+		props[prAccess] = access
+		props[prAccessLevel] = access
+		if r.back.Contacts != nil {
+			if n, err := r.back.Contacts.CountCards(r.ctx, r.owner, fo.book.ID); err == nil {
+				props[prContentCount] = int32(n)
+			}
+		}
+	}
 	if fo.mailbox != nil {
 		if c, ok := stats[fo.mailbox.ID]; ok {
 			props[prContentCount] = int32(c.Total)
@@ -367,6 +464,7 @@ func (r *folderResolver) folderProps(fo *folderObj, parent *folderObj, stats map
 	}
 	if parent != nil {
 		props[pidTagParentFolderID] = uint64(parent.fid)
+		props[prParentEntryID] = r.folderEntryID(parent.value)
 	}
 	eid := r.folderEntryID(fo.value)
 	props[prEntryID] = eid
@@ -520,6 +618,10 @@ func (r *folderResolver) storeProps(owner string) map[uint32]any {
 		prEntryID:          wrappedStoreEntryID(guid),
 		prSearchKey:        guidToBytes(guid),
 		prSmtpAddress:      owner,
+		// Tell Outlook where the Contacts folder is, even before it walks
+		// the IPM subtree. The personal book is mapped to the standard
+		// PRIVATE_FID_CONTACTS value, so this is a stable entry id.
+		prIPMContactEntryID: r.folderEntryID(PRIVATE_FID_CONTACTS),
 	}
 }
 
@@ -558,7 +660,7 @@ func wrappedStoreEntryID(guid string) []byte {
 var errNotFound = fmt.Errorf("mapi/rop: not found")
 
 // tableRecords materializes a table once, at creation time.
-func (r *folderResolver) tableRecords(fo *folderObj, hierarchy bool) ([]*tableRecord, error) {
+func (r *folderResolver) tableRecords(st *sessionState, fo *folderObj, hierarchy bool) ([]*tableRecord, error) {
 	if hierarchy {
 		recs, err := r.children(fo)
 		if err != nil {
@@ -568,6 +670,17 @@ func (r *folderResolver) tableRecords(fo *folderObj, hierarchy bool) ([]*tableRe
 		for i := range recs {
 			rec := recs[i]
 			out = append(out, &rec)
+		}
+		return out, nil
+	}
+	if fo.book != nil {
+		entries, err := r.back.Contacts.Cards(r.ctx, r.owner, fo.book.ID)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]*tableRecord, 0, len(entries))
+		for i := range entries {
+			out = append(out, &tableRecord{props: r.contactProps(st, entries[i], fo.value)})
 		}
 		return out, nil
 	}
@@ -600,9 +713,31 @@ var contentsDefaultColumns = []uint32{
 	prSenderEmailAddress, prHasAttachments, prInternetMessageID,
 }
 
+// contactDefaultColumns is what a contact folder returns before the client
+// chooses columns. Outlook almost always sets its own list, but a client that
+// does not still gets the fields a contact list is made of.
+var contactDefaultColumns = []uint32{
+	pidTagMID, prObjectType, prEntryID, prDisplayName, prSubject,
+	prMessageClass, prEmailAddress, prAddrType, prSmtpAddress,
+	prCompanyName, prTitle, prDepartmentName,
+	prBusinessTelephoneNumber, prHomeTelephoneNumber, prMobileTelephoneNumber,
+	prLastModificationTime, prMessageFlags, prRead,
+}
+
 var hierarchyDefaultColumns = []uint32{
 	pidTagFolderID, pidTagParentFolderID, prObjectType, prDisplayName,
 	prFolderType, prSubfolders, prContentCount, prContentUnread, prEntryID,
+}
+
+// defaultColumns picks the right default set for a table.
+func (t *tableObj) defaultColumns() []uint32 {
+	if t.hierarchy {
+		return hierarchyDefaultColumns
+	}
+	if t.folder != nil && t.folder.book != nil {
+		return contactDefaultColumns
+	}
+	return contentsDefaultColumns
 }
 
 // bodyStream returns the byte content for a message body property in its wire

@@ -357,6 +357,16 @@ func (s *Service) Cards(ctx context.Context, owner string, bookID int64) ([]Entr
 	return out, nil
 }
 
+// CountCards returns how many cards a book holds.
+func (s *Service) CountCards(ctx context.Context, owner string, bookID int64) (int, error) {
+	if _, ok, err := s.require(ctx, owner, bookID, store.AddressBookShareRead); err != nil {
+		return 0, err
+	} else if !ok {
+		return 0, ErrDenied
+	}
+	return s.books.CountContacts(ctx, s.db, bookID)
+}
+
 // GetCard returns one card.
 func (s *Service) GetCard(ctx context.Context, owner string, bookID, id int64) (Entry, error) {
 	if _, ok, err := s.require(ctx, owner, bookID, store.AddressBookShareRead); err != nil {
@@ -407,6 +417,42 @@ func (s *Service) UpdateCard(ctx context.Context, owner string, bookID, id int64
 	card, err := buildCard(in, existing.UID)
 	if err != nil {
 		return Entry{}, err
+	}
+	row, err := rowFromCard(bookID, card)
+	if err != nil {
+		return Entry{}, err
+	}
+	row.ID = id
+	updated, err := s.books.UpdateContact(ctx, s.db, row)
+	if err != nil {
+		return Entry{}, translate(err)
+	}
+	return toEntry(updated), nil
+}
+
+// UpdateCardPreserving replaces the fields the forms edit while leaving every
+// other vCard property alone. A card that came from a phone or another
+// CardDAV client can carry fields this server does not model (a photo,
+// categories, X- properties); editing it from Outlook must not discard them.
+func (s *Service) UpdateCardPreserving(ctx context.Context, owner string, bookID, id int64, in Input) (Entry, error) {
+	if _, ok, err := s.require(ctx, owner, bookID, store.AddressBookShareWrite); err != nil {
+		return Entry{}, err
+	} else if !ok {
+		return Entry{}, ErrDenied
+	}
+	existing, err := s.books.GetContact(ctx, s.db, bookID, id)
+	if err != nil {
+		return Entry{}, translate(err)
+	}
+	card, err := decodeCard(existing.VCard)
+	if err != nil {
+		return Entry{}, err
+	}
+	if err := applyInput(card, in); err != nil {
+		return Entry{}, err
+	}
+	if len(encodeCard(card)) > maxCardSize {
+		return Entry{}, fmt.Errorf("%w: the card is too large", ErrInvalid)
 	}
 	row, err := rowFromCard(bookID, card)
 	if err != nil {
@@ -836,7 +882,19 @@ func buildCard(in Input, uid string) (vcard.Card, error) {
 	card := vcard.Card{}
 	card.SetValue(vcard.FieldVersion, "3.0")
 	card.SetValue(vcard.FieldUID, uid)
+	if err := applyInput(card, in); err != nil {
+		return nil, err
+	}
+	if len(encodeCard(card)) > maxCardSize {
+		return nil, fmt.Errorf("%w: the card is too large", ErrInvalid)
+	}
+	return card, nil
+}
 
+// applyInput writes the fields the web form owns onto a card. The fields the
+// form does not model stay exactly as they were, which is what makes
+// UpdateCardPreserving safe for a card another client wrote.
+func applyInput(card vcard.Card, in Input) error {
 	name := strings.TrimSpace(in.DisplayName)
 	if name == "" {
 		name = strings.TrimSpace(in.FirstName + " " + in.LastName)
@@ -850,7 +908,7 @@ func buildCard(in Input, uid string) (vcard.Card, error) {
 		}
 	}
 	if name == "" {
-		return nil, fmt.Errorf("%w: a card needs a name or an address", ErrInvalid)
+		return fmt.Errorf("%w: a card needs a name or an address", ErrInvalid)
 	}
 	card.SetValue(vcard.FieldFormattedName, name)
 
@@ -858,7 +916,11 @@ func buildCard(in Input, uid string) (vcard.Card, error) {
 		card.Set(vcard.FieldName, &vcard.Field{Value: strings.Join([]string{
 			strings.TrimSpace(in.LastName), strings.TrimSpace(in.FirstName), "", "", "",
 		}, ";")})
+	} else {
+		delete(card, vcard.FieldName)
 	}
+
+	delete(card, vcard.FieldEmail)
 	for _, email := range in.Emails {
 		value := strings.TrimSpace(email.Value)
 		if value == "" {
@@ -869,6 +931,7 @@ func buildCard(in Input, uid string) (vcard.Card, error) {
 			Params: vcard.Params{vcard.ParamType: []string{typeOr(email.Type, vcard.TypeWork)}},
 		})
 	}
+	delete(card, vcard.FieldTelephone)
 	for _, phone := range in.Phones {
 		value := strings.TrimSpace(phone.Value)
 		if value == "" {
@@ -879,6 +942,7 @@ func buildCard(in Input, uid string) (vcard.Card, error) {
 			Params: vcard.Params{vcard.ParamType: []string{typeOr(phone.Type, vcard.TypeVoice)}},
 		})
 	}
+	delete(card, vcard.FieldAddress)
 	for _, postal := range in.Addresses {
 		if strings.TrimSpace(postal.Street+postal.City+postal.Region+postal.PostalCode+postal.Country) == "" {
 			continue
@@ -892,23 +956,30 @@ func buildCard(in Input, uid string) (vcard.Card, error) {
 	}
 	if in.Organization != "" || in.Department != "" {
 		card.SetValue(vcard.FieldOrganization, strings.Join([]string{in.Organization, in.Department}, ";"))
+	} else {
+		delete(card, vcard.FieldOrganization)
 	}
 	if in.Title != "" {
 		card.SetValue(vcard.FieldTitle, in.Title)
+	} else {
+		delete(card, vcard.FieldTitle)
 	}
 	if in.Website != "" {
 		card.SetValue(vcard.FieldURL, in.Website)
+	} else {
+		delete(card, vcard.FieldURL)
 	}
 	if in.Notes != "" {
 		card.SetValue(vcard.FieldNote, in.Notes)
+	} else {
+		delete(card, vcard.FieldNote)
 	}
 	if in.Birthday != "" {
 		card.SetValue(vcard.FieldBirthday, in.Birthday)
+	} else {
+		delete(card, vcard.FieldBirthday)
 	}
-	if len(encodeCard(card)) > maxCardSize {
-		return nil, fmt.Errorf("%w: the card is too large", ErrInvalid)
-	}
-	return card, nil
+	return nil
 }
 
 func decodeCard(raw string) (vcard.Card, error) {

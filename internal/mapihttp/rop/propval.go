@@ -95,7 +95,52 @@ const (
 	prAddrType              = 0x3002001F
 	prMapiIdentity          = 0x3FFD0102
 	prLastModificationTime  = 0x30080040
+	prCreationTime          = 0x30070040
+
+	// Contact item properties (MS-OXPROPS / mapitags.h). Outlook reads and
+	// writes these fixed tags on an IPM.Contact item; the e-mail addresses
+	// beyond the first live in named properties instead.
+	prFileUnder                 = 0x8005001F
+	prGivenName                 = 0x3A06001F
+	prSurname                   = 0x3A11001F
+	prMiddleName                = 0x3A44001F
+	prDisplayNamePrefix         = 0x3A45001F
+	prNickname                  = 0x3A4F001F
+	prCompanyName               = 0x3A16001F
+	prTitle                     = 0x3A17001F
+	prDepartmentName            = 0x3A18001F
+	prOfficeLocation            = 0x3A19001F
+	prBusinessTelephoneNumber   = 0x3A08001F
+	prBusinessTelephone2        = 0x3A1B001F
+	prHomeTelephoneNumber       = 0x3A09001F
+	prHomeTelephone2            = 0x3A2F001F
+	prMobileTelephoneNumber     = 0x3A1C001F
+	prBusinessFaxNumber         = 0x3A24001F
+	prHomeFaxNumber             = 0x3A25001F
+	prPagerTelephoneNumber      = 0x3A21001F
+	prCarTelephoneNumber        = 0x3A1E001F
+	prPrimaryTelephoneNumber    = 0x3A1A001F
+	prBusinessAddressStreet     = 0x3A1D001F
+	prBusinessAddressCity       = 0x3A27001F
+	prBusinessAddressState      = 0x3A28001F
+	prBusinessAddressPostalCode = 0x3A2A001F
+	prBusinessAddressCountry    = 0x3A26001F
+	prHomeAddressStreet         = 0x3A5D001F
+	prHomeAddressCity           = 0x3A5E001F
+	prHomeAddressState          = 0x3A5F001F
+	prHomeAddressPostalCode     = 0x3A60001F
+	prHomeAddressCountry        = 0x3A5C001F
+	prBirthday                  = 0x3A420040
+	prWeddingAnniversary        = 0x3A410040
+	prBusinessHomePage          = 0x3A51001F
+	prIPMContactEntryID         = 0x36D00102
+	prAccess                    = 0x0FF40003
+	prAccessLevel               = 0x0FF70003
 )
+
+// psetidAddress is the property-set GUID for the contact e-mail properties
+// (PidLidEmail1EmailAddress and friends, MS-OXPROPS 2.2.1.1).
+const psetidAddress = "00062004-0000-0000-c000-000000000046"
 
 // Well-known GUIDs in canonical string form.
 const (

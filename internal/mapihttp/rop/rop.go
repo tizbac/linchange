@@ -31,6 +31,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
+	"github.com/linchange/linchange/internal/contacts"
 	"github.com/linchange/linchange/internal/imapd"
 	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/webmail"
@@ -49,6 +50,7 @@ const (
 	ropGetPropertiesList       = 0x09
 	ropSetProperties           = 0x0A
 	ropDeleteProperties        = 0x0B
+	ropSaveChangesMessage      = 0x0C
 	ropSetColumns              = 0x12
 	ropSortTable               = 0x13
 	ropRestrict                = 0x14
@@ -67,8 +69,12 @@ const (
 	ropFallbackNotify          = 0x2A
 	ropOpenStream              = 0x2B
 	ropReadStream              = 0x2C
+	ropWriteStream             = 0x2D
+	ropSeekStream              = 0x2E
+	ropSetStreamSize           = 0x2F
 	ropGetNamesFromPropertyIds = 0x55
 	ropGetPropertyIdsFromNames = 0x56
+	ropCommitStream            = 0x5D
 	ropGetStreamSize           = 0x5E
 	ropGetPerUserLongTermIds   = 0x60
 	ropSetReadFlags            = 0x66
@@ -177,6 +183,7 @@ const (
 	ecDuplicateName     = 0x80040604
 	ecInvalidParam      = 0x80070057
 	ecInsufficientResrc = 0x8004010E
+	ecAccessDenied      = 0x80070005
 )
 
 // Backend is everything the ROP layer needs past its own session state: the
@@ -188,6 +195,10 @@ type Backend struct {
 	Messages  *imapd.MessageRepo
 	Mailboxes *imapd.MailboxRepo
 	Users     *store.Users
+	// Contacts is the address-book store. Its personal and shared books are
+	// exposed as MAPI contact folders, so Outlook's Contacts folder is the
+	// same set of cards CardDAV and the web client see.
+	Contacts *contacts.Service
 	// Hostname is the public name this server is reachable at; it appears in
 	// the URLs the NSPI GetMailboxUrl/GetAddressBookUrl operations return.
 	Hostname string
@@ -296,7 +307,7 @@ func dispatch(ctx context.Context, st *sessionState, back *Backend, log *slog.Lo
 	rops := newReader(payload[2:int(ropSize)])
 	out := &execResult{handles: handles, version: version, flags: rheFlagLast}
 	var resp bytes.Buffer
-	for rops.off < rops.remaining() {
+	for rops.remaining() > 0 {
 		id, err := rops.u8()
 		if err != nil {
 			break
@@ -335,11 +346,14 @@ func putU32LE(v uint32, b []byte) {
 
 // buildOutput assembles the rgbRopOut buffer from the responses.
 func buildOutput(res *execResult) []byte {
-	// sub-buffer: u16 size + responses + handles
+	// sub-buffer: u16 rop_size + responses + handles. rop_size covers only
+	// itself and the ROP responses; the handle table follows it and is not
+	// part of that count (MS-OXCROPS 2.2.1). The outer size fields cover the
+	// whole sub-buffer, handle table included.
 	var sub bytes.Buffer
-	payloadLen := len(res.responses) + 4*len(res.handles)
-	sub.WriteByte(byte(payloadLen + 2))
-	sub.WriteByte(byte((payloadLen + 2) >> 8))
+	responseLen := len(res.responses)
+	sub.WriteByte(byte(responseLen + 2))
+	sub.WriteByte(byte((responseLen + 2) >> 8))
 	sub.Write(res.responses)
 	for _, h := range res.handles {
 		var b [4]byte
