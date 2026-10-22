@@ -111,78 +111,168 @@ function inviteFileName(summary: string): string {
           </div>
 
           <div class="flex flex-wrap items-start gap-3 text-sm">
-            <label class="w-20 shrink-0 pt-1.5 text-right font-medium text-slate-600" for="mc-to">To</label>
+            <label class="w-20 shrink-0 pt-2 text-right font-medium text-slate-600" for="mc-to">To</label>
             <div class="min-w-0 flex-1">
-              <input
-                id="mc-to"
-                name="to"
-                list="contact-options"
-                class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-brand-500 focus:outline-none"
-                placeholder="name@example.com"
-                [(ngModel)]="toRaw"
-                (focus)="ensureContacts()"
-                (input)="onContactInput('to', $event)"
-              />
-              <datalist id="contact-options">
-                @for (opt of contactOptions(); track opt) {
-                  <option [value]="opt"></option>
+              <div class="relative">
+                <div class="flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-300 px-2 py-1.5 focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-100">
+                  @for (a of to(); track a.address) {
+                    <span class="inline-flex max-w-full items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
+                      <span class="truncate" [title]="addressLabel(a)">{{ a.name || a.address }}</span>
+                      <button
+                        type="button"
+                        class="shrink-0 rounded px-0.5 text-slate-500 hover:text-rose-600"
+                        [attr.aria-label]="'Remove ' + addressLabel(a)"
+                        (click)="removeRecipient('to', a.address)"
+                      >×</button>
+                    </span>
+                  }
+                  <input
+                    id="mc-to"
+                    name="to"
+                    class="min-w-[12rem] flex-1 border-0 bg-transparent px-1 py-0.5 text-sm focus:outline-none focus:ring-0"
+                    placeholder="name@example.com"
+                    autocomplete="off"
+                    [(ngModel)]="toInput"
+                    (focus)="onRecipientFocus('to')"
+                    (input)="onRecipientInput('to', $event)"
+                    (keydown)="onRecipientKeydown('to', $event)"
+                    (blur)="commitRecipient('to')"
+                  />
+                </div>
+                @if (recipientField() === 'to' && recipientSuggestions().length > 0) {
+                  <ul class="absolute left-0 right-0 top-full z-30 mt-1 max-h-56 overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                    @for (c of recipientSuggestions(); track c.address) {
+                      <li>
+                        <button
+                          type="button"
+                          class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-slate-50"
+                          (mousedown)="$event.preventDefault(); addSuggestion('to', c)"
+                        >
+                          <span class="min-w-0 flex-1 truncate">{{ c.displayName || c.address }}</span>
+                          @if (c.displayName) {
+                            <span class="shrink-0 truncate text-xs text-slate-400">{{ c.address }}</span>
+                          }
+                        </button>
+                      </li>
+                    }
+                  </ul>
                 }
-              </datalist>
-              @if (hasInvalid(toRaw)) {
+              </div>
+              @if (hasInvalid(toInput)) {
                 <p class="mt-1 text-xs text-rose-600">
-                  Every entry needs an @ — some entries above are not addresses.
+                  That is not an address yet. Press Tab, comma or Enter to keep typing.
                 </p>
               }
             </div>
           </div>
 
           <div class="flex flex-wrap items-start gap-3 text-sm">
-            <label class="w-20 shrink-0 pt-1.5 text-right font-medium text-slate-600" for="mc-cc">Cc</label>
+            <label class="w-20 shrink-0 pt-2 text-right font-medium text-slate-600" for="mc-cc">Cc</label>
             <div class="min-w-0 flex-1">
-              <input
-                id="mc-cc"
-                name="cc"
-                list="contact-options"
-                class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-brand-500 focus:outline-none"
-                placeholder="name@example.com"
-                [(ngModel)]="ccRaw"
-                (focus)="ensureContacts()"
-                (input)="onContactInput('cc', $event)"
-              />
-              <datalist id="contact-options">
-                @for (opt of contactOptions(); track opt) {
-                  <option [value]="opt"></option>
+              <div class="relative">
+                <div class="flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-300 px-2 py-1.5 focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-100">
+                  @for (a of cc(); track a.address) {
+                    <span class="inline-flex max-w-full items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
+                      <span class="truncate" [title]="addressLabel(a)">{{ a.name || a.address }}</span>
+                      <button
+                        type="button"
+                        class="shrink-0 rounded px-0.5 text-slate-500 hover:text-rose-600"
+                        [attr.aria-label]="'Remove ' + addressLabel(a)"
+                        (click)="removeRecipient('cc', a.address)"
+                      >×</button>
+                    </span>
+                  }
+                  <input
+                    id="mc-cc"
+                    name="cc"
+                    class="min-w-[12rem] flex-1 border-0 bg-transparent px-1 py-0.5 text-sm focus:outline-none focus:ring-0"
+                    placeholder="name@example.com"
+                    autocomplete="off"
+                    [(ngModel)]="ccInput"
+                    (focus)="onRecipientFocus('cc')"
+                    (input)="onRecipientInput('cc', $event)"
+                    (keydown)="onRecipientKeydown('cc', $event)"
+                    (blur)="commitRecipient('cc')"
+                  />
+                </div>
+                @if (recipientField() === 'cc' && recipientSuggestions().length > 0) {
+                  <ul class="absolute left-0 right-0 top-full z-30 mt-1 max-h-56 overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                    @for (c of recipientSuggestions(); track c.address) {
+                      <li>
+                        <button
+                          type="button"
+                          class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-slate-50"
+                          (mousedown)="$event.preventDefault(); addSuggestion('cc', c)"
+                        >
+                          <span class="min-w-0 flex-1 truncate">{{ c.displayName || c.address }}</span>
+                          @if (c.displayName) {
+                            <span class="shrink-0 truncate text-xs text-slate-400">{{ c.address }}</span>
+                          }
+                        </button>
+                      </li>
+                    }
+                  </ul>
                 }
-              </datalist>
-              @if (hasInvalid(ccRaw)) {
+              </div>
+              @if (hasInvalid(ccInput)) {
                 <p class="mt-1 text-xs text-rose-600">
-                  Every entry needs an @ — some entries above are not addresses.
+                  That is not an address yet. Press Tab, comma or Enter to keep typing.
                 </p>
               }
             </div>
           </div>
 
           <div class="flex flex-wrap items-start gap-3 text-sm">
-            <label class="w-20 shrink-0 pt-1.5 text-right font-medium text-slate-600" for="mc-bcc">Bcc</label>
+            <label class="w-20 shrink-0 pt-2 text-right font-medium text-slate-600" for="mc-bcc">Bcc</label>
             <div class="min-w-0 flex-1">
-              <input
-                id="mc-bcc"
-                name="bcc"
-                list="contact-options"
-                class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-brand-500 focus:outline-none"
-                placeholder="name@example.com"
-                [(ngModel)]="bccRaw"
-                (focus)="ensureContacts()"
-                (input)="onContactInput('bcc', $event)"
-              />
-              <datalist id="contact-options">
-                @for (opt of contactOptions(); track opt) {
-                  <option [value]="opt"></option>
+              <div class="relative">
+                <div class="flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-300 px-2 py-1.5 focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-100">
+                  @for (a of bcc(); track a.address) {
+                    <span class="inline-flex max-w-full items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
+                      <span class="truncate" [title]="addressLabel(a)">{{ a.name || a.address }}</span>
+                      <button
+                        type="button"
+                        class="shrink-0 rounded px-0.5 text-slate-500 hover:text-rose-600"
+                        [attr.aria-label]="'Remove ' + addressLabel(a)"
+                        (click)="removeRecipient('bcc', a.address)"
+                      >×</button>
+                    </span>
+                  }
+                  <input
+                    id="mc-bcc"
+                    name="bcc"
+                    class="min-w-[12rem] flex-1 border-0 bg-transparent px-1 py-0.5 text-sm focus:outline-none focus:ring-0"
+                    placeholder="name@example.com"
+                    autocomplete="off"
+                    [(ngModel)]="bccInput"
+                    (focus)="onRecipientFocus('bcc')"
+                    (input)="onRecipientInput('bcc', $event)"
+                    (keydown)="onRecipientKeydown('bcc', $event)"
+                    (blur)="commitRecipient('bcc')"
+                  />
+                </div>
+                @if (recipientField() === 'bcc' && recipientSuggestions().length > 0) {
+                  <ul class="absolute left-0 right-0 top-full z-30 mt-1 max-h-56 overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                    @for (c of recipientSuggestions(); track c.address) {
+                      <li>
+                        <button
+                          type="button"
+                          class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-slate-50"
+                          (mousedown)="$event.preventDefault(); addSuggestion('bcc', c)"
+                        >
+                          <span class="min-w-0 flex-1 truncate">{{ c.displayName || c.address }}</span>
+                          @if (c.displayName) {
+                            <span class="shrink-0 truncate text-xs text-slate-400">{{ c.address }}</span>
+                          }
+                        </button>
+                      </li>
+                    }
+                  </ul>
                 }
-              </datalist>
-              @if (hasInvalid(bccRaw)) {
+              </div>
+              @if (hasInvalid(bccInput)) {
                 <p class="mt-1 text-xs text-rose-600">
-                  Every entry needs an @ — some entries above are not addresses.
+                  That is not an address yet. Press Tab, comma or Enter to keep typing.
                 </p>
               }
             </div>
@@ -443,9 +533,12 @@ export class MailComposeComponent implements OnInit {
   private readonly contactsApi = inject(ContactsApi);
 
   from = '';
-  toRaw = '';
-  ccRaw = '';
-  bccRaw = '';
+  readonly to = signal<Address[]>([]);
+  readonly cc = signal<Address[]>([]);
+  readonly bcc = signal<Address[]>([]);
+  toInput = '';
+  ccInput = '';
+  bccInput = '';
   subject = '';
   // body is the plain-text body, and bodyHtml the rich-text one. Which of them
   // the message is composed in is format(), which starts as HTML: a user writing
@@ -489,8 +582,8 @@ export class MailComposeComponent implements OnInit {
     const pre = this.composeTarget.target();
     if (pre) {
       if (pre.subject) this.subject = pre.subject;
-      if (pre.to) this.toRaw = this.formatList(pre.to);
-      if (pre.cc) this.ccRaw = this.formatList(pre.cc);
+      if (pre.to) this.to.set(pre.to);
+      if (pre.cc) this.cc.set(pre.cc);
       this.inReplyTo = pre.in_reply_to ?? '';
       this.references = pre.references ?? [];
       this.replyLabel.set(pre.reply_label ?? '');
@@ -595,10 +688,6 @@ export class MailComposeComponent implements OnInit {
     }
   }
 
-  private formatList(addrs: Address[]): string {
-    return addrs.map((a) => (a.name ? `${a.name} <${a.address}>` : a.address)).join(', ');
-  }
-
   protected hasInvalid(raw: string): boolean {
     if (!raw.trim()) return false;
     return raw
@@ -632,14 +721,135 @@ export class MailComposeComponent implements OnInit {
     return hits.slice(0, 50);
   });
 
-  // contactOptions provides a flat list of addresses for the datalist autocomplete
-  // on the To/CC/BCC fields.
-  protected readonly contactOptions = computed(() => {
-    return this.people().map((c) => {
-      const name = c.displayName ? ` — ${c.displayName}` : '';
-      return `${c.address}${name} (${c.source})`;
-    });
+  // Recipient chips: the fields are lists of addresses, and the text input is
+  // only the address being typed now. The source book is never shown: a person
+  // choosing a recipient cares who they are, not which book the row came from.
+  protected readonly recipientField = signal<'to' | 'cc' | 'bcc' | null>(null);
+  protected readonly recipientQuery = signal('');
+
+  protected readonly recipientSuggestions = computed(() => {
+    const field = this.recipientField();
+    const q = this.recipientQuery().trim().toLowerCase();
+    if (!field || !q) return [];
+    const chosen = new Set(this.recipientsFor(field).map((a) => a.address.toLowerCase()));
+    return this.people()
+      .filter(
+        (c) =>
+          !chosen.has(c.address.toLowerCase()) &&
+          (c.address.toLowerCase().includes(q) ||
+            (c.displayName ?? '').toLowerCase().includes(q)),
+      )
+      .slice(0, 8);
   });
+
+  protected recipientsFor(field: 'to' | 'cc' | 'bcc'): Address[] {
+    return field === 'to' ? this.to() : field === 'cc' ? this.cc() : this.bcc();
+  }
+
+  private inputFor(field: 'to' | 'cc' | 'bcc'): string {
+    return field === 'to' ? this.toInput : field === 'cc' ? this.ccInput : this.bccInput;
+  }
+
+  private setInput(field: 'to' | 'cc' | 'bcc', value: string): void {
+    if (field === 'to') this.toInput = value;
+    else if (field === 'cc') this.ccInput = value;
+    else this.bccInput = value;
+  }
+
+  protected onRecipientFocus(field: 'to' | 'cc' | 'bcc'): void {
+    this.recipientField.set(field);
+    this.recipientQuery.set(this.inputFor(field));
+    void this.ensureContacts();
+  }
+
+  protected onRecipientInput(field: 'to' | 'cc' | 'bcc', event: Event): void {
+    this.recipientField.set(field);
+    this.recipientQuery.set((event.target as HTMLInputElement).value);
+    void this.ensureContacts();
+  }
+
+  // onRecipientKeydown commits on the keys mail clients use for "that address
+  // is finished": comma, semicolon, Enter and Tab. A suggestion wins Enter so
+  // the keyboard alone can pick from the list.
+  protected onRecipientKeydown(field: 'to' | 'cc' | 'bcc', event: KeyboardEvent): void {
+    if (event.key === ',' || event.key === ';') {
+      event.preventDefault();
+      this.commitRecipient(field);
+      return;
+    }
+    if (event.key === 'Enter' || event.key === 'Tab') {
+      const first = this.recipientSuggestions()[0];
+      if (first) {
+        event.preventDefault();
+        this.addAddress(field, first.address, first.displayName);
+        return;
+      }
+      if (this.inputFor(field).trim()) {
+        event.preventDefault();
+        this.commitRecipient(field);
+        return;
+      }
+    }
+    if (event.key === 'Backspace' && !this.inputFor(field)) {
+      const list = this.recipientsFor(field);
+      if (list.length > 0) {
+        event.preventDefault();
+        this.removeRecipient(field, list[list.length - 1].address);
+      }
+    }
+    if (event.key === 'Escape') this.recipientField.set(null);
+  }
+
+  protected addSuggestion(field: 'to' | 'cc' | 'bcc', suggestion: Suggestion): void {
+    this.addAddress(field, suggestion.address, suggestion.displayName);
+  }
+
+  // commitRecipient turns what is in the text box into chips. It returns false
+  // when there is text that is not an address yet, so send/draft can refuse
+  // rather than silently dropping what the user typed.
+  protected commitRecipient(field: 'to' | 'cc' | 'bcc'): boolean {
+    const raw = this.inputFor(field).trim();
+    if (!raw) return true;
+    if (this.hasInvalid(raw)) return false;
+    const parsed = parseAddresses(raw);
+    if (parsed.length === 0) return false;
+    for (const address of parsed) this.addAddress(field, address.address, address.name);
+    return true;
+  }
+
+  protected addAddress(field: 'to' | 'cc' | 'bcc', address: string, name?: string): void {
+    const key = address.trim().toLowerCase();
+    if (!key) return;
+    const list = this.recipientsFor(field);
+    if (list.some((a) => a.address.toLowerCase() === key)) {
+      this.setInput(field, '');
+      return;
+    }
+    const next = [...list, name ? { address: key, name } : { address: key }];
+    if (field === 'to') this.to.set(next);
+    else if (field === 'cc') this.cc.set(next);
+    else this.bcc.set(next);
+    this.setInput(field, '');
+    this.recipientQuery.set('');
+  }
+
+  protected removeRecipient(field: 'to' | 'cc' | 'bcc', address: string): void {
+    const key = address.toLowerCase();
+    const next = this.recipientsFor(field).filter((a) => a.address.toLowerCase() !== key);
+    if (field === 'to') this.to.set(next);
+    else if (field === 'cc') this.cc.set(next);
+    else this.bcc.set(next);
+  }
+
+  private commitAllRecipients(): boolean {
+    for (const field of ['to', 'cc', 'bcc'] as const) {
+      if (!this.commitRecipient(field)) {
+        this.error.set('One of the recipient fields still has text that is not a valid address.');
+        return false;
+      }
+    }
+    return true;
+  }
 
   // ensureContacts loads the organization contacts if not already loaded.
   // Called when the user focuses an address field or opens the contacts panel.
@@ -670,41 +880,11 @@ export class MailComposeComponent implements OnInit {
     await this.ensureContacts();
   }
 
-  // onContactSelect adds the selected address from the datalist to the field.
-  protected onContactSelect(field: 'to' | 'cc' | 'bcc', address: string): void {
-    // Extract just the email address from "email Name" format
-    const email = address.split(' ')[0];
-    const current = field === 'to' ? this.toRaw : field === 'cc' ? this.ccRaw : this.bccRaw;
-    const parts = current
-      .split(/[,;]/)
-      .map((p) => p.trim())
-      .filter(Boolean);
-    if (parts.some((p) => p.toLowerCase() === email.toLowerCase())) return;
-    if (field === 'to') this.toRaw = [...parts, email].join(', ');
-    else if (field === 'cc') this.ccRaw = [...parts, email].join(', ');
-    else this.bccRaw = [...parts, email].join(', ');
-    // Clear the datalist selection so it can be used again
-    this.contactFilter.set('');
-  }
-
-  // addRecipient appends an address to To without disturbing what is already
-  // there: a picker that replaced the field would throw away a recipient the
-  // user picked for a reason.
+  // addRecipient appends a picked address to To without disturbing the chips
+  // already there: a picker that replaced the field would throw away a
+  // recipient the user chose for a reason.
   protected addRecipient(address: string): void {
-    const parts = this.toRaw
-      .split(/[,;]/)
-      .map((p) => p.trim())
-      .filter(Boolean);
-    if (parts.some((p) => p.toLowerCase() === address.toLowerCase())) return;
-    this.toRaw = [...parts, address].join(', ');
-  }
-
-  // onContactInput is called when the user types in an address field.
-  // The datalist handles showing matching contacts automatically.
-  // This method can be extended to handle multi-recipient autocomplete.
-  protected onContactInput(_field: 'to' | 'cc' | 'bcc', _event: Event): void {
-    // The browser's native datalist handles autocomplete.
-    // We could add custom logic here for multi-recipient support.
+    this.addAddress('to', address);
   }
 
   // --- attachments -------------------------------------------------------------
@@ -811,8 +991,8 @@ export class MailComposeComponent implements OnInit {
       // An invitation with nobody addressed to it goes nowhere, so the
       // attendees are filled in while the fields are still untouched. Once the
       // user has typed anything the list is theirs to edit, not ours.
-      if (!this.toRaw && !this.ccRaw && !this.bccRaw) {
-        this.toRaw = ev.attendees.join(', ');
+      if (this.to().length === 0 && this.cc().length === 0 && this.bcc().length === 0) {
+        this.to.set(ev.attendees.map((address) => ({ address })));
       }
       if (!this.subject) this.subject = `Invitation: ${ev.summary}`;
       this.showInvite.set(false);
@@ -827,11 +1007,10 @@ export class MailComposeComponent implements OnInit {
   // --- submitting ----------------------------------------------------------------
 
   private buildRequest(requireRecipient: boolean): ComposeRequest | null {
-    const to = parseAddresses(this.toRaw);
-    const cc = parseAddresses(this.ccRaw);
-    const bcc = parseAddresses(this.bccRaw);
-    const typed = this.toRaw || this.ccRaw || this.bccRaw;
-    if (typed && !to.length && !cc.length && !bcc.length) {
+    const to = this.to();
+    const cc = this.cc();
+    const bcc = this.bcc();
+    if (to.length + cc.length + bcc.length === 0 && (this.toInput || this.ccInput || this.bccInput)) {
       this.error.set('The recipient fields have no valid address.');
       return null;
     }
@@ -880,6 +1059,7 @@ export class MailComposeComponent implements OnInit {
   }
 
   protected async send(): Promise<void> {
+    if (!this.commitAllRecipients()) return;
     const req = this.buildRequest(true);
     if (!req) return;
     this.busy.set(true);
@@ -895,10 +1075,11 @@ export class MailComposeComponent implements OnInit {
   }
 
   protected async saveDraft(): Promise<void> {
+    if (!this.commitAllRecipients()) return;
     if (
-      !this.toRaw &&
-      !this.ccRaw &&
-      !this.bccRaw &&
+      this.to().length === 0 &&
+      this.cc().length === 0 &&
+      this.bcc().length === 0 &&
       !this.subject.trim() &&
       !this.body.trim() &&
       !htmlHasContent(this.bodyHtml()) &&
