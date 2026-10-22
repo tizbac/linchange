@@ -197,15 +197,53 @@ func (w *Workgroups) ForDomain(ctx context.Context, q Querier, domain string) (W
 	return out, nil
 }
 
-// ForAddress is ForDomain applied to the domain part of an address. Every
-// caller that has an address and wants the organization behind it uses this,
-// rather than splitting the string itself.
+// ForAddress is ForDomain applied to the domain part of an address, with a
+// fallback to explicit membership. An address in a domain the organization
+// owns belongs to it; an address outside those domains belongs to it only when
+// somebody added it as a member, which is how a contractor or a second domain
+// joins the organization without moving the account.
 func (w *Workgroups) ForAddress(ctx context.Context, q Querier, address string) (Workgroup, error) {
-	_, domain, found := strings.Cut(strings.ToLower(strings.TrimSpace(address)), "@")
-	if !found {
+	address = strings.ToLower(strings.TrimSpace(address))
+	_, domain, found := strings.Cut(address, "@")
+	if found {
+		wg, err := w.ForDomain(ctx, q, domain)
+		if err == nil {
+			return wg, nil
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return Workgroup{}, err
+		}
+	}
+	return w.ForMember(ctx, q, address)
+}
+
+// ForMember returns the organization an address was explicitly added to.
+//
+// This is the second half of ForAddress: membership rows carry the people who
+// administer or belong to an organization without an address in its domains.
+func (w *Workgroups) ForMember(ctx context.Context, q Querier, address string) (Workgroup, error) {
+	address = strings.TrimSpace(address)
+	if address == "" {
 		return Workgroup{}, ErrNotFound
 	}
-	return w.ForDomain(ctx, q, domain)
+	var out Workgroup
+	err := q.GetContext(ctx, &out, `
+		SELECT w.id, w.name, w.domain, w.display_name, w.description, w.open_booking,
+		       COALESCE(w.logo_uid, '') AS logo_uid,
+		       COALESCE(w.logo_mime, '') AS logo_mime,
+		       w.logo_sha256, COALESCE(w.theme, '') AS theme, w.created_at, w.updated_at
+		FROM workgroups w
+		JOIN workgroup_members m ON m.workgroup_id = w.id
+		WHERE m.address = $1
+		ORDER BY w.domain, w.name
+		LIMIT 1`, address)
+	if IsNotFound(err) {
+		return Workgroup{}, ErrNotFound
+	}
+	if err != nil {
+		return Workgroup{}, fmt.Errorf("store: loading workgroup for member: %w", err)
+	}
+	return out, nil
 }
 
 // ByLogoUID resolves the public handle used in a logo URL. It is deliberately
@@ -320,17 +358,44 @@ func (w *Workgroups) Domains(ctx context.Context, q Querier, workgroupID int64) 
 	return out, nil
 }
 
-// People returns the enabled mailboxes in the domains an organization owns.
+// People returns the enabled mailboxes in the domains an organization owns,
+// plus anyone explicitly added as a member.
 //
-// Membership in the organization is not the filter here: everyone with an
-// address in one of its domains is a contact, which is what makes an
-// organization-wide address list useful in the first place.
+// Membership in the organization is not only a list of members: everyone with
+// an address in one of its domains is a contact, which is what makes an
+// organization-wide address list useful in the first place. The member rows
+// add the people who belong without an address in those domains.
 func (w *Workgroups) People(ctx context.Context, q Querier, workgroupID int64) ([]Contact, error) {
 	domains, err := w.Domains(ctx, q, workgroupID)
 	if err != nil {
 		return nil, err
 	}
-	return w.PeopleInDomains(ctx, q, domains)
+	rows, err := q.QueryxContext(ctx, `
+		SELECT u.address, u.display_name
+		FROM users u
+		WHERE u.enabled AND (
+		    lower(split_part(u.address, '@', 2)) = ANY($2)
+		    OR EXISTS (
+		        SELECT 1 FROM workgroup_members m
+		        WHERE m.workgroup_id = $1 AND m.address = u.address))
+		ORDER BY COALESCE(NULLIF(u.display_name, ''), u.address)`, workgroupID, domains)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing organization contacts: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]Contact, 0, 16)
+	for rows.Next() {
+		var c Contact
+		if err := rows.StructScan(&c); err != nil {
+			return nil, fmt.Errorf("store: scanning organization contact: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterating organization contacts: %w", err)
+	}
+	return out, nil
 }
 
 // PeopleInDomains returns the enabled mailboxes whose addresses sit in one of

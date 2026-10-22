@@ -347,6 +347,9 @@ func (b *AddressBooks) organizationBooks(ctx context.Context, q Querier, address
 		           SELECT 1 FROM domains d
 		           WHERE d.workgroup_id = w.id
 		             AND lower(d.name) = lower(split_part($1::text, '@', 2)))
+		       OR EXISTS (
+		           SELECT 1 FROM workgroup_members m
+		           WHERE m.workgroup_id = w.id AND m.address = $1::citext)
 		)
 		ORDER BY name`, address)
 	if err != nil {

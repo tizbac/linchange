@@ -194,6 +194,48 @@ func TestOrganizationDirectory(t *testing.T) {
 	}
 }
 
+func TestBooksPopulatesTheOrganizationDirectory(t *testing.T) {
+	db := testdb.Migrated(t)
+	ctx := context.Background()
+	seedOrganization(t, db)
+	seedUser(t, db, "alice@example.com", true)
+	seedUser(t, db, "bob@example.com", false)
+	seedUser(t, db, "eve@other.example", false)
+
+	svc := contacts.New(db, nil)
+	books, err := svc.Books(ctx, "alice@example.com")
+	if err != nil {
+		t.Fatalf("Books: %v", err)
+	}
+	var org *store.AddressBookAccess
+	for i := range books {
+		if books[i].Scope == store.AddressBookOrganization {
+			org = &books[i]
+		}
+	}
+	if org == nil {
+		t.Fatalf("no organization directory in %+v", books)
+	}
+	entries, err := svc.Cards(ctx, "alice@example.com", org.ID)
+	if err != nil {
+		t.Fatalf("Cards: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, entry := range entries {
+		for _, email := range entry.Emails {
+			seen[strings.ToLower(email.Value)] = true
+		}
+	}
+	for _, address := range []string{"alice@example.com", "bob@example.com"} {
+		if !seen[address] {
+			t.Errorf("the directory has no card for %s: %+v", address, entries)
+		}
+	}
+	if seen["eve@other.example"] {
+		t.Errorf("the directory contains an address outside the organization: %+v", entries)
+	}
+}
+
 func TestSearchPrefersThePersonalBookAndNamesItsSource(t *testing.T) {
 	db := testdb.Migrated(t)
 	ctx := context.Background()

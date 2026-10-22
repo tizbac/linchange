@@ -123,11 +123,16 @@ func TestOrganizationPeopleAreEveryoneInTheDomains(t *testing.T) {
 		{Address: "bob@example.org", Source: policy.SourceLocal, DisplayName: "Bob"},
 		{Address: "carol@other.test", Source: policy.SourceLocal, DisplayName: "Carol"},
 		{Address: "dave@example.com", Source: policy.SourceLocal, DisplayName: "Dave"},
+		// Erin is outside every domain but belongs through a member row.
+		{Address: "erin@contractor.test", Source: policy.SourceLocal, DisplayName: "Erin"},
 	}
 	for _, p := range people {
 		if err := users.Create(ctx, db, p); err != nil {
 			t.Fatalf("creating %s: %v", p.Address, err)
 		}
+	}
+	if err := groups.AddMember(ctx, db, wg.ID, "erin@contractor.test", store.WorkgroupRoleMember); err != nil {
+		t.Fatalf("adding erin: %v", err)
 	}
 	if err := users.SetEnabled(ctx, db, "dave@example.com", false); err != nil {
 		t.Fatalf("disabling dave: %v", err)
@@ -137,7 +142,7 @@ func TestOrganizationPeopleAreEveryoneInTheDomains(t *testing.T) {
 	if err != nil {
 		t.Fatalf("people: %v", err)
 	}
-	want := []string{"alice@example.com", "bob@example.org"}
+	want := []string{"alice@example.com", "bob@example.org", "erin@contractor.test"}
 	if len(got) != len(want) {
 		t.Fatalf("people = %v, want %v", got, want)
 	}
@@ -145,5 +150,11 @@ func TestOrganizationPeopleAreEveryoneInTheDomains(t *testing.T) {
 		if got[i].Address != address {
 			t.Errorf("people[%d] = %q, want %q", i, got[i].Address, address)
 		}
+	}
+
+	// The member row is also enough to resolve the organization for an address
+	// outside its domains.
+	if wg, err := groups.ForAddress(ctx, db, "erin@contractor.test"); err != nil || wg.ID == 0 {
+		t.Errorf("ForAddress for an explicit member = %+v, %v", wg, err)
 	}
 }

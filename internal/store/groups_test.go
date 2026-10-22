@@ -124,7 +124,7 @@ func TestCalendarShareLevels(t *testing.T) {
 		t.Fatalf("seeding domain: %v", err)
 	}
 	users := store.NewUsers()
-	for _, address := range []string{"alice@example.com", "bob@example.com", "carol@other.test"} {
+	for _, address := range []string{"alice@example.com", "bob@example.com", "carol@other.test", "dave@other.test"} {
 		if err := users.Create(ctx, db, store.CreateUserRequest{
 			Address: address, Source: policy.SourceLocal,
 		}); err != nil {
@@ -136,6 +136,11 @@ func TestCalendarShareLevels(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("creating workgroup: %v", err)
+	}
+	// Dave is outside the organization's domains but is an explicit member:
+	// Everyone must include him, and a share with Everyone must reach him.
+	if err := store.NewWorkgroups().AddMember(ctx, db, wg.ID, "dave@other.test", store.WorkgroupRoleMember); err != nil {
+		t.Fatalf("adding dave to the workgroup: %v", err)
 	}
 
 	owner := "alice@example.com"
@@ -244,6 +249,13 @@ func TestCalendarShareLevels(t *testing.T) {
 	}
 	if got := level("carol@other.test"); got != store.CalendarShareRead {
 		t.Errorf("carol's group grants %q and Everyone does not reach her, want read", got)
+	}
+	// Dave is outside the domains but was added as an organization member.
+	if got := level("dave@other.test"); got != store.CalendarShareWrite {
+		t.Errorf("dave, an explicit member in Everyone, reads %q, want write", got)
+	}
+	if shared, err := shares.SharedCalendars(ctx, db, "dave@other.test"); err != nil || len(shared) != 1 {
+		t.Errorf("dave sees %v (err %v), want the diary", shared, err)
 	}
 
 	// The list of calendars shared with an address agrees with the check above:

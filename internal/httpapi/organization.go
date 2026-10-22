@@ -73,13 +73,21 @@ func (s *Server) handleOrganizationPeople(w http.ResponseWriter, r *http.Request
 	}
 
 	domains := []string{domain}
+	orgID := int64(0)
 	if wg, ok := s.organizationFor(ctx, address); ok {
+		orgID = wg.ID
 		if owned, err := s.workgroups.Domains(ctx, s.db, wg.ID); err == nil && len(owned) > 0 {
 			domains = owned
 		}
 	}
 
-	people, err := s.workgroups.PeopleInDomains(ctx, s.db, domains)
+	var people []store.Contact
+	var err error
+	if orgID != 0 {
+		people, err = s.workgroups.People(ctx, s.db, orgID)
+	} else {
+		people, err = s.workgroups.PeopleInDomains(ctx, s.db, domains)
+	}
 	if err != nil {
 		s.log.Error("listing organization contacts", "error", err, "address", address)
 		s.writeError(w, http.StatusInternalServerError, "could not load contacts")

@@ -199,10 +199,15 @@ func (g *Groups) ForMember(ctx context.Context, q Querier, address string) ([]Wo
 		        SELECT 1
 		        FROM users u
 		        WHERE u.address = $1 AND u.enabled
-		          AND lower(split_part(u.address, '@', 2)) IN (
-		              SELECT w.domain FROM workgroups w WHERE w.id = g.workgroup_id
-		              UNION
-		              SELECT d.name FROM domains d WHERE d.workgroup_id = g.workgroup_id
+		          AND (
+		              lower(split_part(u.address, '@', 2)) IN (
+		                  SELECT w.domain FROM workgroups w WHERE w.id = g.workgroup_id
+		                  UNION
+		                  SELECT d.name FROM domains d WHERE d.workgroup_id = g.workgroup_id
+		              )
+		              OR EXISTS (
+		                  SELECT 1 FROM workgroup_members wm
+		                  WHERE wm.workgroup_id = g.workgroup_id AND wm.address = $1)
 		          )
 		    )
 		)
@@ -234,10 +239,15 @@ func (g *Groups) IsMember(ctx context.Context, q Querier, groupID int64, address
 		    SELECT 1
 		    FROM users u
 		    WHERE u.address = $2 AND u.enabled
-		      AND lower(split_part(u.address, '@', 2)) IN (
-		          SELECT w.domain FROM workgroups w WHERE w.id = g.workgroup_id
-		          UNION
-		          SELECT d.name FROM domains d WHERE d.workgroup_id = g.workgroup_id
+		      AND (
+		          lower(split_part(u.address, '@', 2)) IN (
+		              SELECT w.domain FROM workgroups w WHERE w.id = g.workgroup_id
+		              UNION
+		              SELECT d.name FROM domains d WHERE d.workgroup_id = g.workgroup_id
+		          )
+		          OR EXISTS (
+		              SELECT 1 FROM workgroup_members wm
+		              WHERE wm.workgroup_id = g.workgroup_id AND wm.address = $2)
 		      )
 		) ELSE EXISTS (
 		    SELECT 1 FROM workgroup_group_members m

@@ -232,7 +232,69 @@ func (s *Service) Books(ctx context.Context, owner string) ([]store.AddressBookA
 	if _, err := s.EnsurePersonal(ctx, owner); err != nil {
 		return nil, err
 	}
+	// The organization directory is a projection of the accounts in the
+	// organization's domains. Populating it on read repairs organizations that
+	// existed before their users did, or whose users were created before the
+	// organization was assigned to the domain.
+	s.ensureOrganizationDirectory(ctx, owner)
 	return s.books.Accessible(ctx, s.db, owner)
+}
+
+// ensureOrganizationDirectory makes sure every enabled account in the caller's
+// organization has a card in its directory. Existing cards are left alone: an
+// administrator may have added a title, phone or note that the user row does
+// not carry. A failure is logged and ignored: a directory that cannot be
+// topped up must not stop the caller opening their personal addresses.
+func (s *Service) ensureOrganizationDirectory(ctx context.Context, actor string) {
+	wg, err := store.NewWorkgroups().ForAddress(ctx, s.db, actor)
+	if err != nil {
+		return
+	}
+	// The first caller may be an ordinary member. If the directory does not
+	// exist yet, create it under a workgroup administrator so that reading the
+	// directory does not quietly grant that member write access to it.
+	owner := actor
+	if members, err := store.NewWorkgroups().Members(ctx, s.db, wg.ID); err == nil {
+		for _, member := range members {
+			if member.IsAdmin() {
+				owner = member.Address
+				break
+			}
+		}
+	}
+	book, err := s.EnsureOrganization(ctx, owner, wg.ID)
+	if err != nil {
+		s.log.WarnContext(ctx, "could not ensure the organization directory",
+			"address", actor, "workgroup", wg.ID, "error", err)
+		return
+	}
+	existing, err := s.books.ListContacts(ctx, s.db, book.ID)
+	if err != nil {
+		s.log.WarnContext(ctx, "could not read the organization directory",
+			"address", actor, "workgroup", wg.ID, "error", err)
+		return
+	}
+	have := make(map[string]bool, len(existing))
+	for _, card := range existing {
+		have[strings.ToLower(strings.TrimSpace(card.Email))] = true
+	}
+	people, err := store.NewWorkgroups().People(ctx, s.db, wg.ID)
+	if err != nil {
+		s.log.WarnContext(ctx, "could not list the organization's people",
+			"address", actor, "workgroup", wg.ID, "error", err)
+		return
+	}
+	for _, person := range people {
+		address := strings.ToLower(strings.TrimSpace(person.Address))
+		if address == "" || have[address] {
+			continue
+		}
+		if err := s.UpsertOrganizationPerson(ctx, owner, wg.ID, address, person.DisplayName, ""); err != nil {
+			s.log.WarnContext(ctx, "could not add a person to the organization directory",
+				"address", actor, "person", address, "error", err)
+			return
+		}
+	}
 }
 
 // CreateBook creates a named book owned by the caller.
