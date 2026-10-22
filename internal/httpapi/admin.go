@@ -241,6 +241,16 @@ func mountAdminRoutes(r chi.Router, s *Server) {
 				r.Post("/shares", s.shareWorkgroupCalendar)
 				r.Delete("/shares/{shareID}", s.unshareWorkgroupCalendar)
 			})
+			// Shared address books are the contacts counterpart: the
+			// organization owns the book, and it is shared with Everyone or a
+			// named group rather than with the administrator's own account.
+			r.Get("/address-books", s.listWorkgroupAddressBooks)
+			r.Post("/address-books", s.createWorkgroupAddressBook)
+			r.Route("/address-books/{bookID}", func(r chi.Router) {
+				r.Get("/shares", s.listWorkgroupAddressBookShares)
+				r.Post("/shares", s.shareWorkgroupAddressBook)
+				r.Delete("/shares/{shareID}", s.unshareWorkgroupAddressBook)
+			})
 		})
 	})
 
@@ -2339,6 +2349,129 @@ func (s *Server) unshareWorkgroupCalendar(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := s.admin.UnshareWorkgroupCalendar(r.Context(), Principal(r.Context()), id, calendarID, shareID); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listWorkgroupAddressBooks(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	if err := s.admin.CanAdmin(Principal(r.Context())); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	opts, err := adminListOptionsFrom(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	books, err := s.contacts.WorkgroupBooks(r.Context(), id)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	out, total := pageAdmin(books, opts)
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"books": out, "total": total, "limit": opts.Limit, "offset": opts.Offset,
+	})
+}
+
+func (s *Server) createWorkgroupAddressBook(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
+		return
+	}
+	var in struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	book, err := s.contacts.CreateWorkgroupBook(r.Context(), Principal(r.Context()).Address, id, in.Name, in.Description)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusCreated, book)
+}
+
+func (s *Server) listWorkgroupAddressBookShares(w http.ResponseWriter, r *http.Request) {
+	bookID, ok := pathID(r, "bookID")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid address book id")
+		return
+	}
+	if err := s.admin.CanAdmin(Principal(r.Context())); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	shares, err := s.contacts.WorkgroupBookShares(r.Context(), bookID)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"shares": shares})
+}
+
+func (s *Server) shareWorkgroupAddressBook(w http.ResponseWriter, r *http.Request) {
+	bookID, ok := pathID(r, "bookID")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid address book id")
+		return
+	}
+	if err := s.admin.CanAdmin(Principal(r.Context())); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	var in struct {
+		SubjectKind    string `json:"subject_kind"`
+		SubjectAddress string `json:"subject_address"`
+		SubjectGroupID int64  `json:"subject_group_id"`
+		Level          string `json:"level"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if in.Level == "" {
+		in.Level = store.AddressBookShareRead
+	}
+	if in.Level != store.AddressBookShareRead && in.Level != store.AddressBookShareWrite {
+		s.writeError(w, http.StatusBadRequest, "level must be read or write")
+		return
+	}
+	share, err := s.contacts.ShareWorkgroupBook(r.Context(), bookID, in.SubjectKind, in.SubjectAddress, in.SubjectGroupID, in.Level)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusCreated, share)
+}
+
+func (s *Server) unshareWorkgroupAddressBook(w http.ResponseWriter, r *http.Request) {
+	bookID, ok := pathID(r, "bookID")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid address book id")
+		return
+	}
+	shareID, ok := pathID(r, "shareID")
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "invalid share id")
+		return
+	}
+	if err := s.admin.CanAdmin(Principal(r.Context())); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	if err := s.contacts.UnshareWorkgroupBook(r.Context(), bookID, shareID); err != nil {
 		adminErrors(w, s, err)
 		return
 	}

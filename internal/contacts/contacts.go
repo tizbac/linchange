@@ -298,6 +298,84 @@ func (s *Service) ensureOrganizationDirectory(ctx context.Context, actor string)
 	}
 }
 
+// WorkgroupBooks returns the address books an organization owns.
+func (s *Service) WorkgroupBooks(ctx context.Context, workgroupID int64) ([]store.AddressBook, error) {
+	return s.books.ByWorkgroup(ctx, s.db, workgroupID)
+}
+
+// CreateWorkgroupBook creates a shared book owned by the organization. The
+// administrator is recorded as its creator, but the workgroup owns it, so it
+// survives that administrator leaving.
+func (s *Service) CreateWorkgroupBook(ctx context.Context, actor string, workgroupID int64, name, description string) (store.AddressBook, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return store.AddressBook{}, fmt.Errorf("%w: a book needs a name", ErrInvalid)
+	}
+	if len([]rune(name)) > maxBookName {
+		return store.AddressBook{}, fmt.Errorf("%w: the name is too long", ErrInvalid)
+	}
+	base := slugify(name)
+	for attempt := 1; attempt <= 50; attempt++ {
+		slug := base
+		if attempt > 1 {
+			slug = fmt.Sprintf("%s-%d", base, attempt)
+		}
+		book, err := s.books.Create(ctx, s.db, store.AddressBook{
+			Owner:       strings.ToLower(strings.TrimSpace(actor)),
+			WorkgroupID: &workgroupID,
+			Scope:       store.AddressBookShared,
+			Name:        name,
+			Slug:        slug,
+			Description: strings.TrimSpace(description),
+		})
+		if err == nil {
+			return book, nil
+		}
+		if !errors.Is(err, store.ErrConflict) {
+			return store.AddressBook{}, err
+		}
+	}
+	return store.AddressBook{}, fmt.Errorf("%w: too many books with that name", ErrInvalid)
+}
+
+// WorkgroupBookShares lists the shares on an organization book.
+func (s *Service) WorkgroupBookShares(ctx context.Context, bookID int64) ([]store.AddressBookShare, error) {
+	return s.books.ListShares(ctx, s.db, bookID)
+}
+
+// ShareWorkgroupBook grants an organization book to a person or group. Unlike
+// a personal share this is active immediately: the organization is sharing a
+// book it owns, not offering an administrator's own address book.
+func (s *Service) ShareWorkgroupBook(ctx context.Context, bookID int64, kind, address string, groupID int64, level string) (store.AddressBookShare, error) {
+	share := store.AddressBookShare{
+		BookID:      bookID,
+		SubjectKind: kind,
+		Level:       level,
+		Status:      store.AddressBookShareActive,
+	}
+	switch kind {
+	case store.ShareSubjectUser:
+		address = strings.ToLower(strings.TrimSpace(address))
+		if address == "" {
+			return store.AddressBookShare{}, fmt.Errorf("%w: a share needs an address", ErrInvalid)
+		}
+		share.SubjectAddress = &address
+	case store.ShareSubjectGroup:
+		if groupID == 0 {
+			return store.AddressBookShare{}, fmt.Errorf("%w: a share needs a group", ErrInvalid)
+		}
+		share.SubjectGroupID = &groupID
+	default:
+		return store.AddressBookShare{}, fmt.Errorf("%w: subject kind must be user or group", ErrInvalid)
+	}
+	return s.books.PutShare(ctx, s.db, share)
+}
+
+// UnshareWorkgroupBook removes a share from an organization book.
+func (s *Service) UnshareWorkgroupBook(ctx context.Context, bookID, shareID int64) error {
+	return s.books.DeleteShare(ctx, s.db, shareID)
+}
+
 // CreateBook creates a named book owned by the caller.
 func (s *Service) CreateBook(ctx context.Context, owner, name, description string) (store.AddressBook, error) {
 	name = strings.TrimSpace(name)

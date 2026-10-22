@@ -20,6 +20,7 @@ import {
 } from './admin.models';
 import { ImportJob, ImportJobRequest } from '../mail/mail.models';
 import { CalendarShare, ShareCalendarRequest } from '../calendar/calendar.models';
+import { AddressBook, AddressBookShare } from '../contacts/contacts.models';
 
 const API = '/api/v1/admin';
 
@@ -442,6 +443,32 @@ export class AdminApi {
 
   listWorkgroupCalendars(id: number, filter: AdminListFilter = {}): Promise<{ calendars: OrgCalendar[]; total: number }> {
     return this.get(`/workgroups/${id}/calendars${listQuery(filter)}`);
+  }
+
+  // --- organization address books ---
+
+  listWorkgroupAddressBooks(id: number, filter: AdminListFilter = {}): Promise<{ books: AddressBook[]; total: number }> {
+    return this.get(`/workgroups/${id}/address-books${listQuery(filter)}`);
+  }
+
+  createWorkgroupAddressBook(id: number, body: { name: string; description?: string }): Promise<AddressBook> {
+    return this.post(`/workgroups/${id}/address-books`, body);
+  }
+
+  listWorkgroupAddressBookShares(id: number, bookID: number): Promise<{ shares: AddressBookShare[] }> {
+    return this.get(`/workgroups/${id}/address-books/${bookID}/shares`);
+  }
+
+  shareWorkgroupAddressBook(
+    id: number,
+    bookID: number,
+    body: { subject_kind: 'user' | 'group'; subject_address?: string; subject_group_id?: number; level: 'read' | 'write' },
+  ): Promise<AddressBookShare> {
+    return this.post(`/workgroups/${id}/address-books/${bookID}/shares`, body);
+  }
+
+  unshareWorkgroupAddressBook(id: number, bookID: number, shareID: number): Promise<void> {
+    return this.request('delete', `/workgroups/${id}/address-books/${bookID}/shares/${shareID}`, null) as Promise<void>;
   }
 
   createWorkgroupCalendar(

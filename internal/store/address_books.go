@@ -299,6 +299,21 @@ func (b *AddressBooks) Accessible(ctx context.Context, q Querier, address string
 	return out, nil
 }
 
+// ByWorkgroup returns the address books an organization owns, including its
+// organization directory and any shared books an administrator created.
+func (b *AddressBooks) ByWorkgroup(ctx context.Context, q Querier, workgroupID int64) ([]AddressBook, error) {
+	out := make([]AddressBook, 0, 4)
+	err := q.SelectContext(ctx, &out, `
+		SELECT `+addressBookColumns+`
+		FROM address_books
+		WHERE workgroup_id = $1
+		ORDER BY name, id`, workgroupID)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing workgroup address books: %w", err)
+	}
+	return out, nil
+}
+
 // sharedBooks returns books shared with the address, with the strongest level
 // any granted share gives.
 func (b *AddressBooks) sharedBooks(ctx context.Context, q Querier, address string) ([]AddressBookAccess, error) {
@@ -319,9 +334,7 @@ func (b *AddressBooks) sharedBooks(ctx context.Context, q Querier, address strin
 		      WHERE d.share_id = s.id AND d.address = $1::citext AND d.decision = 'accepted'))
 		  AND (
 		      (s.subject_kind = 'user' AND s.subject_address = $1::citext)
-		      OR (s.subject_kind = 'group' AND EXISTS (
-		          SELECT 1 FROM workgroup_group_members m
-		          WHERE m.group_id = s.subject_group_id AND m.address = $1::citext))
+		      OR (s.subject_kind = 'group' AND workgroup_group_has_address(s.subject_group_id, $1::citext))
 		  )
 		GROUP BY b.id`, address)
 	if err != nil {
@@ -461,9 +474,7 @@ func (b *AddressBooks) ShareLevel(ctx context.Context, q Querier, bookID int64, 
 		      WHERE d.share_id = s.id AND d.address = $2::citext AND d.decision = 'accepted'))
 		  AND (
 		      (s.subject_kind = 'user' AND s.subject_address = $2::citext)
-		      OR (s.subject_kind = 'group' AND EXISTS (
-		          SELECT 1 FROM workgroup_group_members m
-		          WHERE m.group_id = s.subject_group_id AND m.address = $2::citext))
+		      OR (s.subject_kind = 'group' AND workgroup_group_has_address(s.subject_group_id, $2::citext))
 		  )`, bookID, strings.ToLower(strings.TrimSpace(address)))
 	if err != nil {
 		return "", fmt.Errorf("store: reading address book access: %w", err)

@@ -4,6 +4,7 @@ import { RouterLink } from '@angular/router';
 import { ActivatedRoute } from '@angular/router';
 import { AdminApi } from '../core/admin/admin-api';
 import { Domain, OrgCalendar, Workgroup, WorkgroupGroup, WorkgroupMember } from '../core/admin/admin.models';
+import { AddressBook, AddressBookShare } from '../core/contacts/contacts.models';
 import { AuthService } from '../core/auth/auth.service';
 import { errorMessage } from '../core/http-error';
 import { AdminListFooter, AdminSearch } from '../core/admin/admin-list';
@@ -20,7 +21,7 @@ import {
 import { AdminNavComponent } from '../core/admin/admin-nav.component';
 import { AdminPageComponent } from '../core/admin/admin-page.component';
 
-type Tab = 'general' | 'members' | 'calendars' | 'groups';
+type Tab = 'general' | 'members' | 'calendars' | 'groups' | 'addressbooks';
 
 // AdminWorkgroupManageComponent is the organization's own screen. The list page
 // answers "which organizations are there"; this one answers everything about
@@ -274,6 +275,80 @@ type Tab = 'general' | 'members' | 'calendars' | 'groups';
               <admin-list-footer [page]="groupPage" [total]="groupTotal()" [pageSize]="pageSize" (pageChange)="goGroupPage($event)" />
             </admin-panel>
           }
+
+          @if (tab() === 'addressbooks') {
+            <admin-panel title="Address books" [bodyClass]="'p-0'">
+              <div class="flex flex-wrap items-end gap-3 px-4 pt-4">
+                <admin-search [query]="bookQuery" (search)="searchBooks($event)" placeholder="Search address books…" />
+                <span class="flex-1"></span>
+                <label class="block">
+                  <span class="mb-1 block text-xs font-medium text-slate-600">New shared book</span>
+                  <input class="{{ inputClass }}" name="newBook" [(ngModel)]="newBook" placeholder="Suppliers" />
+                </label>
+                <admin-button [disabled]="busy() || !newBook.trim()" (pressed)="createBook()">Create</admin-button>
+              </div>
+              <table class="mt-4 w-full">
+                <thead class="border-b border-slate-200 bg-slate-50">
+                  <tr>
+                    <th class="{{ head }}">Name</th>
+                    <th class="{{ head }}">Description</th>
+                    <th class="{{ head }}"></th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  @for (book of books(); track book.id) {
+                    <tr>
+                      <td class="{{ cell }} font-medium">{{ book.name }}</td>
+                      <td class="{{ cell }} text-slate-500">{{ book.description || '—' }}</td>
+                      <td class="{{ cell }} text-right">
+                        <admin-button (pressed)="toggleBookShares(book)">
+                          {{ shareBookFor === book.id ? 'Hide shares' : 'Share' }}
+                        </admin-button>
+                      </td>
+                    </tr>
+                    @if (shareBookFor === book.id) {
+                      <tr class="bg-slate-50/60">
+                        <td colspan="3" class="px-4 py-3">
+                          <div class="flex flex-wrap items-end gap-2">
+                            <label class="block">
+                              <span class="mb-1 block text-xs font-medium text-slate-600">Share with</span>
+                              <select class="{{ inputClass }} min-w-64" [(ngModel)]="bookShareSubject" name="bookShareSubject">
+                                <option value="">Choose a person or group</option>
+                                @for (c of bookShareCandidates(); track c.value) {
+                                  <option [value]="c.value">{{ c.label }}</option>
+                                }
+                              </select>
+                            </label>
+                            <label class="block">
+                              <span class="mb-1 block text-xs font-medium text-slate-600">Access</span>
+                              <select class="{{ inputClass }}" [(ngModel)]="bookShareLevel" name="bookShareLevel">
+                                <option value="read">Read only</option>
+                                <option value="write">Read and write</option>
+                              </select>
+                            </label>
+                            <admin-button [disabled]="busy() || !bookShareSubject" (pressed)="addBookShare(book)">Share</admin-button>
+                          </div>
+                          <ul class="mt-3 divide-y divide-slate-100">
+                            @for (share of bookSharesFor(book); track share.id) {
+                              <li class="flex items-center justify-between py-2 text-sm">
+                                <span>{{ bookShareLabel(share) }} · {{ share.level }}</span>
+                                <admin-button variant="danger" [disabled]="busy()" (pressed)="removeBookShare(book, share)">Remove</admin-button>
+                              </li>
+                            } @empty {
+                              <li class="py-2 text-sm text-slate-500">Not shared yet.</li>
+                            }
+                          </ul>
+                        </td>
+                      </tr>
+                    }
+                  } @empty {
+                    <tr><td class="{{ cell }} text-slate-500" colspan="3">No address books match.</td></tr>
+                  }
+                </tbody>
+              </table>
+              <admin-list-footer [page]="bookPage" [total]="bookTotal()" [pageSize]="pageSize" (pageChange)="goBookPage($event)" />
+            </admin-panel>
+          }
         }
       </div>
     </admin-page>
@@ -293,6 +368,7 @@ export class AdminWorkgroupManageComponent implements OnInit {
     { key: 'members', label: 'Members' },
     { key: 'calendars', label: 'Calendars' },
     { key: 'groups', label: 'Groups' },
+    { key: 'addressbooks', label: 'Address books' },
   ];
 
   protected readonly wg = signal<Workgroup | null>(null);
@@ -324,6 +400,19 @@ export class AdminWorkgroupManageComponent implements OnInit {
   protected groupQuery = '';
   protected groupPage = 1;
   protected newGroup = '';
+  // allGroups is the complete picker list, not the current page of the groups
+  // tab: sharing with a group must not depend on which page is visible.
+  protected readonly allGroups = signal<WorkgroupGroup[]>([]);
+
+  protected readonly books = signal<AddressBook[]>([]);
+  protected readonly bookTotal = signal(0);
+  protected bookQuery = '';
+  protected bookPage = 1;
+  protected newBook = '';
+  protected readonly bookShares = signal<Map<number, AddressBookShare[]>>(new Map());
+  protected shareBookFor = 0;
+  protected bookShareSubject = '';
+  protected bookShareLevel: 'read' | 'write' = 'read';
 
   private id = 0;
 
@@ -351,7 +440,7 @@ export class AdminWorkgroupManageComponent implements OnInit {
         openBooking: wg.open_booking,
         theme: wg.theme ?? '',
       };
-      await Promise.all([this.loadMembers(), this.loadCalendars(), this.loadGroups()]);
+      await Promise.all([this.loadMembers(), this.loadCalendars(), this.loadGroups(), this.loadBooks(), this.loadAllGroups()]);
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {
@@ -593,10 +682,138 @@ export class AdminWorkgroupManageComponent implements OnInit {
     try {
       await this.api.deleteWorkgroupGroup(this.id, group.id);
       await this.loadGroups();
+      await this.loadAllGroups();
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {
       this.busy.set(false);
     }
+  }
+
+  // --- organization address books ---
+
+  private async loadAllGroups(): Promise<void> {
+    const res = await this.api.listWorkgroupGroups(this.id, { limit: 100 });
+    this.allGroups.set(res.groups ?? []);
+  }
+
+  private async loadBooks(): Promise<void> {
+    const res = await this.api.listWorkgroupAddressBooks(this.id, {
+      search: this.bookQuery || undefined,
+      limit: this.pageSize,
+      offset: (this.bookPage - 1) * this.pageSize,
+    });
+    this.books.set(res.books ?? []);
+    this.bookTotal.set(res.total);
+  }
+
+  protected searchBooks(value: string): void {
+    this.bookQuery = value;
+    this.bookPage = 1;
+    void this.loadBooks();
+  }
+
+  protected goBookPage(page: number): void {
+    this.bookPage = page;
+    void this.loadBooks();
+  }
+
+  protected async createBook(): Promise<void> {
+    const name = this.newBook.trim();
+    if (!name) return;
+    this.busy.set(true);
+    try {
+      await this.api.createWorkgroupAddressBook(this.id, { name });
+      this.newBook = '';
+      await this.loadBooks();
+      this.ok.set(`${name} created.`);
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  protected async toggleBookShares(book: AddressBook): Promise<void> {
+    this.error.set('');
+    if (this.shareBookFor === book.id) {
+      this.shareBookFor = 0;
+      return;
+    }
+    this.shareBookFor = book.id;
+    this.bookShareSubject = '';
+    try {
+      const res = await this.api.listWorkgroupAddressBookShares(this.id, book.id);
+      this.bookShares.update((m) => new Map(m).set(book.id, res.shares ?? []));
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    }
+  }
+
+  protected bookSharesFor(book: AddressBook): AddressBookShare[] {
+    return this.bookShares().get(book.id) ?? [];
+  }
+
+  // bookShareCandidates labels a person or group with the value the request
+  // needs, exactly as the calendar share picker does.
+  protected bookShareCandidates(): { value: string; label: string }[] {
+    const out: { value: string; label: string }[] = [];
+    for (const address of this.users()) {
+      out.push({ value: `user:${address}`, label: address });
+    }
+    for (const group of this.allGroups()) {
+      out.push({
+        value: `group:${group.id}`,
+        label: group.everyone ? group.name : `${group.name} · ${group.member_count}`,
+      });
+    }
+    return out;
+  }
+
+  protected async addBookShare(book: AddressBook): Promise<void> {
+    const separator = this.bookShareSubject.indexOf(':');
+    const kind = separator < 0 ? '' : this.bookShareSubject.slice(0, separator);
+    const value = separator < 0 ? '' : this.bookShareSubject.slice(separator + 1);
+    if (!value) {
+      this.error.set('Choose a person or a group to share with.');
+      return;
+    }
+    this.busy.set(true);
+    this.error.set('');
+    try {
+      await this.api.shareWorkgroupAddressBook(this.id, book.id, {
+        subject_kind: kind === 'group' ? 'group' : 'user',
+        ...(kind === 'group'
+          ? { subject_group_id: Number(value) }
+          : { subject_address: value }),
+        level: this.bookShareLevel,
+      });
+      this.bookShareSubject = '';
+      const res = await this.api.listWorkgroupAddressBookShares(this.id, book.id);
+      this.bookShares.update((m) => new Map(m).set(book.id, res.shares ?? []));
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  protected async removeBookShare(book: AddressBook, share: AddressBookShare): Promise<void> {
+    this.busy.set(true);
+    try {
+      await this.api.unshareWorkgroupAddressBook(this.id, book.id, share.id);
+      const res = await this.api.listWorkgroupAddressBookShares(this.id, book.id);
+      this.bookShares.update((m) => new Map(m).set(book.id, res.shares ?? []));
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  protected bookShareLabel(share: AddressBookShare): string {
+    return share.subjectKind === 'group'
+      ? `group ${share.subjectGroupId ?? ''}`
+      : share.subjectAddress || '';
   }
 }

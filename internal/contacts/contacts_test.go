@@ -236,6 +236,55 @@ func TestBooksPopulatesTheOrganizationDirectory(t *testing.T) {
 	}
 }
 
+func TestWorkgroupSharedBookReachesEveryone(t *testing.T) {
+	db := testdb.Migrated(t)
+	ctx := context.Background()
+	wg := seedOrganization(t, db)
+	seedUser(t, db, "alice@example.com", true)
+	seedUser(t, db, "bob@example.com", false)
+	svc := contacts.New(db, nil)
+
+	book, err := svc.CreateWorkgroupBook(ctx, "alice@example.com", wg.ID, "Suppliers", "External vendors")
+	if err != nil {
+		t.Fatalf("CreateWorkgroupBook: %v", err)
+	}
+	if book.WorkgroupID == nil || *book.WorkgroupID != wg.ID {
+		t.Fatalf("book workgroup = %v, want %d", book.WorkgroupID, wg.ID)
+	}
+	groups, err := store.NewGroups().List(ctx, db, wg.ID)
+	if err != nil {
+		t.Fatalf("groups: %v", err)
+	}
+	var everyone store.WorkgroupGroup
+	for _, group := range groups {
+		if group.Everyone {
+			everyone = group
+		}
+	}
+	if everyone.ID == 0 {
+		t.Fatal("no Everyone group")
+	}
+	if _, err := svc.ShareWorkgroupBook(ctx, book.ID, store.ShareSubjectGroup, "", everyone.ID, store.AddressBookShareRead); err != nil {
+		t.Fatalf("ShareWorkgroupBook: %v", err)
+	}
+	books, err := svc.Books(ctx, "bob@example.com")
+	if err != nil {
+		t.Fatalf("Books: %v", err)
+	}
+	found := false
+	for _, b := range books {
+		if b.ID == book.ID {
+			found = true
+			if b.Level != store.AddressBookShareRead {
+				t.Errorf("shared book level = %q, want read", b.Level)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("bob does not see the shared book: %+v", books)
+	}
+}
+
 func TestVCardImportPreviewsAndSkipsDuplicates(t *testing.T) {
 	db := testdb.Migrated(t)
 	ctx := context.Background()
