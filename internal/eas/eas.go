@@ -2044,6 +2044,14 @@ func (e *EAS) cmdSettings(c *call, w *WBXMLWriter) *easErr {
 		w.End()
 		w.End()
 	}
+	// The Oof element is part of the same Settings command; a client asks for
+	// it by naming Oof in the request and reads the answer from the same
+	// wrapper. Get and Set are distinguished by the child, per MS-ASCMD.
+	if oof := c.root.FindDescendant("Oof"); oof != nil {
+		if err := e.settingsOof(c, w, oof); err != nil {
+			return err
+		}
+	}
 	w.End() // Settings
 	return nil
 }
