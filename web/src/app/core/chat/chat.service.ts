@@ -9,6 +9,15 @@ const API = '/api/v1';
 
 export type ChatState = 'idle' | 'connecting' | 'connected' | 'error';
 
+// ChatAccess is the optional invitation identity for a guest with no account.
+// When it is set, the socket and history use the token-gated meeting routes
+// instead of a signed-in session.
+export interface ChatAccess {
+  guestUid: string;
+  guestTo: string;
+  guestToken: string;
+}
+
 export interface ChatMessage {
   id: number;
   sender: string;
@@ -62,6 +71,9 @@ export class ChatService {
 
   readonly state = signal<ChatState>('idle');
   readonly error = signal('');
+  // self is the address this tab speaks as: the signed-in user, or the guest
+  // named by an invitation link.
+  readonly self = signal('');
   readonly messages = signal<ChatMessage[]>([]);
   // typing holds the address of whoever is typing, or an empty string.
   readonly typing = signal('');
@@ -70,6 +82,7 @@ export class ChatService {
 
   private socket?: WebSocket;
   private conversation = '';
+  private access?: ChatAccess;
   private closedByUs = false;
   private retry = 0;
   private retryTimer?: ReturnType<typeof setTimeout>;
@@ -81,9 +94,11 @@ export class ChatService {
   // connects the socket for what happens next. It resolves once the socket is
   // open, so a caller that needs to send immediately (the call, before its
   // first offer) knows the channel is ready.
-  async open(conversation: string): Promise<void> {
+  async open(conversation: string, access?: ChatAccess): Promise<void> {
     this.close();
     this.conversation = conversation;
+    this.access = access;
+    this.self.set((access?.guestTo || this.auth.user() || '').toLowerCase());
     this.closedByUs = false;
     this.receipts.set({});
     this.messages.set([]);
@@ -106,6 +121,7 @@ export class ChatService {
   close(): void {
     this.closedByUs = true;
     this.conversation = '';
+    this.access = undefined;
     if (this.retryTimer) {
       clearTimeout(this.retryTimer);
       this.retryTimer = undefined;
@@ -129,7 +145,7 @@ export class ChatService {
     // replaces it by clientId when the server echoes the message.
     const pending: ChatMessage = {
       id: 0,
-      sender: this.auth.user(),
+      sender: this.self() || this.auth.user(),
       body: text,
       createdAt: new Date().toISOString(),
       clientId,
@@ -188,11 +204,11 @@ export class ChatService {
 
   private async loadHistory(): Promise<void> {
     try {
-      const res = await firstValueFrom(
-        this.http.get<{ messages: ChatMessage[] }>(
-          `${API}/chat/conversations/${encodeURIComponent(this.conversation)}/messages`,
-        ),
-      );
+      const url = this.access
+        ? `${API}/meeting-invites/${encodeURIComponent(this.access.guestUid)}/chat?` +
+          new URLSearchParams({ to: this.access.guestTo, token: this.access.guestToken }).toString()
+        : `${API}/chat/conversations/${encodeURIComponent(this.conversation)}/messages`;
+      const res = await firstValueFrom(this.http.get<{ messages: ChatMessage[] }>(url));
       this.messages.set(res.messages ?? []);
     } catch {
       // A history failure is not fatal: the socket can still deliver what
@@ -202,15 +218,18 @@ export class ChatService {
 
   private connect(): Promise<void> {
     const token = this.auth.state()?.accessToken ?? '';
-    if (!token || !this.conversation) {
+    if ((!token && !this.access) || !this.conversation) {
       this.state.set('error');
-      this.error.set('Sign in again to open the chat.');
-      return Promise.reject(new Error('not signed in'));
+      this.error.set(this.access ? 'This invitation link is no longer valid.' : 'Sign in again to open the chat.');
+      return Promise.reject(new Error('not authorised'));
     }
 
     this.state.set('connecting');
     const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const url = `${scheme}://${window.location.host}${API}/chat/ws?access_token=${encodeURIComponent(token)}`;
+    const url = this.access
+      ? `${scheme}://${window.location.host}${API}/meeting-invites/${encodeURIComponent(this.access.guestUid)}/ws?` +
+        new URLSearchParams({ to: this.access.guestTo, token: this.access.guestToken }).toString()
+      : `${scheme}://${window.location.host}${API}/chat/ws?access_token=${encodeURIComponent(token)}`;
 
     const socket = new WebSocket(url);
     this.socket = socket;
@@ -315,7 +334,7 @@ export class ChatService {
         break;
       }
       case 'typing':
-        if (frame.member && frame.member !== this.auth.user().toLowerCase()) {
+        if (frame.member && frame.member !== this.self().toLowerCase()) {
           this.typing.set(frame.member);
           if (this.typingTimer) {
             clearTimeout(this.typingTimer);

@@ -66,7 +66,8 @@ chat, riunioni o rubriche da installare: tutto è nello stesso server.
 - Ricerca della disponibilità, import/export iCalendar, inviti iTIP e RSVP, e
   risposte in ingresso gestite via mail.
 - **Riunioni** con inviti via email, pagine RSVP pubbliche, reinvio e
-  annullamento, e una sala riunioni integrata.
+  annullamento, e una sala riunioni integrata. Un ospite entra dal link
+  dell'invito senza account; fotocamera e microfono sono opzionali.
 - **Chiamate WebRTC** nel browser: media peer-to-peer, griglia centrata su chi
   parla, alzata di mano e gestione della parola per conferenze a senso unico e
   webinar.
@@ -94,6 +95,8 @@ chat, riunioni o rubriche da installare: tutto è nello stesso server.
 - Le sale riunioni usano lo stesso canale di segnalazione per offerte, risposte
   e candidati ICE WebRTC; non serve alcun servizio esterno di chat o
   segnalazione.
+- La chat della riunione sta accanto alla griglia video, così la conversazione
+  resta visibile durante la chiamata invece di aprire una pagina separata.
 
 ### Compatibilità Microsoft ed Exchange
 

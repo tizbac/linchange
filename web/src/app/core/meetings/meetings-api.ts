@@ -57,6 +57,13 @@ export class MeetingsApi {
     return this.post(`/meeting-invites/${encodeURIComponent(uid)}/rsvp`, { to, token, partStat });
   }
 
+  // inviteIceServers is the same STUN/TURN answer as iceServers, authorised by
+  // the invitation token instead of a session.
+  inviteIceServers(uid: string, to: string, token: string): Promise<{ iceServers: RTCIceServer[] }> {
+    const q = new URLSearchParams({ to, token });
+    return this.fetch(`/meeting-invites/${encodeURIComponent(uid)}/ice?${q}`);
+  }
+
   private fetch<T>(path: string): Promise<T> {
     return firstValueFrom(this.http.get<T>(`${API}${path}`));
   }

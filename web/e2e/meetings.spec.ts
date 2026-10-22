@@ -76,42 +76,38 @@ test.describe('meetings', () => {
     await page.reload();
     await expect(page.getByText(/2 guests, 1 accepted/)).toBeVisible();
 
-    // Chat is native to linchange: the organiser opens the meeting's room and
-    // says something; the guest's own page, in a different browser context,
-    // reads it back through the same room.
-    const chatButton = page.getByRole('button', { name: 'Open chat' });
-    await expect(chatButton).toBeVisible({ timeout: 15000 });
-
-    await chatButton.click();
+    // Chat is embedded in the meeting surface and opens with the room: the
+    // organiser says something and the guest's own page reads it back.
     const composer = page.locator('input[name="draftText"]');
     await expect(composer).toBeVisible({ timeout: 20000 });
     await composer.fill(MARKER);
     await page.locator('form').filter({ has: composer }).getByRole('button', { name: 'Send' }).click();
     await expect(page.locator('#chatLog').getByText(MARKER)).toBeVisible();
 
-    await openMeeting(guest, TITLE);
-    await guest.getByRole('button', { name: 'Open chat' }).click();
     await expect(guest.locator('#chatLog').getByText(MARKER)).toBeVisible({ timeout: 25000 });
 
-    // The other direction: the guest speaks and the organiser's open room
-    // receives it live, so the wiring is not one-way.
+    // The same conversation works from the accountless link. Send from the
+    // anonymous page; the organiser's open room receives it live.
     const guestMarker = `guest marker ${RUN}`;
-    const guestComposer = guest.locator('input[name="draftText"]');
+    const guestComposer = anon.locator('input[name="draftText"]');
+    await expect(guestComposer).toBeVisible({ timeout: 20000 });
     await guestComposer.fill(guestMarker);
-    await guest.locator('form').filter({ has: guestComposer }).getByRole('button', { name: 'Send' }).click();
+    await anon.locator('form').filter({ has: guestComposer }).getByRole('button', { name: 'Send' }).click();
     await expect(page.locator('#chatLog').getByText(guestMarker)).toBeVisible({ timeout: 15000 });
 
-    // The call: both join the meeting's room and each browser connects to the
-    // other. The server only relays signalling; the fake devices give both
-    // sides a real stream to negotiate.
+    // The call: the organiser and the accountless guest join the same room.
+    // Close the signed-in guest's tab so the same address is not in the call
+    // twice; the anonymous page is the guest for this part.
+    await guest.close();
     await page.getByRole('button', { name: 'Join call' }).click();
     await expect(page.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
-    await guest.getByRole('button', { name: 'Join call' }).click();
-    await expect(guest.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
+    await expect(anon.getByRole('button', { name: 'Join call' })).toBeVisible({ timeout: 15000 });
+    await anon.getByRole('button', { name: 'Join call' }).click();
+    await expect(anon.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
 
     // Each side sees the other as a remote tile once the offer/answer and ICE
     // have completed. The tile is labelled with the other member's address.
-    await expect(guest.getByTestId('call-tile').filter({ hasText: USER })).toBeVisible({ timeout: 30000 });
+    await expect(anon.getByTestId('call-tile').filter({ hasText: USER })).toBeVisible({ timeout: 30000 });
     await expect(page.getByTestId('call-tile').filter({ hasText: GUEST })).toBeVisible({ timeout: 30000 });
   });
 
@@ -161,4 +157,31 @@ test.describe('meetings', () => {
     await hands.getByRole('button', { name: 'Mute' }).click();
     await expect(guest.getByRole('button', { name: 'Unmute' })).toBeVisible({ timeout: 15000 });
   });
+});
+
+test('a participant can join with camera and microphone denied', async ({ page }) => {
+  const title = `No devices ${RUN}`;
+
+  await signIn(page, USER);
+  await page.goto('/meetings');
+  await page.getByRole('button', { name: 'New meeting' }).click();
+  await page.getByLabel('Title').fill(title);
+  await page.locator('textarea[name="attendees"]').fill(GUEST);
+  await page.getByRole('button', { name: 'Create and invite' }).click();
+  await page.waitForURL(/\/meetings\/[A-Za-z0-9_@-]+$/);
+  await expect(page.getByText('You are the organiser.')).toBeVisible();
+
+  // Refuse both devices, as a browser with no camera/microphone or a person
+  // who does not want to share them would. Joining must still work.
+  await page.addInitScript(() => {
+    navigator.mediaDevices.getUserMedia = () => Promise.reject(new Error('permission denied'));
+  });
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Join call' })).toBeVisible();
+  await page.getByRole('button', { name: 'Join call' }).click();
+
+  await expect(page.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText(/listen-only/)).toBeVisible();
+  await expect(page.locator('input[name="draftText"]')).toBeVisible();
+  await expect(page.getByText(/camera and microphone could not be opened/i)).toHaveCount(0);
 });

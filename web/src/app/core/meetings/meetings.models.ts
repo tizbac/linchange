@@ -9,9 +9,9 @@ export interface Attendee {
   name?: string;
 }
 
-// MeetingAttendee is one guest and everything known about them. local is what
-// decides whether the guest has a chat account next to their invitation: an
-// external address never does.
+// MeetingAttendee is one guest and everything known about them. local says
+// whether the address has an account here; the invitation token, not this
+// flag, is what lets a guest join the meeting room.
 export interface MeetingAttendee {
   address: string;
   displayName?: string;

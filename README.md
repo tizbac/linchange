@@ -64,7 +64,8 @@ address-book service to install: everything ships in the same server.
 - Free/busy lookup, iCalendar import/export, iTIP invitations and RSVP, and
   inbound replies processed by mail.
 - **Meetings** with email invitations, public RSVP pages, resend/cancel, and a
-  built-in meeting room.
+  built-in meeting room. A guest joins from the invitation link without an
+  account; camera and microphone are optional.
 - **WebRTC calls** in the browser: peer-to-peer media, a speaker-focused grid,
   hand raising and presenter-controlled floor for one-way conferences and
   webinars.
@@ -90,6 +91,8 @@ address-book service to install: everything ships in the same server.
 - History, typing indicators and read receipts.
 - Meeting rooms use the same signalling channel for WebRTC offers, answers and
   ICE candidates; no external chat or signalling service is involved.
+- The meeting chat sits beside the video grid, so the conversation stays
+  visible during the call instead of opening a separate page.
 
 ### Microsoft and Exchange compatibility
 
