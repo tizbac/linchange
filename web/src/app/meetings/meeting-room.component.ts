@@ -233,250 +233,26 @@ interface CallParticipant {
         </section>
 
         @if (!m.cancelled && m.chatConversation) {
-          <!-- The call and its chat are one surface. The chat is a column
-               beside the video grid, not a separate page or a section the
-               participant has to leave the call to open. -->
-          <div class="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
-            <section class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-              <div class="flex items-center justify-between gap-3">
-                <div>
-                  <h2 class="text-lg font-semibold text-slate-900">Call</h2>
-                  <p class="mt-1 text-xs text-slate-500">
-                    Camera and microphone are optional — you can join to listen and use the chat.
-                  </p>
-                </div>
-                @if (inCall()) {
-                  <button
-                    type="button"
-                    (click)="leaveCall()"
-                    class="shrink-0 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-                  >
-                    Leave call
-                  </button>
-                } @else {
-                  <button
-                    type="button"
-                    (click)="joinCall()"
-                    class="shrink-0 rounded-lg bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-800 transition-colors"
-                  >
-                    Join call
-                  </button>
-                }
-              </div>
-              @if (callError()) {
-                <p class="mt-3 text-sm text-rose-600">{{ callError() }}</p>
-              }
-              @if (mediaNotice()) {
-                <p class="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-amber-200">
-                  <span>{{ mediaNotice() }}</span>
-                  @if (inCall()) {
-                    <button
-                      type="button"
-                      (click)="retryMedia()"
-                      class="font-medium underline decoration-amber-400 hover:text-amber-700"
-                    >
-                      Try camera and microphone
-                    </button>
-                  }
+          <!-- The call is a separate full-screen page. Keeping the details
+               page readable is the point: joining is one click from here, and
+               the room handles its own gallery, controls and chat sidebar. -->
+          <section class="mt-5 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+            <div class="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h2 class="text-lg font-semibold text-slate-900">Join the meeting</h2>
+                <p class="mt-1 text-sm text-slate-500">
+                  The video room opens on its own page. Camera and microphone are optional.
                 </p>
-              }
-              @if (inCall()) {
-                <div class="mt-3 grid gap-3 sm:grid-cols-2" data-testid="call-grid">
-                  @for (p of visibleParticipants(); track p.member) {
-                    <div
-                      data-testid="call-tile"
-                      class="rounded-lg"
-                      [ngClass]="p.member === activeSpeaker() ? 'ring-2 ring-emerald-500' : ''"
-                    >
-                      <video
-                        [srcObject]="p.stream"
-                        autoplay
-                        [muted]="p.self"
-                        playsinline
-                        class="aspect-video w-full rounded-lg bg-slate-900 object-cover"
-                      ></video>
-                      <p class="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                        <span>{{ p.self ? 'You' : p.member }}</span>
-                        @if (!hasVideo(p)) {
-                          <span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
-                            camera off
-                          </span>
-                        }
-                        @if (p.member === activeSpeaker()) {
-                          <span class="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800">
-                            speaking
-                          </span>
-                        }
-                        @if (p.member === floorSpeaker()) {
-                          <span class="rounded bg-brand-100 px-1.5 py-0.5 text-[10px] font-medium text-brand-800">
-                            floor
-                          </span>
-                        }
-                      </p>
-                    </div>
-                  }
-                  @if (hiddenParticipants().length > 0) {
-                    <div
-                      class="flex items-center justify-center rounded-lg bg-slate-50 p-4 text-sm text-slate-500 ring-1 ring-slate-200"
-                      data-testid="more-participants"
-                    >
-                      +{{ hiddenParticipants().length }} more listening
-                    </div>
-                  }
-                </div>
-                <!-- Participants past the four tiles are still heard: their
-                     audio plays without a video tile. -->
-                @for (p of hiddenParticipants(); track p.member) {
-                  <audio [srcObject]="p.stream" autoplay></audio>
-                }
-                <div class="mt-3 flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    (click)="toggleMic()"
-                    class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-                  >
-                    {{ micOn() ? 'Mute' : 'Unmute' }}
-                  </button>
-                  <button
-                    type="button"
-                    (click)="toggleCamera()"
-                    class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-                  >
-                    {{ cameraOn() ? 'Camera off' : 'Camera on' }}
-                  </button>
-                  @if (m.oneWay && !isOrganizer()) {
-                    <button
-                      type="button"
-                      (click)="toggleHand()"
-                      data-testid="raise-hand"
-                      class="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100 transition-colors"
-                    >
-                      {{ handRaised() ? 'Lower hand' : 'Raise hand' }}
-                    </button>
-                  }
-                </div>
-                @if (m.oneWay) {
-                  <p class="mt-2 text-xs text-slate-500" data-testid="webinar-note">
-                    One-way conference: only the presenter speaks.
-                    @if (floorSpeaker()) {
-                      <span class="font-medium text-slate-700">{{ floorSpeaker() }}</span> has the floor.
-                    }
-                  </p>
-                }
-                @if (isOrganizer() && m.oneWay && raisedHands().length > 0) {
-                  <div class="mt-3 rounded-lg bg-amber-50 p-3 ring-1 ring-amber-200" data-testid="raised-hands">
-                    <p class="text-sm font-medium text-amber-900">Raised hands</p>
-                    @for (hand of raisedHands(); track hand) {
-                      <div class="mt-1 flex flex-wrap items-center justify-between gap-2">
-                        <span class="text-sm text-amber-900">{{ hand }}</span>
-                        <span class="flex gap-2">
-                          <button
-                            type="button"
-                            (click)="allowSpeak(hand)"
-                            class="rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-800 transition-colors"
-                          >
-                            Allow to speak
-                          </button>
-                          @if (floorSpeaker() === hand) {
-                            <button
-                              type="button"
-                              (click)="revokeSpeak(hand)"
-                              class="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 transition-colors"
-                            >
-                              Mute
-                            </button>
-                          }
-                        </span>
-                      </div>
-                    }
-                  </div>
-                }
-              }
-            </section>
-
-            <aside class="flex min-h-[28rem] flex-col rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
-              <div class="flex items-center justify-between">
-                <h2 class="text-lg font-semibold text-slate-900">In-call chat</h2>
-                @if (chat.state() === 'connected') {
-                  <span class="rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800">live</span>
-                }
               </div>
-
-              @if (chatError()) {
-                <p class="mt-3 text-sm text-rose-600">{{ chatError() }}</p>
-                <button
-                  type="button"
-                  (click)="openChat()"
-                  class="mt-3 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-                >
-                  Try again
-                </button>
-              } @else if (chat.state() === 'connected') {
-                <div
-                  #chatLog
-                  id="chatLog"
-                  class="mt-3 min-h-0 flex-1 overflow-y-auto rounded-lg bg-slate-50 p-3 ring-1 ring-slate-200"
-                >
-                  @if (chat.messages().length === 0) {
-                    <p class="pt-16 text-center text-sm text-slate-400">
-                      No messages yet. Say something.
-                    </p>
-                  }
-                  @for (msg of chat.messages(); track msg.id || msg.clientId) {
-                    <div class="mb-3 flex gap-2" [ngClass]="isSelf(msg) ? 'flex-row-reverse' : ''">
-                      <div
-                        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-medium text-slate-600"
-                      >
-                        {{ initial(msg) }}
-                      </div>
-                      <div class="min-w-0" [ngClass]="isSelf(msg) ? 'text-right' : ''">
-                        <div class="text-xs text-slate-400">{{ msg.sender }}</div>
-                        <div
-                          class="mt-0.5 inline-block rounded-lg px-3 py-1.5 text-sm text-slate-800 whitespace-pre-wrap"
-                          [ngClass]="isSelf(msg) ? 'bg-brand-100' : 'bg-white ring-1 ring-slate-200'"
-                        >
-                          {{ msg.body }}
-                        </div>
-                        <div class="mt-0.5 text-[10px] text-slate-400">{{ timeOf(msg) }}</div>
-                      </div>
-                    </div>
-                  }
-                  @if (chat.typing()) {
-                    <p class="text-xs italic text-slate-400">{{ chat.typing() }} is typing…</p>
-                  }
-                </div>
-                <form class="mt-3 flex gap-2" (ngSubmit)="sendChat()">
-                  <input
-                    type="text"
-                    [(ngModel)]="draftText"
-                    (ngModelChange)="chat.notifyTyping()"
-                    name="draftText"
-                    placeholder="Message the room"
-                    autocomplete="off"
-                    class="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  />
-                  <button
-                    type="submit"
-                    [disabled]="chatBusy() || !draftText.trim()"
-                    class="rounded-lg bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-800 disabled:opacity-50 transition-colors"
-                  >
-                    Send
-                  </button>
-                </form>
-              } @else if (chat.state() === 'error') {
-                <p class="mt-3 text-sm text-rose-600">{{ chat.error() || 'The chat connection could not be opened.' }}</p>
-                <button
-                  type="button"
-                  (click)="openChat()"
-                  class="mt-3 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-                >
-                  Try again
-                </button>
-              } @else {
-                <p class="mt-3 text-sm text-slate-500">Connecting to the chat…</p>
-              }
-            </aside>
-          </div>
+              <a
+                [routerLink]="['/meetings', m.uid, 'room']"
+                [queryParams]="guestParams()"
+                class="rounded-lg bg-brand-700 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-800 transition-colors"
+              >
+                Join meeting
+              </a>
+            </div>
+          </section>
         }
       }
     </main>
@@ -649,6 +425,12 @@ export class MeetingRoomComponent implements OnInit, OnDestroy {
   isMe(address: string): boolean {
     const who = this.mode() === 'invitee' ? this.inviteeTo() : this.auth.user();
     return !!who && address.toLowerCase() === who.toLowerCase();
+  }
+
+  // guestParams keeps the invitation token on the link into the call room.
+  guestParams(): Record<string, string> {
+    if (this.mode() !== 'invitee') return {};
+    return { to: this.inviteeTo(), token: this.inviteeToken };
   }
 
   acceptedCount(m: Meeting): number {
@@ -1246,11 +1028,6 @@ export class MeetingRoomComponent implements OnInit, OnDestroy {
           : await this.api.get(this.uid);
       this.meeting.set(m);
       this.pageError.set('');
-      // The room's chat is part of the conference, so open its socket as
-      // soon as the meeting is known rather than waiting for a button.
-      if (m.chatConversation && !m.cancelled) {
-        void this.openChat();
-      }
     } catch (err) {
       this.pageError.set(this.loadMessage(err));
     } finally {

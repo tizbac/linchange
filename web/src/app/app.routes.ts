@@ -67,6 +67,13 @@ export const routes: Routes = [
     canActivate: [requireAuth],
     loadComponent: () => import('./meetings/meetings.component').then((m) => m.MeetingsComponent),
   },
+  // The call itself is its own full-screen page, so the meeting details can
+  // stay readable and the gallery has the whole viewport.
+  {
+    path: 'meetings/:uid/room',
+    loadComponent: () =>
+      import('./meetings/call-room.component').then((m) => m.CallRoomComponent),
+  },
   // The room page is deliberately unguarded: an invitee answers from the link
   // in their invitation with no account here. The page works out which visitor
   // it has from the token in the query, and a signed-out visitor without one

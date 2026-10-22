@@ -66,7 +66,8 @@ chat, riunioni o rubriche da installare: tutto è nello stesso server.
 - Ricerca della disponibilità, import/export iCalendar, inviti iTIP e RSVP, e
   risposte in ingresso gestite via mail.
 - **Riunioni** con inviti via email, pagine RSVP pubbliche, reinvio e
-  annullamento, e una sala riunioni integrata. Un ospite entra dal link
+  annullamento, e una sala riunioni a tutto schermo con galleria in stile Teams
+  e barra laterale della chat comprimibile. Un ospite entra dal link
   dell'invito senza account; fotocamera e microfono sono opzionali.
 - **Chiamate WebRTC** nel browser: media peer-to-peer, griglia centrata su chi
   parla, alzata di mano e gestione della parola per conferenze a senso unico e

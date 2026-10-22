@@ -64,8 +64,9 @@ address-book service to install: everything ships in the same server.
 - Free/busy lookup, iCalendar import/export, iTIP invitations and RSVP, and
   inbound replies processed by mail.
 - **Meetings** with email invitations, public RSVP pages, resend/cancel, and a
-  built-in meeting room. A guest joins from the invitation link without an
-  account; camera and microphone are optional.
+  full-screen meeting room with a Teams-style gallery and a collapsible chat
+  sidebar. A guest joins from the invitation link without an account; camera
+  and microphone are optional.
 - **WebRTC calls** in the browser: peer-to-peer media, a speaker-focused grid,
   hand raising and presenter-controlled floor for one-way conferences and
   webinars.

@@ -76,18 +76,27 @@ test.describe('meetings', () => {
     await page.reload();
     await expect(page.getByText(/2 guests, 1 accepted/)).toBeVisible();
 
-    // Chat is embedded in the meeting surface and opens with the room: the
-    // organiser says something and the guest's own page reads it back.
+    // The call has its own full-page room now. Close the signed-in guest's
+    // tab so the same address is not represented twice; the anonymous link is
+    // the guest that enters the room.
+    await guest.close();
+    await page.getByRole('link', { name: 'Join meeting' }).click();
+    await page.waitForURL(/\/meetings\/[^/]+\/room/);
+    await expect(page.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
+
+    await expect(anon.getByRole('link', { name: 'Join meeting' })).toBeVisible({ timeout: 15000 });
+    await anon.getByRole('link', { name: 'Join meeting' }).click();
+    await anon.waitForURL(/\/meetings\/[^/]+\/room/);
+    await expect(anon.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
+
+    // Chat is a collapsible sidebar in the room and shares the call socket.
     const composer = page.locator('input[name="draftText"]');
     await expect(composer).toBeVisible({ timeout: 20000 });
     await composer.fill(MARKER);
     await page.locator('form').filter({ has: composer }).getByRole('button', { name: 'Send' }).click();
     await expect(page.locator('#chatLog').getByText(MARKER)).toBeVisible();
+    await expect(anon.locator('#chatLog').getByText(MARKER)).toBeVisible({ timeout: 25000 });
 
-    await expect(guest.locator('#chatLog').getByText(MARKER)).toBeVisible({ timeout: 25000 });
-
-    // The same conversation works from the accountless link. Send from the
-    // anonymous page; the organiser's open room receives it live.
     const guestMarker = `guest marker ${RUN}`;
     const guestComposer = anon.locator('input[name="draftText"]');
     await expect(guestComposer).toBeVisible({ timeout: 20000 });
@@ -95,15 +104,11 @@ test.describe('meetings', () => {
     await anon.locator('form').filter({ has: guestComposer }).getByRole('button', { name: 'Send' }).click();
     await expect(page.locator('#chatLog').getByText(guestMarker)).toBeVisible({ timeout: 15000 });
 
-    // The call: the organiser and the accountless guest join the same room.
-    // Close the signed-in guest's tab so the same address is not in the call
-    // twice; the anonymous page is the guest for this part.
-    await guest.close();
-    await page.getByRole('button', { name: 'Join call' }).click();
-    await expect(page.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
-    await expect(anon.getByRole('button', { name: 'Join call' })).toBeVisible({ timeout: 15000 });
-    await anon.getByRole('button', { name: 'Join call' }).click();
-    await expect(anon.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
+    // The room collapses the sidebar without dropping the call.
+    await page.getByRole('button', { name: 'Collapse chat' }).click();
+    await expect(page.locator('input[name="draftText"]')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Chat' }).click();
+    await expect(page.locator('input[name="draftText"]')).toBeVisible();
 
     // Each side sees the other as a remote tile once the offer/answer and ICE
     // have completed. The tile is labelled with the other member's address.
@@ -128,7 +133,8 @@ test.describe('meetings', () => {
     const guest = await browser.newPage();
     await signIn(guest, GUEST);
     await openMeeting(guest, title);
-    await guest.getByRole('button', { name: 'Join call' }).click();
+    await guest.getByRole('link', { name: 'Join meeting' }).click();
+    await guest.waitForURL(/\/meetings\/[^/]+\/room/);
     await expect(guest.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
     await expect(guest.getByTestId('webinar-note')).toContainText('One-way conference');
     await expect(guest.getByTestId('raise-hand')).toHaveText('Raise hand');
@@ -142,7 +148,8 @@ test.describe('meetings', () => {
     await guest.getByTestId('raise-hand').click();
     await expect(guest.getByTestId('raise-hand')).toHaveText('Lower hand');
 
-    await page.getByRole('button', { name: 'Join call' }).click();
+    await page.getByRole('link', { name: 'Join meeting' }).click();
+    await page.waitForURL(/\/meetings\/[^/]+\/room/);
     const hands = page.getByTestId('raised-hands');
     await expect(hands).toContainText(GUEST, { timeout: 15000 });
     await hands.getByRole('button', { name: 'Allow to speak' }).click();
@@ -172,16 +179,17 @@ test('a participant can join with camera and microphone denied', async ({ page }
   await expect(page.getByText('You are the organiser.')).toBeVisible();
 
   // Refuse both devices, as a browser with no camera/microphone or a person
-  // who does not want to share them would. Joining must still work.
-  await page.addInitScript(() => {
+  // who does not want to share them would. The room must still render a
+  // gallery and the chat.
+  await page.evaluate(() => {
     navigator.mediaDevices.getUserMedia = () => Promise.reject(new Error('permission denied'));
   });
-  await page.reload();
-  await expect(page.getByRole('button', { name: 'Join call' })).toBeVisible();
-  await page.getByRole('button', { name: 'Join call' }).click();
+  await page.getByRole('link', { name: 'Join meeting' }).click();
+  await page.waitForURL(/\/meetings\/[^/]+\/room/);
 
   await expect(page.getByTestId('call-grid')).toBeVisible({ timeout: 15000 });
   await expect(page.getByText(/listen-only/)).toBeVisible();
+  await expect(page.getByTestId('call-tile').filter({ hasText: 'You' })).toBeVisible();
   await expect(page.locator('input[name="draftText"]')).toBeVisible();
   await expect(page.getByText(/camera and microphone could not be opened/i)).toHaveCount(0);
 });
