@@ -2,6 +2,7 @@ package imapd
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -197,52 +198,95 @@ func insertReferences(ctx context.Context, tx *sqlx.Tx, messageID int64, referen
 	return nil
 }
 
-// GetByUIDSet returns messages matching a UID set.
+// GetByUIDSet returns messages matching a sequence or UID set.
+//
+// This server reports a message's UID as its sequence number, so a sequence
+// set is matched against the uid column just like a UID set; that keeps a
+// client's follow-up FETCH consistent with the sequence numbers it was given.
+//
+// A sequence number of "*" is encoded by go-imap as 0, so a range is never
+// expanded by looping Start..Stop: "1:*" would loop 1..0 and match nothing,
+// which is exactly the first fetch almost every client sends. Instead the
+// wildcard is resolved against the mailbox's highest UID and each range
+// becomes a BETWEEN predicate, so "1:*" is one bounded scan rather than one
+// query argument per message.
 func (r *MessageRepo) GetByUIDSet(ctx context.Context, db *sqlx.DB,
 	mailboxID int64, numSet imap.NumSet,
 ) ([]Message, error) {
 
-	var uids []uint32
+	var conds []string
+	var args []any
+
+	// Placeholders start at $2: $1 is the mailbox_id that is prepended to the
+	// argument list when the query is assembled.
+	appendRange := func(start, stop uint32) {
+		switch {
+		case stop == 0 && start == 0:
+			// "*" alone: everything.
+		case stop == 0:
+			conds = append(conds, fmt.Sprintf("uid >= $%d", len(args)+2))
+			args = append(args, start)
+		case start == 0:
+			// "*:n" — "*" is the ceiling, so this is bounded above only.
+			conds = append(conds, fmt.Sprintf("uid <= $%d", len(args)+2))
+			args = append(args, stop)
+		default:
+			conds = append(conds, fmt.Sprintf("uid BETWEEN $%d AND $%d",
+				len(args)+2, len(args)+3))
+			args = append(args, start, stop)
+		}
+	}
 
 	switch ns := numSet.(type) {
 	case imap.SeqSet:
-		for _, r := range ns {
-			for i := r.Start; i <= r.Stop; i++ {
-				uids = append(uids, i)
+		// Resolve "*" to the highest UID so the range is bounded.
+		ceil, err := r.maxUID(ctx, db, mailboxID)
+		if err != nil {
+			return nil, err
+		}
+		for _, rng := range ns {
+			start, stop := rng.Start, rng.Stop
+			if start == 0 {
+				start = ceil
 			}
+			if stop == 0 {
+				stop = ceil
+			}
+			appendRange(start, stop)
 		}
 	case imap.UIDSet:
-		for _, r := range ns {
-			for i := r.Start; i <= r.Stop; i++ {
-				uids = append(uids, uint32(i))
+		ceil, err := r.maxUID(ctx, db, mailboxID)
+		if err != nil {
+			return nil, err
+		}
+		for _, rng := range ns {
+			start, stop := uint32(rng.Start), uint32(rng.Stop)
+			if start == 0 {
+				start = ceil
 			}
+			if stop == 0 {
+				stop = ceil
+			}
+			appendRange(start, stop)
 		}
 	default:
 		return nil, fmt.Errorf("unsupported numSet type")
 	}
 
-	if len(uids) == 0 {
+	if len(conds) == 0 {
 		return nil, nil
 	}
 
-	// Build query with mailbox_id = $1 and uid IN ($2, $3, ...)
-	allArgs := make([]any, 0, len(uids)+1)
-	allArgs = append(allArgs, mailboxID)
-	for _, uid := range uids {
-		allArgs = append(allArgs, uid)
-	}
-	inPlaceholders := make([]string, len(uids))
-	for i := range uids {
-		inPlaceholders[i] = fmt.Sprintf("$%d", i+2)
-	}
-
-	query := fmt.Sprintf(`
+	query := `
 		SELECT id, mailbox_id, uid, blob_sha256, size, internal_date,
 		       flags, subject, from_address, from_name, snippet, thread_key,
 		       COALESCE(message_id, '') AS message_id, has_attachments, item_class
 		FROM messages
-		WHERE mailbox_id = $1 AND uid IN (%s)
-		ORDER BY uid`, strings.Join(inPlaceholders, ", "))
+		WHERE mailbox_id = $1 AND (` + strings.Join(conds, " OR ") + `
+		)
+		ORDER BY uid`
+
+	allArgs := append([]any{mailboxID}, args...)
 
 	var messages []Message
 	if err := db.SelectContext(ctx, &messages, query, allArgs...); err != nil {
@@ -250,6 +294,24 @@ func (r *MessageRepo) GetByUIDSet(ctx context.Context, db *sqlx.DB,
 	}
 
 	return messages, nil
+}
+
+// maxUID returns the highest UID in a mailbox, or 0 when it is empty.
+//
+// It backs the "*" wildcard in FETCH and SEARCH number sets: "*" means the
+// last message, and because this server reports a UID as its sequence number,
+// the last message is the one with the highest UID whether the set is a
+// sequence set or a UID set.
+func (r *MessageRepo) maxUID(ctx context.Context, db *sqlx.DB, mailboxID int64) (uint32, error) {
+	var max sql.NullInt64
+	const query = `SELECT max(uid) FROM messages WHERE mailbox_id = $1`
+	if err := db.GetContext(ctx, &max, query, mailboxID); err != nil {
+		return 0, fmt.Errorf("store: max uid: %w", err)
+	}
+	if !max.Valid {
+		return 0, nil
+	}
+	return uint32(max.Int64), nil
 }
 
 // CountByMailbox returns the number of messages in a mailbox.
@@ -315,7 +377,13 @@ func (r *MessageRepo) SearchUID(ctx context.Context, db *sqlx.DB,
 func (r *MessageRepo) searchUID(ctx context.Context, db *sqlx.DB,
 	mailboxID int64, criteria *imap.SearchCriteria,
 ) ([]uint32, error) {
-	query, args := buildSearchQuery(mailboxID, criteria)
+	// "*" is a legal bound in a SEARCH number set and encodes as zero, so the
+	// query builder needs the mailbox's highest UID to resolve it.
+	ceil, err := r.maxUID(ctx, db, mailboxID)
+	if err != nil {
+		return nil, err
+	}
+	query, args := buildSearchQuery(mailboxID, criteria, ceil)
 
 	rows, err := db.QueryxContext(ctx, query, args...)
 	if err != nil {
@@ -335,7 +403,29 @@ func (r *MessageRepo) searchUID(ctx context.Context, db *sqlx.DB,
 	return uids, nil
 }
 
-func buildSearchQuery(mailboxID int64, criteria *imap.SearchCriteria) (string, []any) {
+// rangeCond renders one IMAP number-set range as a SQL predicate on the uid
+// column, appending its bound arguments. Both bounds are already resolved:
+// a wildcard "*" arrives here as the mailbox ceiling, never as zero.
+func rangeCond(argIndex *int, args *[]any, start, stop uint32) string {
+	if start == stop {
+		s := fmt.Sprintf("uid = $%d", *argIndex)
+		*args = append(*args, start)
+		*argIndex++
+		return s
+	}
+	s := fmt.Sprintf("uid BETWEEN $%d AND $%d", *argIndex, *argIndex+1)
+	*args = append(*args, start, stop)
+	*argIndex += 2
+	return s
+}
+
+// buildSearchQuery turns IMAP search criteria into SQL.
+//
+// ceil is the mailbox's highest UID: a number set may name "*" (encoded as
+// zero) as either bound, and without the ceiling there is nothing to expand
+// it to. Ranges become BETWEEN predicates so a wildcard search stays one
+// bounded scan instead of one argument per message.
+func buildSearchQuery(mailboxID int64, criteria *imap.SearchCriteria, ceil uint32) (string, []any) {
 	var conditions []string
 	var args []any
 	argIndex := 1
@@ -348,30 +438,37 @@ func buildSearchQuery(mailboxID int64, criteria *imap.SearchCriteria) (string, [
 	// UID search
 	if len(criteria.UID) > 0 {
 		for _, uidSet := range criteria.UID {
-			placeholders := make([]string, 0, len(uidSet))
+			parts := make([]string, 0, len(uidSet))
 			for _, uidRange := range uidSet {
-				for i := uidRange.Start; i <= uidRange.Stop; i++ {
-					placeholders = append(placeholders, fmt.Sprintf("$%d", argIndex))
-					args = append(args, uint32(i))
-					argIndex++
+				start, stop := uint32(uidRange.Start), uint32(uidRange.Stop)
+				if start == 0 {
+					start = ceil
 				}
+				if stop == 0 {
+					stop = ceil
+				}
+				parts = append(parts, rangeCond(&argIndex, &args, start, stop))
 			}
-			conditions = append(conditions, fmt.Sprintf("uid IN (%s)", strings.Join(placeholders, ",")))
+			conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
 		}
 	}
 
-	// Sequence number search (treat as UID for simplicity)
+	// Sequence number search. This server reports a UID as its sequence number,
+	// so the same column carries both.
 	if len(criteria.SeqNum) > 0 {
 		for _, seqSet := range criteria.SeqNum {
-			placeholders := make([]string, 0, len(seqSet))
+			parts := make([]string, 0, len(seqSet))
 			for _, seqRange := range seqSet {
-				for i := seqRange.Start; i <= seqRange.Stop; i++ {
-					placeholders = append(placeholders, fmt.Sprintf("$%d", argIndex))
-					args = append(args, i)
-					argIndex++
+				start, stop := seqRange.Start, seqRange.Stop
+				if start == 0 {
+					start = ceil
 				}
+				if stop == 0 {
+					stop = ceil
+				}
+				parts = append(parts, rangeCond(&argIndex, &args, start, stop))
 			}
-			conditions = append(conditions, fmt.Sprintf("uid IN (%s)", strings.Join(placeholders, ",")))
+			conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
 		}
 	}
 

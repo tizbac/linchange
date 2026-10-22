@@ -30,11 +30,11 @@ import (
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapserver"
 	"github.com/linchange/linchange/config"
+	"github.com/linchange/linchange/internal/acme"
 	"github.com/linchange/linchange/internal/auth/mailauth"
 	"github.com/linchange/linchange/internal/auth/policy"
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/mail"
-	"github.com/linchange/linchange/internal/acme"
 	"github.com/linchange/linchange/internal/store"
 )
 
@@ -49,6 +49,7 @@ var (
 type Server struct {
 	plainServer *imapserver.Server
 	tlsServer   *imapserver.Server
+	tlsConfig   *tls.Config
 	backend     *backend
 	logger      *slog.Logger
 	enabled     bool
@@ -148,6 +149,10 @@ func New(db *sqlx.DB, blobs *blobstore.Store,
 		enabled = true
 	}
 
+	// The TLS config is kept on the server as well as handed to the IMAP
+	// options: the options use it for STARTTLS, and StartTLS wraps the
+	// listener with it for implicit TLS.
+	var serverTLS *tls.Config
 	if tlsAddr != "" {
 		var tlsCfg *tls.Config
 		if acmeManager != nil {
@@ -162,10 +167,11 @@ func New(db *sqlx.DB, blobs *blobstore.Store,
 					return nil, fmt.Errorf("imapd: failed to load TLS cert %s: %w", cfg.TLS.CertFile, err)
 				}
 				tlsCfg.Certificates = []tls.Certificate{cert}
-				} else {
-					return nil, fmt.Errorf("imapd: TLS listener configured but no cert_file/key_file provided")
-				}
+			} else {
+				return nil, fmt.Errorf("imapd: TLS listener configured but no cert_file/key_file provided")
+			}
 		}
+		serverTLS = tlsCfg
 
 		tlsServer = imapserver.New(&imapserver.Options{
 			NewSession: func(conn *imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
@@ -204,6 +210,7 @@ func New(db *sqlx.DB, blobs *blobstore.Store,
 	return &Server{
 		plainServer: plainServer,
 		tlsServer:   tlsServer,
+		tlsConfig:   serverTLS,
 		backend:     b,
 		logger:      log,
 		enabled:     enabled,
@@ -226,6 +233,11 @@ func (s *Server) StartPlain(ctx context.Context) error {
 }
 
 // StartTLS starts the TLS IMAP listener.
+//
+// IMAPS is implicit TLS: the handshake happens before the first IMAP byte, so
+// the listener itself must be wrapped. Handing a bare TCP listener to Serve
+// would answer a TLS ClientHello with an IMAP greeting, which clients report
+// as a protocol error rather than a certificate problem.
 func (s *Server) StartTLS(ctx context.Context) error {
 	if s.tlsServer == nil {
 		return nil
@@ -234,8 +246,8 @@ func (s *Server) StartTLS(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("imaps: %w", err)
 	}
-	s.logger.Info("imaps listening", "addr", s.tlsAddr)
-	return s.tlsServer.Serve(ln)
+	s.logger.Info("imaps listening", "addr", s.tlsAddr, "tls", true)
+	return s.tlsServer.Serve(tls.NewListener(ln, s.tlsConfig))
 }
 
 // imapLogger adapts slog.Logger to imapserver.Logger.
@@ -255,6 +267,7 @@ func (l imapLogger) Printf(format string, args ...interface{}) {
 type session struct {
 	backend       *backend
 	user          string
+	sharedTarget  string // set when logged in as "user#shared"; the shared principal
 	authenticated bool
 	selected      *selectedMailbox
 	readonly      bool
@@ -278,16 +291,30 @@ func (b *backend) NewSession() (imapserver.Session, error) {
 }
 
 // Login authenticates a user via username/password.
+//
+// Some clients log in as "user#shared" to open a shared mailbox directly. The
+// base user is authenticated as usual, then checked against the shared
+// mailbox's grants; on success the session's owner becomes the shared mailbox
+// principal so that every folder lookup below resolves inside that mailbox.
 func (s *session) Login(username, password string) error {
+	ctx := context.Background()
+
+	// Split off an optional "user#shared" target before authenticating, so the
+	// password is checked against the real account rather than a composite name.
+	baseUser, sharedTarget := username, ""
+	if idx := strings.IndexByte(username, '#'); idx >= 0 {
+		baseUser, sharedTarget = username[:idx], username[idx+1:]
+	}
+
 	principal, err := s.backend.auth.Authenticate(
-		context.Background(), username, password, policy.ActionIMAP)
+		ctx, baseUser, password, policy.ActionIMAP)
 	if err != nil {
 		// Every failure is reported the same way. An IMAP client is told only
 		// that the login failed; the reason belongs in the server log, and
 		// telling it here would let a caller map refusals to account state.
 		if !errors.Is(err, mailauth.ErrRejected) && !errors.Is(err, mailauth.ErrUnavailable) {
 			s.backend.logger.Error("imap login failed unexpectedly",
-				"user", username, "error", err)
+				"user", baseUser, "error", err)
 		}
 		return imapserver.ErrAuthFailed
 	}
@@ -296,9 +323,30 @@ func (s *session) Login(username, password string) error {
 	// quota lookup below is keyed on it, and so is a shared mailbox grant, so
 	// this must be the stored spelling.
 	s.user = principal.Address
+
+	if sharedTarget != "" {
+		// A shared login is only honoured when the grant covers reading it; a
+		// member who may only contribute must not be able to browse the folders.
+		if _, err := s.backend.sharedMailboxes.Get(ctx, s.backend.db, sharedTarget); err != nil {
+			s.backend.logger.Warn("imap login: shared mailbox not found",
+				"user", principal.Address, "target", sharedTarget)
+			return imapserver.ErrAuthFailed
+		}
+		access, err := s.backend.sharedGrants.Access(ctx, s.backend.db, sharedTarget, principal.Address)
+		if err != nil || !access.AtLeast(policy.GrantRead) {
+			s.backend.logger.Warn("imap login: shared mailbox access denied",
+				"user", principal.Address, "target", sharedTarget)
+			return imapserver.ErrAuthFailed
+		}
+		// From here the session speaks for the shared mailbox: its folders are
+		// keyed by the shared address, not the member's own.
+		s.user = sharedTarget
+		s.sharedTarget = sharedTarget
+	}
+
 	s.authenticated = true
 
-	s.backend.logger.Info("imap login", "user", principal.Address)
+	s.backend.logger.Info("imap login", "user", principal.Address, "shared_target", sharedTarget)
 	return nil
 }
 
@@ -371,29 +419,44 @@ func (s *session) List(w *imapserver.ListWriter, ref string, patterns []string, 
 		}
 	}
 
-	// Add shared mailboxes the user has access to.
+	// A session scoped to a shared mailbox already lists that mailbox's own
+	// folders above. The cross-listing below is for a personal session, which
+	// reaches a shared mailbox by name.
+	if s.sharedTarget != "" {
+		return nil
+	}
+
 	shared, err := s.backend.sharedGrants.ListForMember(ctx, s.backend.db, s.user)
 	if err != nil {
-		// Ignore errors on shared mailbox listing.
+		// A failure to list shared mailboxes must not hide the personal ones
+		// already written above.
 		return nil
 	}
 
 	for _, sg := range shared {
 		sharedAddr := sg.SharedAddress
-		// Parse the shared mailbox name.
-		name := sharedAddr
-		if idx := strings.IndexByte(sharedAddr, '#'); idx >= 0 {
-			name = sharedAddr[:idx]
+
+		// The mailbox root selects its INBOX.
+		if s.matchPatterns(sharedAddr, patterns) {
+			if err := w.WriteList(&imap.ListData{Delim: '/', Mailbox: sharedAddr}); err != nil {
+				return fmt.Errorf("imap: list shared: %w", err)
+			}
 		}
-		if !s.matchPatterns(name, patterns) {
+
+		// Its folders hang below it as "<address>/<folder>" so each is a name
+		// the client can select.
+		folders, err := s.backend.mailboxStore.ListForUser(ctx, s.backend.db, sharedAddr)
+		if err != nil {
 			continue
 		}
-		data := &imap.ListData{
-			Delim:   '/',
-			Mailbox: name,
-		}
-		if err := w.WriteList(data); err != nil {
-			return fmt.Errorf("imap: list shared: %w", err)
+		for _, f := range folders {
+			name := sharedAddr + "/" + f.Name
+			if !s.matchPatterns(name, patterns) {
+				continue
+			}
+			if err := w.WriteList(&imap.ListData{Delim: '/', Mailbox: name}); err != nil {
+				return fmt.Errorf("imap: list shared folder: %w", err)
+			}
 		}
 	}
 
@@ -595,7 +658,9 @@ func (s *session) Status(mailbox string, options *imap.StatusOptions) (*imap.Sta
 		name = "INBOX"
 	}
 
-	mb, err := s.backend.mailboxStore.GetByName(ctx, s.backend.db, s.user, name)
+	owner, localName := s.resolveMailbox(ctx, name)
+
+	mb, err := s.backend.mailboxStore.GetByName(ctx, s.backend.db, owner, localName)
 	if err != nil {
 		return nil, ErrMailboxNotFound
 	}
@@ -621,46 +686,12 @@ func (s *session) Append(mailbox string, r imap.LiteralReader, options *imap.App
 		name = "INBOX"
 	}
 
-	// Check if it's a shared mailbox.
-	isShared := strings.Contains(name, "#")
-	if isShared {
-		// Parse shared mailbox name: user#sharedmailbox
-		parts := strings.SplitN(name, "#", 2)
-		if len(parts) != 2 {
-			return nil, ErrMailboxNotFound
-		}
-		mailboxName := parts[1]
+	owner, localName := s.resolveMailbox(ctx, name)
 
-		// Check if user has access to this shared mailbox.
-		access, err := s.backend.sharedGrants.Access(ctx, s.backend.db, parts[0], s.user)
-		if err != nil || !access.AtLeast(policy.GrantRead) {
-			return nil, ErrMailboxNotFound
-		}
-
-		// Get the shared mailbox owner's mailboxes.
-		mbs, err := s.backend.mailboxStore.ListForUser(ctx, s.backend.db, parts[0])
-		if err != nil {
-			return nil, ErrMailboxNotFound
-		}
-
-		var found bool
-		for _, m := range mbs {
-			if m.Name == mailboxName {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return nil, ErrMailboxNotFound
-		}
-	}
-
-	mb, err := s.backend.mailboxStore.GetByName(ctx, s.backend.db, s.user, name)
+	mb, err := s.backend.mailboxStore.GetByName(ctx, s.backend.db, owner, localName)
 	if err != nil {
 		return nil, ErrMailboxNotFound
 	}
-
-	_ = mb
 
 	// Read the full message.
 	data, err := io.ReadAll(r)
@@ -669,12 +700,12 @@ func (s *session) Append(mailbox string, r imap.LiteralReader, options *imap.App
 	}
 
 	// Check quota.
-	quota, err := s.backend.quotaRepo.Get(ctx, s.backend.db, s.user)
+	quota, err := s.backend.quotaRepo.Get(ctx, s.backend.db, owner)
 	if err != nil {
 		return nil, fmt.Errorf("imap: get quota: %w", err)
 	}
 
-	limit, err := getQuotaLimit(ctx, s.backend.db, s.user)
+	limit, err := getQuotaLimit(ctx, s.backend.db, owner)
 	if err != nil {
 		return nil, fmt.Errorf("imap: get quota limit: %w", err)
 	}
@@ -715,7 +746,7 @@ func (s *session) Append(mailbox string, r imap.LiteralReader, options *imap.App
 	}
 
 	// Adjust quota.
-	_, err = s.backend.quotaRepo.Adjust(ctx, s.backend.db, s.user, size, 1)
+	_, err = s.backend.quotaRepo.Adjust(ctx, s.backend.db, owner, size, 1)
 	if err != nil {
 		return nil, fmt.Errorf("imap: adjust quota: %w", err)
 	}
@@ -1112,6 +1143,48 @@ func toUIDSet(uids []uint32) []imap.UIDRange {
 // Helper functions
 // ---------------------------------------------------------------------------
 
+// resolveMailbox maps the name a client used to the owner principal and the
+// mailbox's name within that principal.
+//
+// A session that logged in as "user#shared" already speaks for the shared
+// mailbox, and its folders are keyed by the shared address, so the name is
+// taken as written. In a personal session a name may instead address a shared
+// mailbox the user can read: the bare address selects its INBOX, and
+// "<address>/<folder>" addresses a folder inside it.
+func (s *session) resolveMailbox(ctx context.Context, name string) (owner, localName string) {
+	if s.sharedTarget != "" {
+		return s.user, name
+	}
+
+	// "<shared address>/<folder>" addresses a folder inside a shared mailbox.
+	if i := strings.IndexByte(name, '/'); i > 0 {
+		if shared, ok := s.readableShared(ctx, name[:i]); ok {
+			return shared, name[i+1:]
+		}
+	}
+
+	// A bare shared address selects that mailbox's INBOX.
+	if shared, ok := s.readableShared(ctx, name); ok {
+		return shared, "INBOX"
+	}
+
+	return s.user, name
+}
+
+// readableShared reports whether name is a declared shared mailbox the session's
+// user may at least read, returning the canonical address when so.
+func (s *session) readableShared(ctx context.Context, name string) (string, bool) {
+	mbx, err := s.backend.sharedMailboxes.Get(ctx, s.backend.db, name)
+	if err != nil || mbx.Address != name {
+		return "", false
+	}
+	access, err := s.backend.sharedGrants.Access(ctx, s.backend.db, name, s.user)
+	if err != nil || !access.AtLeast(policy.GrantRead) {
+		return "", false
+	}
+	return name, true
+}
+
 // selectMailbox opens and selects a mailbox by name.
 func (s *session) selectMailbox(name string, readOnly bool) error {
 	ctx := context.Background()
@@ -1121,7 +1194,9 @@ func (s *session) selectMailbox(name string, readOnly bool) error {
 		name = "INBOX"
 	}
 
-	mb, err := s.backend.mailboxStore.GetByName(ctx, s.backend.db, s.user, name)
+	owner, localName := s.resolveMailbox(ctx, name)
+
+	mb, err := s.backend.mailboxStore.GetByName(ctx, s.backend.db, owner, localName)
 	if err != nil {
 		return ErrMailboxNotFound
 	}
