@@ -39,6 +39,10 @@ export type MailSelection =
   selector: 'app-mail-reader',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [CommonModule, MailIcon],
+  // The host is the flex item in the three-pane row. Without this it is an
+  // inline element, so the section inside can grow but the pane itself does
+  // not, and the empty state only fills its own content.
+  host: { class: 'flex min-h-0 min-w-0 flex-1' },
   template: `
     <section class="flex min-h-0 min-w-0 flex-1 flex-col bg-white">
       @if (error()) {
