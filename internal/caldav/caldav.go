@@ -491,7 +491,18 @@ func (s *Server) resolveCalendar(r *http.Request, who policy.Principal) (store.C
 		return findByName(rows, name)
 	}
 
-	rows, err := s.calendars.ByOwner(ctx, s.db, who.Address)
+	// The principal in the path is the calendar's owner, not necessarily the
+	// caller: a calendar shared with somebody is listed under the owner's URL,
+	// and the viewer reaches it with their own credentials. requireRead and
+	// requireWrite decide whether the viewer may, so looking the calendar up by
+	// the path's owner is what makes a shared calendar addressable.
+	owner := who.Address
+	if raw := chi.URLParam(r, "principal"); raw != "" {
+		if decoded, err := decodeSegment(raw); err == nil && decoded != "" {
+			owner = decoded
+		}
+	}
+	rows, err := s.calendars.ByOwner(ctx, s.db, owner)
 	if err != nil {
 		return store.Calendar{}, s.databaseError(ctx, "listing the calendars", err)
 	}

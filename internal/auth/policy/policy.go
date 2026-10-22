@@ -171,6 +171,10 @@ const (
 	// mailbox, so an account that cannot hold mail has no calendar to sync and
 	// has no business being told it has one.
 	ActionCalDAV Action = "caldav"
+	// ActionCardDAV is the contacts client. Like the calendar client it is a
+	// logon for a mailbox's data, so an account that cannot hold mail has no
+	// address book to sync either.
+	ActionCardDAV Action = "carddav"
 
 	// ActionSendMail may only ever be taken by a principal holding mail.
 	ActionSendMail Action = "send_mail"
@@ -191,7 +195,7 @@ const (
 // principal, so all of them share one "may hold mail" rule.
 var mailLogons = []Action{
 	ActionIMAP, ActionPOP3, ActionSMTP, ActionEWS, ActionEAS, ActionMAPIHTTP,
-	ActionCalDAV,
+	ActionCalDAV, ActionCardDAV,
 	ActionSendMail, ActionReadMailbox, ActionManageMailbox,
 }
 

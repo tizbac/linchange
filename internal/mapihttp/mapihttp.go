@@ -21,6 +21,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
+	"github.com/linchange/linchange/internal/contacts"
 	"github.com/linchange/linchange/internal/imapd"
 	"github.com/linchange/linchange/internal/mapihttp/transport"
 	"github.com/linchange/linchange/internal/store"
@@ -41,9 +42,12 @@ type Options struct {
 	Messages  *imapd.MessageRepo
 	Mailboxes *imapd.MailboxRepo
 	Users     *store.Users
-	Hostname  string
-	Auth      transport.Authenticator
-	Logger    *slog.Logger
+	// Contacts is the organization directory the GAL adds titles and phone
+	// numbers from. Left nil, the GAL is the user list alone.
+	Contacts *contacts.Service
+	Hostname string
+	Auth     transport.Authenticator
+	Logger   *slog.Logger
 	// ServerVersion, when set, is what the X-ServerApplication header
 	// reports. Left empty it is the reference's default.
 	ServerVersion string
@@ -66,6 +70,7 @@ func New(opts Options) *Server {
 			Messages:      opts.Messages,
 			Mailboxes:     opts.Mailboxes,
 			Users:         opts.Users,
+			Contacts:      opts.Contacts,
 			Hostname:      opts.Hostname,
 			Auth:          opts.Auth,
 			Logger:        opts.Logger,

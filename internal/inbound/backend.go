@@ -70,6 +70,12 @@ type Backend struct {
 	// sender's client to retry the whole delivery, and the message itself is
 	// already stored and readable.
 	Scheduling func(ctx context.Context, owner string, document []byte)
+
+	// UpdateContactName fills in a contact's name when a non-junk message from
+	// them arrives and the recipient already has the card but no name for it.
+	// It is best effort and must never fail a delivery: the message is already
+	// stored, and a contact is a convenience beside it.
+	UpdateContactName func(ctx context.Context, owner, fromAddress, fromName string)
 }
 
 // NewBackend builds the inbound backend.
@@ -483,6 +489,11 @@ func (s *session) deliver(ctx context.Context, digest blobstore.Digest, size int
 		// so an answer the calendar layer refuses is still mail the recipient
 		// can read and answer again from their client.
 		s.backend.applyScheduling(ctx, owner, parsed)
+		// A message that is not junk is also the best answer available to
+		// "who is this?" for a card the recipient already has with no name.
+		if s.backend.UpdateContactName != nil && !containsFlag(flags, `\Junk`) {
+			s.backend.UpdateContactName(ctx, owner, meta.FromAddress, meta.FromName)
+		}
 		if ok {
 			if len(outcome.Matched) > 0 {
 				s.backend.log.Info("rules applied to inbound message",
@@ -564,6 +575,16 @@ func (b *Backend) queueForward(ctx context.Context, owner string, digest blobsto
 
 // mergeFlags joins the delivery flags (junk) with the rule flags, repeating
 // neither.
+// containsFlag reports whether the flag is present, case-insensitively.
+func containsFlag(flags []string, want string) bool {
+	for _, flag := range flags {
+		if strings.EqualFold(flag, want) {
+			return true
+		}
+	}
+	return false
+}
+
 func mergeFlags(base, extra []string) []string {
 	out := make([]string, 0, len(base)+len(extra))
 	seen := map[string]bool{}

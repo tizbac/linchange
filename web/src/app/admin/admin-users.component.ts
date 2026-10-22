@@ -64,6 +64,8 @@ export class AdminUsersComponent implements OnInit {
   protected draft: {
     address: string;
     displayName: string;
+    // Phone lives in the organization directory card, not on the user row.
+    phone: string;
     source: string;
     password: string;
     quotaMiB: number | null;
@@ -72,6 +74,7 @@ export class AdminUsersComponent implements OnInit {
   } = {
     address: '',
     displayName: '',
+    phone: '',
     source: 'local',
     password: '',
     quotaMiB: null,
@@ -122,6 +125,7 @@ export class AdminUsersComponent implements OnInit {
         address: this.draft.address.trim(),
         source,
         display_name: this.draft.displayName.trim(),
+        ...(this.draft.phone.trim() ? { phone: this.draft.phone.trim() } : {}),
         // A password is only sent when one was typed. A domain admin or an
         // LDAP user has no stored credential, and sending an empty string
         // would either fail the minimum length or store a password nobody
@@ -140,6 +144,7 @@ export class AdminUsersComponent implements OnInit {
       this.draft = {
         address: '',
         displayName: '',
+        phone: '',
         source: 'local',
         password: '',
         quotaMiB: null,

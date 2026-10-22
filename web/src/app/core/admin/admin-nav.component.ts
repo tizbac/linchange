@@ -23,13 +23,13 @@ const TABS: Tab[] = [
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [RouterLink, RouterLinkActive],
   template: `
-    <nav class="flex gap-1 border-b border-slate-200 overflow-x-auto">
+    <nav class="flex flex-wrap gap-1 border-b border-slate-200">
       @for (tab of tabs(); track tab.path) {
         <a
           [routerLink]="tab.path"
           routerLinkActive="border-brand-600 text-brand-700"
           [routerLinkActiveOptions]="{ exact: true }"
-          class="flex-shrink-0 border-b-2 border-transparent px-4 py-2 text-sm font-medium text-slate-600 hover:text-brand-700 hover:border-brand-300 transition"
+          class="shrink-0 border-b-2 border-transparent px-4 py-2 text-sm font-medium text-slate-600 hover:text-brand-700 hover:border-brand-300 transition"
         >
           {{ tab.label }}
         </a>

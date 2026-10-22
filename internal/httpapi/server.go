@@ -37,7 +37,9 @@ import (
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/caldav"
 	"github.com/linchange/linchange/internal/calendar"
+	"github.com/linchange/linchange/internal/carddav"
 	"github.com/linchange/linchange/internal/chat"
+	"github.com/linchange/linchange/internal/contacts"
 	"github.com/linchange/linchange/internal/delivery"
 	"github.com/linchange/linchange/internal/eas"
 	"github.com/linchange/linchange/internal/ews"
@@ -119,6 +121,10 @@ type Server struct {
 	// tests that do not build one, in which case the endpoint answers with an
 	// empty list and the browser keeps its fallback.
 	webrtc *webrtc.Service
+	// contacts is the address book store the web routes and CardDAV share.
+	contacts *contacts.Service
+	// carddav speaks the same store over CardDAV.
+	carddav *carddav.Server
 }
 
 // Options are the inputs to New.
@@ -155,6 +161,8 @@ type Options struct {
 	// WebRTC is the STUN/TURN service whose configuration the browser fetches
 	// before opening a call. Left nil, the endpoint answers with an empty list.
 	WebRTC *webrtc.Service
+	// Contacts is the address book service. Left nil, one is built here.
+	Contacts *contacts.Service
 }
 
 // New builds a Server from an open database and a loaded config.
@@ -338,6 +346,15 @@ func New(opts Options) (*Server, error) {
 	// iOS/macOS Calendar, Evolution, etc.). It uses the same calendar service.
 	caldavServer := caldav.NewServer("/caldav", calService, opts.DB, mailVerifier)
 
+	// Address books are shared by the web routes and CardDAV. The service is
+	// stateless, so the application may pass the one it also uses for the
+	// inbound and outbound hooks, or this server can build its own.
+	contactsService := opts.Contacts
+	if contactsService == nil {
+		contactsService = contacts.New(opts.DB, log)
+	}
+	carddavServer := carddav.NewServer("/carddav", contactsService, opts.DB, mailVerifier)
+
 	// Chat is native: it is built here, over the same database, and there is no
 	// external chat server to configure or to be down. The hub is the live
 	// socket layer; the service is the durable one.
@@ -368,6 +385,7 @@ func New(opts Options) (*Server, error) {
 		DB:       opts.DB,
 		Mail:     mailService,
 		Calendar: calService,
+		Contacts: contactsService,
 		Blobs:    opts.Blobs,
 		Messages: imapd.NewMessageRepo(),
 		Auth:     mailVerifier,
@@ -401,6 +419,7 @@ func New(opts Options) (*Server, error) {
 		Messages:  imapd.NewMessageRepo(),
 		Mailboxes: imapd.NewMailboxRepo(),
 		Users:     store.NewUsers(),
+		Contacts:  contactsService,
 		Hostname:  cfg.Server.Hostname,
 		Auth:      mailVerifier,
 		Logger:    log,
@@ -431,6 +450,8 @@ func New(opts Options) (*Server, error) {
 		chat:         chatService,
 		chatHub:      chatHub,
 		webrtc:       opts.WebRTC,
+		contacts:     contactsService,
+		carddav:      carddavServer,
 	}, nil
 }
 
@@ -480,6 +501,11 @@ func (s *Server) Handler() http.Handler {
 		// header, the address book and the invite picker all need.
 		s.mountOrganization(r)
 
+		// Address books for the web client. CardDAV speaks the same store and
+		// is mounted at the origin root below, where its discovery document
+		// has to live.
+		s.mountContacts(r)
+
 		// Meetings sit on top of the calendar and the mailbox: creating one
 		// writes an event and queues an invitation. The invitee-facing routes
 		// are mounted in the same group but outside requireAuth, because the
@@ -496,6 +522,12 @@ func (s *Server) Handler() http.Handler {
 		// alone.
 		s.mountWebRTC(r)
 	})
+
+	// CardDAV follows RFC 6764: the discovery document is at the origin root and
+	// the service is at /carddav. It is registered before the CalDAV catch-all
+	// so the well-known path reaches it rather than the calendar handler.
+	r.Handle("/.well-known/carddav", s.carddav.WellKnownHandler())
+	r.Mount("/carddav", s.carddav.Handler())
 
 	// CalDAV is not part of the REST surface: a calendar client is handed
 	// /.well-known/caldav or /caldav and follows it, so the endpoint has to sit

@@ -501,21 +501,33 @@ func (s *Server) propfindFor(w http.ResponseWriter, r *http.Request) (propfindRe
 // readableCalendars is the set of calendars a principal may read in its own home
 // set.
 //
-// It is the principal's own calendars, and nothing else. A workgroup calendar is
-// readable by anybody who addresses it directly, but listing every team calendar
-// in every user's home set would put the whole organisation's calendar list in
-// front of every user, which is not the same thing as letting them book a meeting.
+// It is the principal's own calendars plus the ones shared with them and
+// accepted. A shared calendar keeps its owner's URL in the listing, because the
+// URL names the calendar's home rather than the viewer; the viewer reaches it
+// with their own credentials and requireRead decides whether they may.
 func (s *Server) readableCalendars(r *http.Request, who policy.Principal) ([]store.Calendar, *davError) {
 	rows, err := s.calendars.ByOwner(r.Context(), s.db, who.Address)
 	if err != nil {
 		return nil, s.databaseError(r.Context(), "listing the calendars", err)
 	}
-	out := make([]store.Calendar, 0, len(rows))
-	for _, cal := range rows {
-		if derr := s.requireRead(r, who, cal); derr != nil {
-			continue
+	shared, err := store.NewCalendarShares().SharedCalendars(r.Context(), s.db, who.Address)
+	if err != nil {
+		return nil, s.databaseError(r.Context(), "listing the shared calendars", err)
+	}
+
+	out := make([]store.Calendar, 0, len(rows)+len(shared))
+	seen := make(map[int64]bool, len(rows)+len(shared))
+	for _, group := range [][]store.Calendar{rows, shared} {
+		for _, cal := range group {
+			if seen[cal.ID] {
+				continue
+			}
+			if derr := s.requireRead(r, who, cal); derr != nil {
+				continue
+			}
+			seen[cal.ID] = true
+			out = append(out, cal)
 		}
-		out = append(out, cal)
 	}
 	return out, nil
 }

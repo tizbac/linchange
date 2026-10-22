@@ -322,16 +322,20 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Address            string        `json:"address"`
-		Source             policy.Source `json:"source"`
-		DisplayName        string        `json:"display_name"`
-		Password           string        `json:"password"`
-		QuotaBytes         *int64        `json:"quota_bytes"`
-		MustChangePassword *bool         `json:"must_change_password"`
-		DailySendLimit     *int          `json:"daily_send_limit"`
-		Timezone           string        `json:"timezone"`
-		Language           string        `json:"language"`
-		IsDomainAdmin      bool          `json:"is_domain_admin"`
+		Address     string        `json:"address"`
+		Source      policy.Source `json:"source"`
+		DisplayName string        `json:"display_name"`
+		// Phone is not stored on the user row: it belongs to the person's card
+		// in the organization directory, which is where the address book and
+		// CardDAV clients read it from.
+		Phone              string `json:"phone"`
+		Password           string `json:"password"`
+		QuotaBytes         *int64 `json:"quota_bytes"`
+		MustChangePassword *bool  `json:"must_change_password"`
+		DailySendLimit     *int   `json:"daily_send_limit"`
+		Timezone           string `json:"timezone"`
+		Language           string `json:"language"`
+		IsDomainAdmin      bool   `json:"is_domain_admin"`
 	}
 	if err := decodeAdmin(w, r, &in); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
@@ -352,6 +356,17 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		adminErrors(w, s, err)
 		return
+	}
+	// The new account becomes a card in the organization's directory. This is
+	// best effort and never fails the creation: the user exists, and a
+	// directory that could not be written is a card the administrator can add
+	// again, not a reason to refuse an account that was created.
+	if wg, ok := s.organizationFor(r.Context(), user.Address); ok {
+		if err := s.contacts.UpsertOrganizationPerson(r.Context(),
+			Principal(r.Context()).Address, wg.ID, user.Address, in.DisplayName, in.Phone); err != nil {
+			s.log.Warn("could not add the new user to the organization directory",
+				"address", user.Address, "error", err)
+		}
 	}
 	// The password is in the request and is not echoed back: a response body
 	// ends up in logs and browser history.

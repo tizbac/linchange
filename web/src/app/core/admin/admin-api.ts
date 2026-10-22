@@ -64,6 +64,9 @@ export class AdminApi {
     source?: string;
     password?: string;
     display_name?: string;
+    // Stored on the person's card in the organization directory, not on the
+    // user row.
+    phone?: string;
     quota_bytes?: number | null;
     daily_send_limit?: number | null;
     timezone?: string;

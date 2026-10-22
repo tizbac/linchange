@@ -49,8 +49,33 @@ func (e *EWS) resolveNames(c *call) responseCode {
 		return c.faultResponse(e.internal("ResolveNames", err))
 	}
 
-	type match struct{ address, name string }
+	type match struct {
+		address, name, title, company, business, mobile string
+	}
 	var matches []match
+	seen := make(map[string]int)
+	add := func(m match) {
+		key := strings.ToLower(m.address)
+		if i, ok := seen[key]; ok {
+			// The user row gives the identity; the directory card gives the
+			// fields the user row does not have.
+			if matches[i].title == "" {
+				matches[i].title = m.title
+			}
+			if matches[i].company == "" {
+				matches[i].company = m.company
+			}
+			if matches[i].business == "" {
+				matches[i].business = m.business
+			}
+			if matches[i].mobile == "" {
+				matches[i].mobile = m.mobile
+			}
+			return
+		}
+		seen[key] = len(matches)
+		matches = append(matches, m)
+	}
 	for _, u := range users {
 		if !u.Enabled || !u.MailboxEnabled {
 			continue
@@ -62,7 +87,29 @@ func (e *EWS) resolveNames(c *call) responseCode {
 		// resolves by containing the entry.
 		if address == entry || name == entry ||
 			strings.HasPrefix(address, entry) || strings.Contains(name, entry) {
-			matches = append(matches, match{address: u.Address, name: u.DisplayName})
+			add(match{address: u.Address, name: u.DisplayName})
+		}
+	}
+	// The organization directory holds people who are not users of this
+	// mailbox server as well as titles and telephone numbers for those who
+	// are, so it is part of the same resolution answer.
+	if e.contacts != nil {
+		entries, err := e.contacts.DirectoryEntries(c.ctx())
+		if err != nil {
+			e.log.Warn("EWS: could not read the organization directory", "error", err)
+		} else {
+			for _, d := range entries {
+				address := strings.ToLower(d.Address)
+				name := strings.ToLower(d.Name)
+				if address == entry || name == entry ||
+					strings.HasPrefix(address, entry) || strings.Contains(name, entry) {
+					add(match{
+						address: d.Address, name: d.Name,
+						title: d.Title, company: d.Company,
+						business: d.BusinessPhone, mobile: d.MobilePhone,
+					})
+				}
+			}
 		}
 	}
 
@@ -77,7 +124,32 @@ func (e *EWS) resolveNames(c *call) responseCode {
 		if req.ReturnFullContactData || sh.all() {
 			b.WriteString(`<t:Contact><t:DisplayName>`)
 			b.WriteString(escape(m.name))
-			b.WriteString(`</t:DisplayName><t:EmailAddresses><t:Entry Key="EmailAddress1">`)
+			b.WriteString(`</t:DisplayName>`)
+			if m.company != "" {
+				b.WriteString(`<t:CompanyName>`)
+				b.WriteString(escape(m.company))
+				b.WriteString(`</t:CompanyName>`)
+			}
+			if m.title != "" {
+				b.WriteString(`<t:JobTitle>`)
+				b.WriteString(escape(m.title))
+				b.WriteString(`</t:JobTitle>`)
+			}
+			if m.business != "" || m.mobile != "" {
+				b.WriteString(`<t:PhoneNumbers>`)
+				if m.business != "" {
+					b.WriteString(`<t:Entry Key="BusinessPhone">`)
+					b.WriteString(escape(m.business))
+					b.WriteString(`</t:Entry>`)
+				}
+				if m.mobile != "" {
+					b.WriteString(`<t:Entry Key="MobilePhone">`)
+					b.WriteString(escape(m.mobile))
+					b.WriteString(`</t:Entry>`)
+				}
+				b.WriteString(`</t:PhoneNumbers>`)
+			}
+			b.WriteString(`<t:EmailAddresses><t:Entry Key="EmailAddress1">`)
 			b.WriteString(escape(m.address))
 			b.WriteString(`</t:Entry></t:EmailAddresses></t:Contact>`)
 		}

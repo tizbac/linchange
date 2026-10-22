@@ -21,6 +21,7 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/linchange/linchange/internal/auth/policy"
+	"github.com/linchange/linchange/internal/contacts"
 	"github.com/linchange/linchange/internal/imapd"
 	"github.com/linchange/linchange/internal/mapihttp/nspi"
 	"github.com/linchange/linchange/internal/mapihttp/rop"
@@ -52,6 +53,9 @@ type Options struct {
 	Messages  *imapd.MessageRepo
 	Mailboxes *imapd.MailboxRepo
 	Users     *store.Users
+	// Contacts is the organization directory the address book enriches its
+	// rows from.
+	Contacts *contacts.Service
 	// Hostname is the public name this server is reachable at, without a
 	// scheme. It appears in the URLs the address book's GetMailboxUrl and
 	// GetAddressBookUrl operations return, and is the realm a client is
@@ -118,6 +122,7 @@ func New(opts Options) *Transport {
 		nspi: &nspi.Backend{
 			DB:       opts.DB,
 			Users:    opts.Users,
+			Contacts: opts.Contacts,
 			Hostname: opts.Hostname,
 			Logger:   log,
 		},

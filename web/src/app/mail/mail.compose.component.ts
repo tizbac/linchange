@@ -15,7 +15,8 @@ import {
 import { CalendarApi } from '../core/calendar/calendar-api';
 import { Calendar as CalendarModel } from '../core/calendar/calendar.models';
 import { formatDateTime } from '../core/calendar/ui';
-import { Contact, OrganizationApi } from '../core/organization/organization-api';
+import { ContactsApi } from '../core/contacts/contacts-api';
+import { Suggestion } from '../core/contacts/contacts.models';
 
 // escapeHtml turns the characters that are markup into text, for wrapping a
 // plain-text body as HTML.
@@ -199,7 +200,7 @@ function inviteFileName(summary: string): string {
                 class="text-sm font-medium text-blue-600 hover:underline"
                 (click)="openContacts()"
               >
-                {{ showContacts() ? 'Hide contacts' : 'People in your organization' }}
+                {{ showContacts() ? 'Hide contacts' : 'Address book' }}
               </button>
               @if (showContacts()) {
                 <div class="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -224,8 +225,11 @@ function inviteFileName(summary: string): string {
                             class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-slate-700 transition hover:bg-white"
                             (click)="addRecipient(c.address)"
                           >
-                            <span class="min-w-0 flex-1 truncate">{{ c.display_name || c.address }}</span>
+                            <span class="min-w-0 flex-1 truncate">{{ c.displayName || c.address }}</span>
                             <span class="shrink-0 truncate text-xs text-slate-400">{{ c.address }}</span>
+                            <span class="shrink-0 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
+                              {{ c.source }}
+                            </span>
                           </button>
                         </li>
                       }
@@ -436,7 +440,7 @@ export class MailComposeComponent implements OnInit {
   private readonly auth = inject(AuthService);
   private readonly composeTarget = inject(ComposeTarget);
   private readonly calendarApi = inject(CalendarApi);
-  private readonly organizationApi = inject(OrganizationApi);
+  private readonly contactsApi = inject(ContactsApi);
 
   from = '';
   toRaw = '';
@@ -608,7 +612,7 @@ export class MailComposeComponent implements OnInit {
 
   protected readonly showContacts = signal(false);
   protected readonly contactsLoading = signal(false);
-  protected readonly people = signal<Contact[]>([]);
+  protected readonly people = signal<Suggestion[]>([]);
   protected readonly contactFilter = signal('');
 
   // matchingContacts is the filtered list as it is typed, capped so that an
@@ -621,7 +625,8 @@ export class MailComposeComponent implements OnInit {
       ? all.filter(
           (c) =>
             c.address.toLowerCase().includes(q) ||
-            (c.display_name ?? '').toLowerCase().includes(q),
+            (c.displayName ?? '').toLowerCase().includes(q) ||
+            c.source.toLowerCase().includes(q),
         )
       : all;
     return hits.slice(0, 50);
@@ -631,8 +636,8 @@ export class MailComposeComponent implements OnInit {
   // on the To/CC/BCC fields.
   protected readonly contactOptions = computed(() => {
     return this.people().map((c) => {
-      const name = c.display_name ? ` ${c.display_name}` : '';
-      return `${c.address}${name}`;
+      const name = c.displayName ? ` — ${c.displayName}` : '';
+      return `${c.address}${name} (${c.source})`;
     });
   });
 
@@ -642,8 +647,10 @@ export class MailComposeComponent implements OnInit {
     if (this.people().length > 0 || this.contactsLoading()) return;
     this.contactsLoading.set(true);
     try {
-      const res = await this.organizationApi.people();
-      this.people.set(res.people ?? []);
+      // Every book the user can read, personal and shared and the organization
+      // directory. Each candidate carries the book it came from.
+      const res = await this.contactsApi.search('', 100);
+      this.people.set(res.suggestions ?? []);
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {

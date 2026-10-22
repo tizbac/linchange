@@ -24,6 +24,7 @@ import (
 	"github.com/linchange/linchange/internal/auth/mailauth"
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/calendar"
+	"github.com/linchange/linchange/internal/contacts"
 	"github.com/linchange/linchange/internal/delivery"
 	"github.com/linchange/linchange/internal/dkim"
 	"github.com/linchange/linchange/internal/httpapi"
@@ -169,6 +170,11 @@ func New(ctx context.Context, opts Options) (*App, error) {
 	// checked.
 	mailVerifier := mailauth.New(db, log, directory)
 
+	// Address books are used by the web UI, CardDAV, the composer's
+	// autocomplete and the inbound name backfill. One service is shared so all
+	// four read the same store.
+	contactsService := contacts.New(db, log)
+
 	if cfg.Mail.Outbound.Concurrency > 0 {
 		pool := delivery.FromConfig(cfg, log, db)
 		poolCfg := pool.GetConfig()
@@ -202,6 +208,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		// client, and one of the two paths is not a second implementation of
 		// the rules.
 		schedCal := calendar.NewService(store.NewCalendars(), store.NewEvents(), store.NewWorkgroups())
+		backend.UpdateContactName = contactsService.UpdateNameFromInbound
 		backend.Scheduling = func(ctx context.Context, owner string, document []byte) {
 			who, err := store.LoadPrincipal(ctx, db, owner)
 			if err != nil {
@@ -365,6 +372,8 @@ func New(ctx context.Context, opts Options) (*App, error) {
 			Imports: imports,
 			// The STUN/TURN configuration the browser fetches before a call.
 			WebRTC: webRTCService,
+			// The address book service shared with the inbound hook.
+			Contacts: contactsService,
 		})
 		if err != nil {
 			a.Close(context.Background())

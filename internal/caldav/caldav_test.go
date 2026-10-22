@@ -1691,3 +1691,59 @@ func syncReport(token string) string {
   <D:prop><D:getetag/></D:prop>
 </D:sync-collection>`
 }
+
+// A calendar shared with somebody is listed in their home set and reachable
+// under its owner's URL. The URL names the calendar's home, not the viewer; the
+// viewer's own credentials and the share decide whether they may read or write.
+func TestSharedCalendarIsListedAndReachableByTheSubject(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	address := bobAddr
+	share := store.CalendarShare{
+		CalendarID:     h.cal.ID,
+		SubjectKind:    store.ShareSubjectUser,
+		SubjectAddress: &address,
+		Level:          store.CalendarShareRead,
+		Status:         store.CalendarShareActive,
+	}
+	if _, err := store.NewCalendarShares().Put(ctx, h.db, share); err != nil {
+		t.Fatalf("sharing the calendar: %v", err)
+	}
+
+	bobHome := "/caldav/bob%40example.com/"
+	aliceCal := "/caldav/alice%40example.com/" + h.cal.Name + "/"
+
+	resp, body := h.doAs(bobAddr, bobPass, "PROPFIND", bobHome,
+		propfindBody("displayname", "resourcetype"), map[string]string{"Depth": "1"})
+	if resp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("bob's home = %d %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, aliceCal) {
+		t.Fatalf("the shared calendar is not listed in bob's home: %s", body)
+	}
+
+	resp, body = h.doAs(bobAddr, bobPass, "PROPFIND", aliceCal,
+		propfindBody("displayname", "resourcetype"), map[string]string{"Depth": "0"})
+	if resp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("bob reading the shared calendar = %d %s", resp.StatusCode, body)
+	}
+
+	// Read means read: a write is refused until the share is raised.
+	resp, body = h.doAs(bobAddr, bobPass, "PUT", aliceCal+"shared-1.ics", sharedEvent,
+		map[string]string{"Content-Type": "text/calendar"})
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("bob writing to a read-only share = %d %s, want 403", resp.StatusCode, body)
+	}
+
+	share.Level = store.CalendarShareWrite
+	if _, err := store.NewCalendarShares().Put(ctx, h.db, share); err != nil {
+		t.Fatalf("raising the share: %v", err)
+	}
+	resp, body = h.doAs(bobAddr, bobPass, "PUT", aliceCal+"shared-1.ics", sharedEvent,
+		map[string]string{"Content-Type": "text/calendar"})
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("bob writing to a write share = %d %s", resp.StatusCode, body)
+	}
+}
+
+const sharedEvent = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\nUID:shared-1\r\nDTSTAMP:20260101T000000Z\r\nDTSTART:20260102T100000Z\r\nDTEND:20260102T110000Z\r\nSUMMARY:Shared\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"

@@ -58,6 +58,11 @@ export const routes: Routes = [
     loadComponent: () => import('./calendar/calendar.component').then((m) => m.CalendarComponent),
   },
   {
+    path: 'contacts',
+    canActivate: [requireAuth],
+    loadComponent: () => import('./contacts/contacts.component').then((m) => m.ContactsComponent),
+  },
+  {
     path: 'meetings',
     canActivate: [requireAuth],
     loadComponent: () => import('./meetings/meetings.component').then((m) => m.MeetingsComponent),

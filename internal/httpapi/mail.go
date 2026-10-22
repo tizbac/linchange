@@ -16,6 +16,7 @@ import (
 
 	"github.com/linchange/linchange/internal/auth/policy"
 	"github.com/linchange/linchange/internal/blobstore"
+	"github.com/linchange/linchange/internal/contacts"
 	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/webmail"
 )
@@ -898,6 +899,17 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		s.writeMailError(w, r, err)
 		return
 	}
+	// Writing to somebody is the most reliable statement that you know them,
+	// so the recipients go into the sender's personal book. A failure here is
+	// logged by the contacts service and never fails the send: the message is
+	// already queued.
+	recipients := make([]contacts.Recipient, 0, len(in.To)+len(in.Cc)+len(in.Bcc))
+	for _, group := range [][]webmail.Address{in.To, in.Cc, in.Bcc} {
+		for _, to := range group {
+			recipients = append(recipients, contacts.Recipient{Address: to.Address, Name: to.Name})
+		}
+	}
+	s.contacts.AddRecipients(r.Context(), mailOwner(r), recipients)
 	// Accepted, not created: the message is queued and the SMTP conversation
 	// has not happened yet, so a client that shows "sent" here is overstating
 	// what the server knows.

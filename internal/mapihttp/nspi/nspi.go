@@ -18,6 +18,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
+	"github.com/linchange/linchange/internal/contacts"
 	"github.com/linchange/linchange/internal/store"
 )
 
@@ -28,6 +29,10 @@ import (
 type Backend struct {
 	DB    *sqlx.DB
 	Users *store.Users
+	// Contacts is the organization directory. Its cards add the titles and
+	// telephone numbers the GAL shows beside a name; the users alone carry
+	// neither.
+	Contacts *contacts.Service
 	// Hostname is the public name this server is reachable at, e.g.
 	// "mail.example.test" (without scheme).
 	Hostname string
@@ -39,9 +44,11 @@ type Backend struct {
 // time (index + 0x10, leaving 0/1/2 free for the BEGINNING/CURRENT/END and
 // UNRESOLVED/AMBIGUOUS/RESOLVED special values).
 type record struct {
-	mid     uint32
-	address string
-	name    string
+	mid                                      uint32
+	address                                  string
+	name                                     string
+	title, company, department               string
+	businessPhone, mobilePhone, primaryPhone string
 	// perm is the record's permanent (non-ephemeral) property map, built
 	// once when the GAL is loaded. Rows that need ephemeral entry ids are
 	// built from propsFor on demand; the restriction evaluator only ever
@@ -124,6 +131,41 @@ func (s *Session) gal(ctx context.Context, back *Backend) ([]record, error) {
 			name = u.Address
 		}
 		recs = append(recs, record{address: u.Address, name: name})
+	}
+
+	// A directory card enriches the user it names and adds the people who are
+	// in the organization's address book without being mailbox users here.
+	if back.Contacts != nil {
+		entries, err := back.Contacts.DirectoryEntries(ctx)
+		if err != nil {
+			if back.Logger != nil {
+				back.Logger.Warn("mapi/nspi: could not read the organization directory", "error", err)
+			}
+		} else {
+			byAddress := make(map[string]*record, len(recs))
+			for i := range recs {
+				byAddress[strings.ToLower(recs[i].address)] = &recs[i]
+			}
+			for _, e := range entries {
+				if existing, ok := byAddress[strings.ToLower(e.Address)]; ok {
+					if e.Name != "" {
+						existing.name = e.Name
+					}
+					existing.title = e.Title
+					existing.company = e.Company
+					existing.department = e.Department
+					existing.businessPhone = e.BusinessPhone
+					existing.mobilePhone = e.MobilePhone
+					existing.primaryPhone = e.PrimaryPhone
+					continue
+				}
+				recs = append(recs, record{
+					address: e.Address, name: e.Name,
+					title: e.Title, company: e.Company, department: e.Department,
+					businessPhone: e.BusinessPhone, mobilePhone: e.MobilePhone, primaryPhone: e.PrimaryPhone,
+				})
+			}
+		}
 	}
 	// The reference address book sorts the GAL by display name, which is
 	// also the order Outlook browses it in; ties break on address so the
@@ -317,6 +359,24 @@ func propsFor(rec *record, host string, ephemeral bool) map[uint32]any {
 		// Server-side mailbox home; a client resolving a recipient back to
 		// a mailbox needs the MDB DN.
 		prEmABHomeMDB: homeMDBDN(host),
+	}
+	if rec.title != "" {
+		props[prTitle] = rec.title
+	}
+	if rec.company != "" {
+		props[prCompanyName] = rec.company
+	}
+	if rec.department != "" {
+		props[prDepartmentName] = rec.department
+	}
+	if rec.businessPhone != "" {
+		props[prBusinessTelephoneNumber] = rec.businessPhone
+	}
+	if rec.mobilePhone != "" {
+		props[prMobileTelephoneNumber] = rec.mobilePhone
+	}
+	if rec.primaryPhone != "" {
+		props[prPrimaryTelephoneNumber] = rec.primaryPhone
 	}
 
 	// Both string flavours of every text property: the client's code page

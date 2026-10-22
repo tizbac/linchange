@@ -25,6 +25,7 @@ import (
 	"github.com/linchange/linchange/internal/auth/policy"
 	"github.com/linchange/linchange/internal/blobstore"
 	"github.com/linchange/linchange/internal/calendar"
+	"github.com/linchange/linchange/internal/contacts"
 	"github.com/linchange/linchange/internal/imapd"
 	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/webmail"
@@ -50,6 +51,9 @@ type Options struct {
 	// Calendar is the calendar service, shared with the REST API and CalDAV for
 	// the same reason Mail is.
 	Calendar *calendar.Service
+	// Contacts is the organization directory, which enriches name resolution
+	// with the titles and telephone numbers the GAL shows.
+	Contacts *contacts.Service
 	// Blobs is where message bytes live, and Messages is the row that points at
 	// them. A copy has to write both, and the copy is the one operation in EWS
 	// that creates a message without composing one, so it goes through the same
@@ -74,6 +78,7 @@ type EWS struct {
 	db       *sqlx.DB
 	mail     *webmail.Service
 	cal      *calendar.Service
+	contacts *contacts.Service
 	blobs    *blobstore.Store
 	messages *imapd.MessageRepo
 	auth     Authenticator
@@ -112,6 +117,7 @@ func New(opts Options) *EWS {
 		db:       opts.DB,
 		mail:     opts.Mail,
 		cal:      opts.Calendar,
+		contacts: opts.Contacts,
 		blobs:    opts.Blobs,
 		messages: opts.Messages,
 		auth:     opts.Auth,

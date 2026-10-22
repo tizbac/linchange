@@ -2,6 +2,8 @@ import { NgClass } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
+import { ContactsApi } from '../core/contacts/contacts-api';
+import { Suggestion } from '../core/contacts/contacts.models';
 import { errorMessage } from '../core/http-error';
 import { MeetingsApi } from '../core/meetings/meetings-api';
 import { MeetingDraft, MeetingListItem } from '../core/meetings/meetings.models';
@@ -109,6 +111,51 @@ function defaults() {
                 class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               ></textarea>
             </label>
+
+            <!-- The same search the composer uses, with the book each
+                 candidate came from, so an invitee from a personal address
+                 book is visibly different from one in the company directory. -->
+            <div class="relative sm:col-span-2">
+              <span class="text-sm font-medium text-slate-700">
+                Add from contacts
+                <span class="font-normal text-slate-400">— search your books and the organization directory</span>
+              </span>
+              <input
+                class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                name="contactQuery"
+                autocomplete="off"
+                [(ngModel)]="contactQuery"
+                (ngModelChange)="searchContacts()"
+                placeholder="Name, address, phone or organization"
+              />
+              @if (suggestions().length > 0) {
+                <ul
+                  class="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg"
+                >
+                  @for (s of suggestions(); track s.address) {
+                    <li>
+                      <button
+                        type="button"
+                        class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-slate-50"
+                        (click)="addSuggestion(s)"
+                      >
+                        <span class="min-w-0 flex-1">
+                          <span class="block truncate font-medium text-slate-800">
+                            {{ s.displayName || s.address }}
+                          </span>
+                          <span class="block truncate text-xs text-slate-500">{{ s.address }}</span>
+                        </span>
+                        <span
+                          class="shrink-0 rounded bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700"
+                        >
+                          {{ s.source }}
+                        </span>
+                      </button>
+                    </li>
+                  }
+                </ul>
+              }
+            </div>
 
             <!-- Groups invite people who have not been written down: the
                  server expands each one into guests when the meeting is
@@ -273,6 +320,7 @@ export class MeetingsComponent {
   private readonly api = inject(MeetingsApi);
   private readonly router = inject(Router);
   private readonly orgApi = inject(OrganizationApi);
+  private readonly contactsApi = inject(ContactsApi);
 
   readonly items = signal<MeetingListItem[]>([]);
   readonly loading = signal(true);
@@ -295,6 +343,9 @@ export class MeetingsComponent {
   description = '';
   location = '';
   attendeesText = '';
+  contactQuery = '';
+  readonly suggestions = signal<Suggestion[]>([]);
+  private searchTimer?: ReturnType<typeof setTimeout>;
   oneWay = false;
   timezone = browserZone();
   date = defaults().date;
@@ -403,6 +454,38 @@ export class MeetingsComponent {
     this.invitedGroups.set(
       chosen.includes(group.id) ? chosen.filter((id) => id !== group.id) : [...chosen, group.id],
     );
+  }
+
+  protected searchContacts(): void {
+    const query = this.contactQuery.trim();
+    if (this.searchTimer) {
+      clearTimeout(this.searchTimer);
+    }
+    if (!query) {
+      this.suggestions.set([]);
+      return;
+    }
+    this.searchTimer = setTimeout(() => {
+      void this.contactsApi
+        .search(query, 8)
+        .then((res) => this.suggestions.set(res.suggestions ?? []))
+        .catch(() => this.suggestions.set([]));
+    }, 180);
+  }
+
+  protected addSuggestion(suggestion: Suggestion): void {
+    const label = suggestion.displayName
+      ? `${suggestion.displayName} <${suggestion.address}>`
+      : suggestion.address;
+    const lines = this.attendeesText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (!lines.some((line) => line.toLowerCase().includes(suggestion.address.toLowerCase()))) {
+      this.attendeesText = [...lines, label].join('\n');
+    }
+    this.contactQuery = '';
+    this.suggestions.set([]);
   }
 
   // parseAttendees reads the textarea: one guest per line, with the

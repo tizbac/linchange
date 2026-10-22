@@ -34,6 +34,18 @@
             <admin-field label="Display name">
               <input class="{{ inputClass }}" name="displayName" [(ngModel)]="draft.displayName" />
             </admin-field>
+            <admin-field
+              label="Phone (optional)"
+              hint="Stored on the person's card in the organization directory."
+            >
+              <input
+                class="{{ inputClass }}"
+                name="phone"
+                type="tel"
+                [(ngModel)]="draft.phone"
+                placeholder="+39 02 1234 5678"
+              />
+            </admin-field>
             <admin-field label="Source">
               <select class="{{ inputClass }}" name="source" [(ngModel)]="draft.source">
                 <option value="local">local — a password is stored here</option>

@@ -6,7 +6,7 @@
           <span class="text-lg font-semibold tracking-tight text-brand-700">
             {{ auth.organization() ? auth.organization() + ' - linchange' : 'linchange' }}
           </span>
-          <nav class="flex items-center gap-5">
+          <nav class="flex flex-wrap items-center justify-end gap-x-5 gap-y-2">
             <a
               routerLink="/mail"
               routerLinkActive="text-brand-700"
@@ -31,6 +31,13 @@
               class="text-sm font-medium text-slate-600 transition hover:text-brand-700"
             >
               Calendar
+            </a>
+            <a
+              routerLink="/contacts"
+              routerLinkActive="text-brand-700"
+              class="text-sm font-medium text-slate-600 transition hover:text-brand-700"
+            >
+              Contacts
             </a>
             <a
               routerLink="/meetings"

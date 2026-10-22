@@ -33,6 +33,7 @@ sed -E \
   -e "s|^  smtp_submission_tls: .*|  smtp_submission_tls: { addr: \":1465\" }|" \
   -e "s|^  http: .*|  http: { addr: \":${PORT}\" }|" \
   -e "/greylisting:/,/delay:/ s|^      enabled: .*|      enabled: false|" \
+  -e "/^    spam:/,/^      reject_threshold:/ s|^      enabled: .*|      enabled: false|" \
   -e "/^    dsn:/,/delay:/ s|^      delay: .*|      delay: 5s|" \
   -e "s|^  public_url: .*|  public_url: http://127.0.0.1:${PORT}|" \
   linchange.dev.yaml > .e2e-linchange.yaml
