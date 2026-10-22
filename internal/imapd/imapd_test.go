@@ -81,6 +81,12 @@ func setupServerWithDirectory(t *testing.T, dir mailauth.Directory) (*imapd.Serv
 	); err != nil {
 		t.Fatalf("create INBOX: %v", err)
 	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO mailboxes (owner, name, uidvalidity, uidnext, special_use)
+		 VALUES ('alice@example.com', 'Sent', 1, 1, '\sent')`,
+	); err != nil {
+		t.Fatalf("create Sent: %v", err)
+	}
 
 	cfg := testConfig(t)
 
@@ -291,6 +297,24 @@ func TestAppendAndFetch(t *testing.T) {
 
 	if appendData.UID == 0 {
 		t.Error("APPEND should return a non-zero UID")
+	}
+
+	// A native client appends the sent copy after selecting INBOX. The target
+	// mailbox is not the selected one, and the old code read its UIDVALIDITY
+	// from the selection and panicked.
+	sentCmd := client.Append("Sent", int64(len(msg)), nil)
+	if _, err := sentCmd.Write(msg); err != nil {
+		t.Fatalf("append to Sent: %v", err)
+	}
+	if err := sentCmd.Close(); err != nil {
+		t.Fatalf("append to Sent close: %v", err)
+	}
+	sentData, err := sentCmd.Wait()
+	if err != nil {
+		t.Fatalf("append to Sent wait: %v", err)
+	}
+	if sentData.UID == 0 || sentData.UIDValidity == 0 {
+		t.Errorf("append to Sent returned uid=%d uidvalidity=%d, want both non-zero", sentData.UID, sentData.UIDValidity)
 	}
 
 	fetchCmd := client.Fetch(imap.SeqSetNum(1), nil)

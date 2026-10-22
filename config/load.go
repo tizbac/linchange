@@ -264,6 +264,16 @@ func New() *Config {
 					Duration:    30 * time.Minute,
 				},
 			},
+			// Mail clients and DAV/Exchange clients cannot present a TOTP
+			// code. They get their own failure counter: ten wrong passwords
+			// for one login lock that login for five minutes. The window is
+			// short because a shared NAT can produce several genuine typos,
+			// and the account key is the login the attacker is guessing.
+			ProtocolLockout: LockoutScope{
+				MaxAttempts: 10,
+				Window:      5 * time.Minute,
+				Duration:    5 * time.Minute,
+			},
 			Challenge: Challenge{
 				// Long enough to find a phone, unlock it and read a code;
 				// short enough that a challenge left open in a browser tab is

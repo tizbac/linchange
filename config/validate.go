@@ -266,6 +266,7 @@ func (v *validator) validateAuth() {
 
 	v.lockoutScope("auth.lockout.account", c.Auth.Lockout.Account)
 	v.lockoutScope("auth.lockout.ip", c.Auth.Lockout.IP)
+	v.lockoutScope("auth.protocol_lockout", c.Auth.ProtocolLockout)
 	if c.Auth.Session.IdleTimeout > c.Auth.Session.AbsoluteTimeout {
 		v.addf("auth.session.idle_timeout (%s) must not exceed absolute_timeout (%s)",
 			c.Auth.Session.IdleTimeout, c.Auth.Session.AbsoluteTimeout)

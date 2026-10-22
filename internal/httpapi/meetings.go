@@ -219,11 +219,14 @@ func (s *Server) handleMeetingInviteRSVP(w http.ResponseWriter, r *http.Request)
 // together before the connection is accepted. No linchange session is needed.
 func (s *Server) handleMeetingInviteSocket(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	if _, err := s.meetings.GuestRoom(r.Context(), meetingUID(r), q.Get("to"), q.Get("token")); err != nil {
+	conv, err := s.meetings.GuestRoom(r.Context(), meetingUID(r), q.Get("to"), q.Get("token"))
+	if err != nil {
 		s.writeError(w, mapErrorCode(err), err.Error())
 		return
 	}
-	s.chatHub.Accept(w, r, q.Get("to"))
+	// The invitation is a capability for this room. The socket is scoped to
+	// it so a forwarded link cannot expose the rest of the address's chats.
+	s.chatHub.AcceptScoped(w, r, q.Get("to"), conv.UID)
 }
 
 // handleMeetingInviteChat returns the room history to a guest holding their
@@ -279,13 +282,20 @@ func (s *Server) handleMeetingInviteAttachment(w http.ResponseWriter, r *http.Re
 	q := r.URL.Query()
 	// GuestRoom verifies the token and makes sure the address is on the room,
 	// which is the same membership AttachmentFor then checks.
-	if _, err := s.meetings.GuestRoom(r.Context(), meetingUID(r), q.Get("to"), q.Get("token")); err != nil {
+	conv, err := s.meetings.GuestRoom(r.Context(), meetingUID(r), q.Get("to"), q.Get("token"))
+	if err != nil {
 		s.writeError(w, mapErrorCode(err), err.Error())
 		return
 	}
 	att, data, err := s.chat.AttachmentFor(r.Context(), chi.URLParam(r, "attachment"), q.Get("to"))
 	if err != nil {
 		s.writeChatError(w, err)
+		return
+	}
+	// The invitation admits the guest to this room, not to every attachment
+	// the address can otherwise reach.
+	if att.ConversationID != conv.ID {
+		s.writeError(w, http.StatusNotFound, "no such attachment")
 		return
 	}
 	serveDownload(w, att.MIME, att.Name, data)

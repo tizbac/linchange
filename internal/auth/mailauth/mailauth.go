@@ -21,9 +21,12 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 
+	"github.com/linchange/linchange/config"
 	"github.com/linchange/linchange/internal/auth/password"
 	"github.com/linchange/linchange/internal/auth/policy"
 	"github.com/linchange/linchange/internal/store"
@@ -59,24 +62,38 @@ type Verifier struct {
 	log         *slog.Logger
 	directory   Directory
 	credentials *store.Credentials
+	// failures throttles repeated wrong passwords for one login. It is nil
+	// when protocol_lockout is disabled.
+	failures *failureLimiter
 }
 
-// New returns a Verifier. A nil directory denies: a deployment with
-// directory-backed accounts but no directory wired up must refuse those logins
-// rather than admit anyone whose account happens to have no local password.
+// New returns a Verifier without a protocol lockout. Tests and embedders that
+// do not have a configuration use it; the server uses NewWithLockout.
 func New(db *sqlx.DB, log *slog.Logger, directory Directory) *Verifier {
+	return NewWithLockout(db, log, directory, config.LockoutScope{})
+}
+
+// NewWithLockout returns a Verifier with the configured protocol lockout. A
+// nil directory denies: a deployment with directory-backed accounts but no
+// directory wired up must refuse those logins rather than admit anyone whose
+// account happens to have no local password.
+func NewWithLockout(db *sqlx.DB, log *slog.Logger, directory Directory, lockout config.LockoutScope) *Verifier {
 	if log == nil {
 		log = slog.Default()
 	}
 	if directory == nil {
 		directory = unavailableDirectory{}
 	}
-	return &Verifier{
+	v := &Verifier{
 		db:          db,
 		log:         log,
 		directory:   directory,
 		credentials: store.NewCredentials(),
 	}
+	if lockout.Enabled() {
+		v.failures = newFailureLimiter(lockout.MaxAttempts, lockout.Window, lockout.Duration)
+	}
+	return v
 }
 
 // unavailableDirectory stands in for a nil Directory and refuses.
@@ -84,6 +101,109 @@ type unavailableDirectory struct{}
 
 func (unavailableDirectory) Authenticate(context.Context, string, string) (bool, error) {
 	return false, errors.New("mailauth: no directory is configured")
+}
+
+// failureLimiter is an in-memory, per-login failure counter. It is deliberately
+// not the web lockout: that one is backed by rows because it protects a
+// session-issuing endpoint, while this one protects listeners that cannot
+// present a second factor and only need to stop a burst of guesses.
+type failureLimiter struct {
+	mu       sync.Mutex
+	entries  map[string]failureEntry
+	max      int
+	window   time.Duration
+	duration time.Duration
+	now      func() time.Time
+}
+
+type failureEntry struct {
+	count       int
+	windowStart time.Time
+	until       time.Time
+}
+
+const maxFailureEntries = 4096
+
+func newFailureLimiter(max int, window, duration time.Duration) *failureLimiter {
+	return &failureLimiter{
+		entries:  make(map[string]failureEntry),
+		max:      max,
+		window:   window,
+		duration: duration,
+		now:      time.Now,
+	}
+}
+
+// locked reports whether the login is currently in a cooldown.
+func (l *failureLimiter) locked(login string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	entry, ok := l.entries[login]
+	if !ok {
+		return false
+	}
+	now := l.now()
+	if now.Before(entry.until) {
+		return true
+	}
+	if entry.windowStart.IsZero() || now.Sub(entry.windowStart) > l.window {
+		delete(l.entries, login)
+	}
+	return false
+}
+
+// record counts one refused password. Reaching the threshold starts the
+// cooldown; a failure during a cooldown does not extend it.
+func (l *failureLimiter) record(login string) {
+	now := l.now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	entry := l.entries[login]
+	if !entry.until.IsZero() && now.Before(entry.until) {
+		return
+	}
+	if entry.windowStart.IsZero() || now.Sub(entry.windowStart) > l.window {
+		entry = failureEntry{windowStart: now}
+	}
+	entry.count++
+	if entry.count >= l.max {
+		entry.count = 0
+		entry.until = now.Add(l.duration)
+	}
+	l.entries[login] = entry
+
+	if len(l.entries) > maxFailureEntries {
+		l.prune(now)
+	}
+}
+
+// clear forgets a login after a successful authentication.
+func (l *failureLimiter) clear(login string) {
+	l.mu.Lock()
+	delete(l.entries, login)
+	l.mu.Unlock()
+}
+
+// prune drops entries that can no longer lock anybody. If a spray still fills
+// the table with distinct unknown logins, the oldest entries are dropped: the
+// limiter must not itself become an unbounded memory target.
+func (l *failureLimiter) prune(now time.Time) {
+	for login, entry := range l.entries {
+		if entry.until.IsZero() && now.Sub(entry.windowStart) > l.window {
+			delete(l.entries, login)
+			continue
+		}
+		if !entry.until.IsZero() && !now.Before(entry.until) {
+			delete(l.entries, login)
+		}
+	}
+	for login := range l.entries {
+		if len(l.entries) <= maxFailureEntries/2 {
+			return
+		}
+		delete(l.entries, login)
+	}
 }
 
 // Authenticate verifies login and password for a client using the protocol named
@@ -95,11 +215,27 @@ func (unavailableDirectory) Authenticate(context.Context, string, string) (bool,
 func (v *Verifier) Authenticate(
 	ctx context.Context, login, pw string, action policy.Action,
 ) (policy.Principal, error) {
+	key := strings.ToLower(strings.TrimSpace(login))
+	if v.failures != nil && v.failures.locked(key) {
+		// Keep the answer indistinguishable from a wrong password and spend
+		// the same time a real comparison would.
+		password.DummyVerify(pw)
+		v.log.InfoContext(ctx, "mail login refused: locked",
+			"address", key, "protocol", string(action))
+		return policy.Principal{}, ErrRejected
+	}
+	refuse := func() {
+		if v.failures != nil {
+			v.failures.record(key)
+		}
+	}
+
 	// An empty password is refused before anything is consulted. A directory
 	// asked to bind with no password performs an anonymous bind, which
 	// succeeds without proving anything, so this case must never reach one.
 	if pw == "" {
 		password.DummyVerify(pw)
+		refuse()
 		return policy.Principal{}, ErrRejected
 	}
 
@@ -109,6 +245,7 @@ func (v *Verifier) Authenticate(
 			// Spend the time a real comparison would take, so that a login
 			// name nobody holds is not measurably faster than one that is.
 			password.DummyVerify(pw)
+			refuse()
 			return policy.Principal{}, ErrRejected
 		}
 		return policy.Principal{}, fmt.Errorf("mailauth: loading %s: %w", login, err)
@@ -120,10 +257,14 @@ func (v *Verifier) Authenticate(
 		password.DummyVerify(pw)
 		v.log.InfoContext(ctx, "mail login refused by policy",
 			"address", principal.Address, "protocol", string(action), "code", denialCode(err))
+		refuse()
 		return policy.Principal{}, ErrRejected
 	}
 
 	if err := v.verifyPassword(ctx, principal, pw); err != nil {
+		if errors.Is(err, ErrRejected) {
+			refuse()
+		}
 		return policy.Principal{}, err
 	}
 
@@ -132,9 +273,15 @@ func (v *Verifier) Authenticate(
 	// must change its password are all refused here.
 	principal.Authenticated = true
 	if err := principal.CanMailProtocol(action); err != nil {
+		if v.failures != nil {
+			v.failures.clear(key)
+		}
 		v.log.InfoContext(ctx, "mail login refused by policy",
 			"address", principal.Address, "protocol", string(action), "code", denialCode(err))
 		return policy.Principal{}, ErrRejected
+	}
+	if v.failures != nil {
+		v.failures.clear(key)
 	}
 	return principal, nil
 }

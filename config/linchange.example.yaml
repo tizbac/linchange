@@ -127,6 +127,15 @@ auth:
       max_attempts: 10
       window: 15m
       duration: 30m
+  # Mail clients, CalDAV, CardDAV, EWS, EAS and MAPI cannot present a TOTP
+  # code, so they have their own failure counter. It is keyed by the login
+  # being guessed: after ten wrong passwords inside the window, that login is
+  # refused for the duration. Successful authentication clears the count.
+  # Set max_attempts to 0 to disable this limit.
+  protocol_lockout:
+    max_attempts: 10
+    window: 5m
+    duration: 5m
   # A user with a second factor gets an opaque challenge after the password
   # checks out, not tokens. Nothing usable exists until the code is presented,
   # so a challenge left in a browser tab is worthless by the time anyone comes

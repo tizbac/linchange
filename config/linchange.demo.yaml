@@ -79,6 +79,10 @@ auth:
       max_attempts: 10
       window: 15m
       duration: 15m
+  protocol_lockout:
+    max_attempts: 10
+    window: 5m
+    duration: 5m
   challenge:
     ttl: 5m
   session:

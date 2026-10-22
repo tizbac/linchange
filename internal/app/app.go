@@ -168,7 +168,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 	// One verifier answers for all three mail protocols. Sharing it is what
 	// stops them from drifting apart on who may log in and how the password is
 	// checked.
-	mailVerifier := mailauth.New(db, log, directory)
+	mailVerifier := mailauth.NewWithLockout(db, log, directory, cfg.Auth.ProtocolLockout)
 
 	// Address books are used by the web UI, CardDAV, the composer's
 	// autocomplete and the inbound name backfill. One service is shared so all

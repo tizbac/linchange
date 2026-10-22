@@ -144,6 +144,32 @@ Note di compatibilità:
 - Migrazioni dello schema PostgreSQL applicate all'avvio o dal wizard di setup.
 - Pacchetto `.deb` (con builder basato su Docker) e immagine Docker multi-stage.
 
+### Sicurezza del trasporto e autenticazione dei protocolli
+
+- **TLS è opzionale, non implicito nell'installazione.** La configurazione di
+  esempio abilita HTTP, IMAP e POP3 in chiaro e lascia disabilitati i listener
+  con TLS implicito finché non viene configurato un certificato. In produzione
+  configura `listeners.https` (oppure termina TLS su un reverse proxy), abilita
+  i listener solo-TLS e non esporre le porte in chiaro a reti non fidate.
+  CalDAV, CardDAV, EWS, EAS e MAPI usano HTTP Basic e devono stare dietro TLS.
+  Vedi [Configurazione](#configurazione) e i commenti in
+  `config/linchange.example.yaml`.
+- **L'autenticazione a due fattori copre l'accesso web, non i protocolli
+  mail/DAV/Exchange.** IMAP, POP3, invio SMTP, CalDAV, CardDAV, EWS, EAS e MAPI
+  autenticano solo con la password dell'account: su questi protocolli non viene
+  chiesto un codice TOTP. Finché non saranno disponibili password per
+  applicazione, considera la password dell'account come credenziale per quei
+  client, tieni i protocolli dietro TLS e controlli di rete, e non fare
+  affidamento sul 2FA per proteggere una password IMAP o Outlook. Le password
+  per applicazione sono il seguito previsto.
+- **Gli accessi ai protocolli sono limitati per indirizzo di login.** Dopo
+  `auth.protocol_lockout.max_attempts` password errate dentro
+  `auth.protocol_lockout.window`, i tentativi successivi per quel login vengono
+  rifiutati per `auth.protocol_lockout.duration`. I valori predefiniti sono 10
+  tentativi, 5 minuti e 5 minuti; imposta `max_attempts: 0` per disabilitare il
+  limite. Un accesso riuscito azzera il contatore. È separato dal blocco più
+  severo dell'accesso browser in `auth.lockout`.
+
 ## Architettura
 
 linchange è un unico processo Go. Ogni listener di protocollo, l'API HTTP,

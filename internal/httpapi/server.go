@@ -214,7 +214,7 @@ func New(opts Options) (*Server, error) {
 	// mail login rather than through a second one that could disagree with it.
 	mailVerifier := opts.MailAuth
 	if mailVerifier == nil {
-		mailVerifier = mailauth.New(opts.DB, log, directory)
+		mailVerifier = mailauth.NewWithLockout(opts.DB, log, directory, cfg.Auth.ProtocolLockout)
 	}
 
 	tokens, err := token.NewManager(cfg.Auth.JWT)

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 
@@ -296,6 +297,31 @@ func TestDomainAdminUsesWhicheverHoldsItsPassword(t *testing.T) {
 	}
 	if _, err := v.Authenticate(ctx, "admin@example.com", "dir-pw", policy.ActionAdminister); !errors.Is(err, mailauth.ErrRejected) {
 		t.Errorf("the directory password = %v, want ErrRejected", err)
+	}
+}
+
+// TestProtocolLockoutBlocksAfterThreshold covers the limit that protects the
+// listeners which cannot present a TOTP code. A correct password must not
+// bypass a cooldown earned by repeated wrong ones.
+func TestProtocolLockoutBlocksAfterThreshold(t *testing.T) {
+	db := testdb.Migrated(t)
+	ctx := context.Background()
+	createUser(t, db, "bob@example.com", policy.SourceLocal, true)
+	setPassword(t, db, "bob@example.com", "correct horse battery staple")
+
+	v := mailauth.NewWithLockout(
+		db,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		nil,
+		config.LockoutScope{MaxAttempts: 2, Window: time.Minute, Duration: time.Hour},
+	)
+	for i := 0; i < 2; i++ {
+		if _, err := v.Authenticate(ctx, "bob@example.com", "wrong", policy.ActionIMAP); !errors.Is(err, mailauth.ErrRejected) {
+			t.Fatalf("wrong password %d = %v, want ErrRejected", i+1, err)
+		}
+	}
+	if _, err := v.Authenticate(ctx, "bob@example.com", "correct horse battery staple", policy.ActionIMAP); !errors.Is(err, mailauth.ErrRejected) {
+		t.Errorf("a correct password during the cooldown = %v, want ErrRejected", err)
 	}
 }
 

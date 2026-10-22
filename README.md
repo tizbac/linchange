@@ -137,6 +137,33 @@ Compatibility notes:
 - Packaging as a `.deb` (Docker-based builder included) and a multi-stage
   Docker image.
 
+### Transport security and protocol authentication
+
+- **TLS is opt-in, not implied by installing linchange.** The sample
+  configuration enables plaintext HTTP, IMAP and POP3 and leaves the
+  implicit-TLS listeners disabled until a certificate is configured. In
+  production, configure `listeners.https` (or terminate TLS at a reverse
+  proxy), enable the TLS-only listeners, and do not expose the plaintext ports
+  to untrusted networks. CalDAV, CardDAV, EWS, EAS and MAPI use HTTP Basic
+  authentication and must be behind TLS. See
+  [Configuration](#configuration) and the comments in
+  `config/linchange.example.yaml`.
+- **Two-factor authentication covers the web sign-in, not the mail/DAV/
+  Exchange protocols.** IMAP, POP3, SMTP submission, CalDAV, CardDAV, EWS, EAS
+  and MAPI authenticate with the account password only: a TOTP code is not
+  requested on those protocols. Until per-application passwords exist, treat
+  the account password as the credential for those clients, keep the
+  protocols behind TLS and network controls, and do not rely on 2FA to protect
+  an IMAP or Outlook password. Per-application passwords are the intended
+  follow-up.
+- **Protocol logins are rate-limited per login address.** After
+  `auth.protocol_lockout.max_attempts` wrong passwords within
+  `auth.protocol_lockout.window`, further attempts for that login are refused
+  for `auth.protocol_lockout.duration`. The defaults are 10 attempts, 5
+  minutes and 5 minutes; set `max_attempts: 0` to disable the limit. A
+  successful login clears the counter. This is separate from the stricter
+  browser-login lockout in `auth.lockout`.
+
 ## Architecture
 
 linchange is a single Go process. Every protocol listener, the HTTP API, the
@@ -301,7 +328,7 @@ see `docker-compose.yml`.
 - TLS: a Let's Encrypt account reachable on port 80, or a certificate/key pair.
 - Outbound TCP 25 and DNS access for outbound delivery; many hosting providers
   block outbound port 25 by default, so check that before going live.
-- For building from source only: **Go 1.27+** and **Node.js 22.22+**.
+- For building from source only: **Go 1.27.3+** and **Node.js 22.22+**.
 
 ### Debian/Ubuntu package (recommended)
 

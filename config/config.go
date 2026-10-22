@@ -123,14 +123,19 @@ type Auth struct {
 	// from the DKIM key on purpose: those have nothing to do with each other,
 	// and sharing one key would mean rotating the DKIM key invalidates every
 	// enrolled second factor, or the reverse.
-	EncryptionKey string        `yaml:"encryption_key"`
-	JWT           JWTAuth       `yaml:"jwt"`
-	TOTP          TOTPAuth      `yaml:"totp"`
-	Reset         ResetAuth     `yaml:"reset_password"`
-	Lockout       Lockout       `yaml:"lockout"`
-	Challenge     Challenge     `yaml:"challenge"`
-	Session       SessionPolicy `yaml:"session"`
-	Impersonation Impersonation `yaml:"impersonation"`
+	EncryptionKey string    `yaml:"encryption_key"`
+	JWT           JWTAuth   `yaml:"jwt"`
+	TOTP          TOTPAuth  `yaml:"totp"`
+	Reset         ResetAuth `yaml:"reset_password"`
+	Lockout       Lockout   `yaml:"lockout"`
+	// ProtocolLockout throttles failed logins on the non-browser protocols:
+	// IMAP, POP3, SMTP submission, CalDAV, CardDAV, EWS, EAS and MAPI. It is
+	// separate from Lockout because those clients cannot present a second
+	// factor and the operator may want a different threshold.
+	ProtocolLockout LockoutScope  `yaml:"protocol_lockout"`
+	Challenge       Challenge     `yaml:"challenge"`
+	Session         SessionPolicy `yaml:"session"`
+	Impersonation   Impersonation `yaml:"impersonation"`
 }
 
 // LocalAuth configures stored credentials for local users.

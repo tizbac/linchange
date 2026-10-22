@@ -753,7 +753,7 @@ func (s *session) Append(mailbox string, r imap.LiteralReader, options *imap.App
 
 	return &imap.AppendData{
 		UID:         imap.UID(result.UID),
-		UIDValidity: s.selected.uidValidity,
+		UIDValidity: mb.UIDValidity,
 	}, nil
 }
 

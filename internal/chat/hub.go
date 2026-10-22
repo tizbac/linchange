@@ -48,6 +48,11 @@ type client struct {
 	hub    *Hub
 	member string
 	conn   *websocket.Conn
+	// scope, when non-empty, is the only conversation this socket may see.
+	// It is set for a guest who authenticated with a meeting invitation:
+	// the token admits them to that room, not to every room the address
+	// happens to belong to.
+	scope string
 
 	// writeMu serialises writes: a WebSocket connection permits only one
 	// writer at a time, and broadcasts arrive from other clients' goroutines.
@@ -112,6 +117,18 @@ func (h *Hub) Service() *Service { return h.svc }
 // Accept upgrades an authenticated request and serves it until the socket
 // closes. The caller has already established who the member is.
 func (h *Hub) Accept(w http.ResponseWriter, r *http.Request, member string) {
+	h.accept(w, r, member, "")
+}
+
+// AcceptScoped upgrades a guest's request to a socket that may only see one
+// conversation. A meeting invitation is a capability for that room; without
+// the scope the guest socket would authenticate as the invited address and
+// could read every conversation that address belongs to.
+func (h *Hub) AcceptScoped(w http.ResponseWriter, r *http.Request, member, conversationUID string) {
+	h.accept(w, r, member, conversationUID)
+}
+
+func (h *Hub) accept(w http.ResponseWriter, r *http.Request, member, conversationUID string) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		// The identity is a bearer token, not an ambient cookie, so a
 		// cross-origin request carries no authority a same-origin one lacks.
@@ -123,14 +140,19 @@ func (h *Hub) Accept(w http.ResponseWriter, r *http.Request, member string) {
 		h.log.Warn("chat: websocket upgrade failed", "error", err)
 		return
 	}
-	h.Serve(r.Context(), member, conn)
+	h.ServeScoped(r.Context(), member, conn, conversationUID)
 }
 
 // Serve runs one connection: it announces the member, then reads frames until
 // the socket closes.
 func (h *Hub) Serve(ctx context.Context, member string, conn *websocket.Conn) {
+	h.ServeScoped(ctx, member, conn, "")
+}
+
+// ServeScoped runs one connection, optionally limited to one conversation.
+func (h *Hub) ServeScoped(ctx context.Context, member string, conn *websocket.Conn, conversationUID string) {
 	member = normalise(member)
-	c := &client{hub: h, member: member, conn: conn}
+	c := &client{hub: h, member: member, conn: conn, scope: strings.TrimSpace(conversationUID)}
 
 	h.add(c)
 	defer h.remove(c)
@@ -138,6 +160,18 @@ func (h *Hub) Serve(ctx context.Context, member string, conn *websocket.Conn) {
 	conversations, err := h.svc.ListFor(ctx, member)
 	if err != nil {
 		h.log.Warn("chat: loading conversations for a new socket failed", "member", member, "error", err)
+	}
+	if c.scope != "" {
+		// The hello frame is the client's map of the world. A scoped guest
+		// gets one room, not the list they would have as a signed-in user.
+		scoped := make([]Summary, 0, 1)
+		for _, summary := range conversations {
+			if summary.UID == c.scope {
+				scoped = append(scoped, summary)
+				break
+			}
+		}
+		conversations = scoped
 	}
 	if err := c.send(outFrame{
 		Type:          "hello",
@@ -212,6 +246,9 @@ func (h *Hub) conversation(ctx context.Context, c *client, uid string) (Conversa
 		return Conversation{}, errors.New("could not check membership")
 	}
 	if !member {
+		return Conversation{}, errors.New("not a member of this conversation")
+	}
+	if c.scope != "" && conv.UID != c.scope {
 		return Conversation{}, errors.New("not a member of this conversation")
 	}
 	return conv, nil
@@ -622,6 +659,12 @@ func (h *Hub) sendTo(member string, out outFrame) bool {
 
 	delivered := false
 	for _, c := range conns {
+		// A scoped socket hears about its room and nothing else. The check
+		// belongs here as well as in conversation(): broadcasts to a member
+		// would otherwise deliver every room's messages to a guest socket.
+		if c.scope != "" && out.Conversation != c.scope {
+			continue
+		}
 		if err := c.send(out); err == nil {
 			delivered = true
 		}
