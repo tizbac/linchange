@@ -4,6 +4,7 @@ import { RouterLink } from '@angular/router';
 import { ActivatedRoute } from '@angular/router';
 import { AdminApi } from '../core/admin/admin-api';
 import { Domain, OrgCalendar, Workgroup, WorkgroupGroup, WorkgroupMember } from '../core/admin/admin.models';
+import { CalendarShare } from '../core/calendar/calendar.models';
 import { AddressBook, AddressBookShare } from '../core/contacts/contacts.models';
 import { AuthService } from '../core/auth/auth.service';
 import { errorMessage } from '../core/http-error';
@@ -221,10 +222,48 @@ type Tab = 'general' | 'members' | 'calendars' | 'groups' | 'addressbooks';
                     <tr>
                       <td class="{{ cell }} font-medium">{{ cal.name }}</td>
                       <td class="{{ cell }} text-slate-500">{{ cal.description || '—' }}</td>
-                      <td class="{{ cell }} text-right">
+                      <td class="{{ cell }} whitespace-nowrap text-right">
+                        <admin-button (pressed)="toggleCalendarShares(cal)">
+                          {{ shareCalendarFor === cal.id ? 'Hide shares' : 'Share' }}
+                        </admin-button>
                         <admin-button variant="danger" [disabled]="busy()" (pressed)="removeCalendar(cal)">Delete</admin-button>
                       </td>
                     </tr>
+                    @if (shareCalendarFor === cal.id) {
+                      <tr class="bg-slate-50/60">
+                        <td colspan="3" class="px-4 py-3">
+                          <div class="flex flex-wrap items-end gap-2">
+                            <label class="block">
+                              <span class="mb-1 block text-xs font-medium text-slate-600">Share with</span>
+                              <select class="{{ inputClass }} min-w-64" [(ngModel)]="calendarShareSubject" name="calendarShareSubject">
+                                <option value="">Choose a person or group</option>
+                                @for (candidate of bookShareCandidates(); track candidate.value) {
+                                  <option [value]="candidate.value">{{ candidate.label }}</option>
+                                }
+                              </select>
+                            </label>
+                            <label class="block">
+                              <span class="mb-1 block text-xs font-medium text-slate-600">Access</span>
+                              <select class="{{ inputClass }}" [(ngModel)]="calendarShareLevel" name="calendarShareLevel">
+                                <option value="read">Read only</option>
+                                <option value="write">Read and write</option>
+                              </select>
+                            </label>
+                            <admin-button [disabled]="busy() || !calendarShareSubject" (pressed)="addCalendarShare(cal)">Share</admin-button>
+                          </div>
+                          <ul class="mt-3 divide-y divide-slate-100">
+                            @for (share of calendarSharesFor(cal); track share.id) {
+                              <li class="flex items-center justify-between py-2 text-sm">
+                                <span>{{ calendarShareLabel(share) }} · {{ share.level }}</span>
+                                <admin-button variant="danger" [disabled]="busy()" (pressed)="removeCalendarShare(cal, share)">Remove</admin-button>
+                              </li>
+                            } @empty {
+                              <li class="py-2 text-sm text-slate-500">Not shared yet.</li>
+                            }
+                          </ul>
+                        </td>
+                      </tr>
+                    }
                   } @empty {
                     <tr><td class="{{ cell }} text-slate-500" colspan="3">No calendars match.</td></tr>
                   }
@@ -394,6 +433,10 @@ export class AdminWorkgroupManageComponent implements OnInit {
   protected calendarQuery = '';
   protected calendarPage = 1;
   protected newCalendar = '';
+  protected readonly calendarShares = signal<Map<number, CalendarShare[]>>(new Map());
+  protected shareCalendarFor = 0;
+  protected calendarShareSubject = '';
+  protected calendarShareLevel: 'read' | 'write' = 'read';
 
   protected readonly groups = signal<WorkgroupGroup[]>([]);
   protected readonly groupTotal = signal(0);
@@ -638,6 +681,74 @@ export class AdminWorkgroupManageComponent implements OnInit {
     } finally {
       this.busy.set(false);
     }
+  }
+
+  protected async toggleCalendarShares(cal: OrgCalendar): Promise<void> {
+    this.error.set('');
+    if (this.shareCalendarFor === cal.id) {
+      this.shareCalendarFor = 0;
+      return;
+    }
+    this.shareCalendarFor = cal.id;
+    this.calendarShareSubject = '';
+    try {
+      const res = await this.api.listWorkgroupCalendarShares(this.id, cal.id);
+      this.calendarShares.update((m) => new Map(m).set(cal.id, res.shares ?? []));
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    }
+  }
+
+  protected calendarSharesFor(cal: OrgCalendar): CalendarShare[] {
+    return this.calendarShares().get(cal.id) ?? [];
+  }
+
+  protected async addCalendarShare(cal: OrgCalendar): Promise<void> {
+    const separator = this.calendarShareSubject.indexOf(':');
+    const kind = separator < 0 ? '' : this.calendarShareSubject.slice(0, separator);
+    const value = separator < 0 ? '' : this.calendarShareSubject.slice(separator + 1);
+    if (!value) {
+      this.error.set('Choose a person or a group to share with.');
+      return;
+    }
+    this.busy.set(true);
+    this.error.set('');
+    try {
+      await this.api.shareWorkgroupCalendar(this.id, cal.id, {
+        subject_kind: kind === 'group' ? 'group' : 'user',
+        ...(kind === 'group'
+          ? { subject_group_id: Number(value) }
+          : { subject_address: value }),
+        level: this.calendarShareLevel,
+      });
+      this.calendarShareSubject = '';
+      const res = await this.api.listWorkgroupCalendarShares(this.id, cal.id);
+      this.calendarShares.update((m) => new Map(m).set(cal.id, res.shares ?? []));
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  protected async removeCalendarShare(cal: OrgCalendar, share: CalendarShare): Promise<void> {
+    this.busy.set(true);
+    try {
+      await this.api.unshareWorkgroupCalendar(this.id, cal.id, share.id);
+      const res = await this.api.listWorkgroupCalendarShares(this.id, cal.id);
+      this.calendarShares.update((m) => new Map(m).set(cal.id, res.shares ?? []));
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  protected calendarShareLabel(share: CalendarShare): string {
+    if (share.subject_name) return share.subject_name;
+    return share.subject_kind === 'group'
+      ? `group ${share.subject_group_id ?? ''}`
+      : share.subject_address || '';
   }
 
   private async loadGroups(): Promise<void> {

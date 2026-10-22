@@ -721,11 +721,21 @@ func (s *Server) handleShareCalendar(w http.ResponseWriter, r *http.Request) {
 	// does that through the organization's own page, where there is nobody in
 	// particular to ask, and those shares are active from the moment they are
 	// written.
+	status := store.CalendarSharePending
+	if cal.IsWorkgroup() {
+		// A team calendar belongs to the organization rather than to the
+		// administrator clicking the button, so sharing it is the
+		// organization sharing its own resource. There is nobody in
+		// particular to ask, and the organization page writes these active;
+		// doing otherwise here would make the same share mean different
+		// things depending on which page made it.
+		status = store.CalendarShareActive
+	}
 	share := store.CalendarShare{
 		CalendarID:  cal.ID,
 		SubjectKind: in.SubjectKind,
 		Level:       in.Level,
-		Status:      store.CalendarSharePending,
+		Status:      status,
 	}
 	var recipients []string
 	switch in.SubjectKind {
