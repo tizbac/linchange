@@ -1,6 +1,7 @@
-import { AfterViewInit, ChangeDetectionStrategy, Component, OnDestroy, ViewChild, ViewEncapsulation, effect, input, output, signal } from '@angular/core';
+import { AfterViewInit, ChangeDetectionStrategy, Component, OnDestroy, ViewChild, ViewEncapsulation, effect, inject, input, output, signal } from '@angular/core';
 import { EditorComponent, TINYMCE_SCRIPT_SRC } from '@tinymce/tinymce-angular';
 import type { Editor as TinyMCEEditor } from 'tinymce';
+import { AuthService } from '../auth/auth.service';
 
 // The HTML body editor.
 //
@@ -162,12 +163,62 @@ export class RichTextEditorComponent implements AfterViewInit, OnDestroy {
   private lastEmitted = '';
   private initialized = false;
 
-  readonly init = signal({
-    height: 400,
-    menubar: false,
-    toolbar: 'undo redo | blocks | bold italic underline strikethrough forecolor backcolor | alignleft aligncenter alignright | bullist numlist outdent indent | blockquote | link | image',
-    plugins: 'link lists image',
-    content_style: `
+  private readonly auth = inject(AuthService);
+
+  readonly init = signal(this.initOptions());
+
+  constructor() {
+    effect(() => {
+      // The skin and the content stylesheet are chosen at init. Updating the
+      // signal also reinitialises the editor if it is already on screen, so a
+      // theme change while composing does not leave a light iframe behind.
+      this.placeholder();
+      this.auth.themeKind();
+      this.init.set(this.initOptions());
+    });
+  }
+
+  private initOptions() {
+    const kind = this.auth.themeKind();
+    const dark =
+      kind === 'dark' ||
+      (kind === 'system' &&
+        typeof window !== 'undefined' &&
+        !!window.matchMedia?.('(prefers-color-scheme: dark)')?.matches);
+    return {
+      height: 400,
+      menubar: false,
+      // The oxide-dark skin is what makes the toolbar and menu chrome match the
+      // rest of the application; content_css colours the editable iframe.
+      skin: dark ? 'oxide-dark' : 'oxide',
+      content_css: dark ? 'dark' : 'default',
+      toolbar: 'undo redo | blocks | bold italic underline strikethrough forecolor backcolor | alignleft aligncenter alignright | bullist numlist outdent indent | blockquote | link | image',
+      plugins: 'link lists image',
+      content_style: dark
+        ? `
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        font-size: 0.875rem;
+        line-height: 1.625;
+        background: #1e293b;
+        color: #e2e8f0;
+        padding: 0.5rem 0.75rem;
+      }
+      p { margin: 0 0 0.5rem; }
+      p:last-child { margin-bottom: 0; }
+      ul, ol { margin: 0 0 0.5rem 1.25rem; }
+      ul { list-style: disc; }
+      ol { list-style: decimal; }
+      blockquote { margin: 0 0 0.5rem; border-left: 3px solid #475569; padding-left: 0.75rem; color: #cbd5e1; }
+      h1, h2, h3 { margin: 0 0 0.5rem; font-weight: 600; }
+      h1 { font-size: 1.25rem; }
+      h2 { font-size: 1.125rem; }
+      h3 { font-size: 1rem; }
+      pre { margin: 0 0 0.5rem; border-radius: 0.375rem; background: #0f172a; padding: 0.5rem; font-family: ui-monospace, monospace; font-size: 0.8125rem; }
+      code { font-family: ui-monospace, monospace; font-size: 0.875em; }
+      a { color: #93c5fd; text-decoration: underline; }
+    `
+        : `
       body {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         font-size: 0.875rem;
@@ -189,21 +240,16 @@ export class RichTextEditorComponent implements AfterViewInit, OnDestroy {
       code { font-family: ui-monospace, monospace; font-size: 0.875em; }
       a { color: #2563eb; text-decoration: underline; }
     `,
-    placeholder: 'Write your message',
-    link_assume_external_targets: 'https',
-    link_default_protocol: 'https',
-    // Use GPL license for self-hosted deployment
-    license_key: 'gpl',
-    // Block formats for the 'blocks' toolbar button
-    block_formats: 'Paragraph=p; Heading 1=h1; Heading 2=h2; Heading 3=h3; Blockquote=blockquote; Preformatted=pre',
-    // Allow images to be pasted directly (base64, converted by server on send)
-    paste_data_images: true,
-  });
-
-  constructor() {
-    effect(() => {
-      this.init.update((cfg) => ({ ...cfg, placeholder: this.placeholder() }));
-    });
+      placeholder: this.placeholder(),
+      link_assume_external_targets: 'https',
+      link_default_protocol: 'https',
+      // Use GPL license for self-hosted deployment
+      license_key: 'gpl',
+      // Block formats for the 'blocks' toolbar button
+      block_formats: 'Paragraph=p; Heading 1=h1; Heading 2=h2; Heading 3=h3; Blockquote=blockquote; Preformatted=pre',
+      // Allow images to be pasted directly (base64, converted by server on send)
+      paste_data_images: true,
+    };
   }
 
   ngAfterViewInit(): void {
