@@ -89,7 +89,19 @@
                     @for (m of box.members; track m.member_address) {
                       <tr>
                         <td class="{{ cell }} font-medium text-slate-900">{{ m.member_address }}</td>
-                        <td class="{{ cell }}">{{ m.level }}</td>
+                        <td class="{{ cell }}">
+                          <select
+                            class="{{ inputClass }}"
+                            [ngModel]="m.level"
+                            (ngModelChange)="setMemberLevel(box, m, $event)"
+                            [disabled]="busy()"
+                          >
+                            <option value="read">read</option>
+                            <option value="contribute">contribute</option>
+                            <option value="editor">editor</option>
+                            <option value="owner">owner</option>
+                          </select>
+                        </td>
                         <td class="{{ cell }} text-right">
                           <admin-button
                             variant="danger"
@@ -122,7 +134,6 @@
                   </admin-field>
                   <admin-field label="Access">
                     <select class="{{ inputClass }}" name="level" [(ngModel)]="memberLevel">
-                      <option value="read">read</option>
                       <option value="read">read</option>
                       <option value="contribute">contribute</option>
                       <option value="editor">editor</option>

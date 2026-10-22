@@ -129,6 +129,31 @@ export class AdminSharedMailboxesComponent implements OnInit {
     }
   }
 
+  // Changing a member's level re-grants, which the server treats as an upsert:
+  // the grant row is updated in place, so the member is never removed and
+  // re-added and keeps everything tied to that grant.
+  protected async setMemberLevel(
+    box: SharedMailbox,
+    m: SharedMailboxGrant,
+    level: SharedMailboxGrant['level'],
+  ): Promise<void> {
+    if (level === m.level) return;
+    this.busy.set(true);
+    this.error.set('');
+    this.ok.set('');
+    try {
+      await this.api.addSharedMailboxMember(box.address, m.member_address, level);
+      this.ok.set(`${m.member_address} now has ${level} access to ${box.address}.`);
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      // Reload either way so the selector shows what the server actually holds
+      // rather than the value the browser just tried to apply.
+      await this.reload();
+      this.busy.set(false);
+    }
+  }
+
   protected async removeMember(box: SharedMailbox, m: SharedMailboxGrant): Promise<void> {
     this.busy.set(true);
     this.error.set('');
