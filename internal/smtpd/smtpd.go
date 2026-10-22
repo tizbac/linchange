@@ -371,6 +371,28 @@ type Server struct {
 func New(cfg config.Config, backend *Backend, logger *slog.Logger, acmeManager *acme.Manager) (*Server, error) {
 	var httpServer, tlsServer *smtp.Server
 
+	// Build the TLS configuration once. The plain listener needs it to answer
+	// STARTTLS; the implicit-TLS listener uses it as the whole connection. A
+	// plain listener without it cannot offer STARTTLS, and a submission port
+	// that requires TLS then has no way to authenticate at all.
+	var tlsCfg *tls.Config
+	if acmeManager != nil {
+		tlsCfg = acmeManager.TLSConfig()
+	} else if cfg.TLS.CertFile != "" && cfg.TLS.KeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+		if err != nil {
+			logger.Warn("failed to load TLS cert", "cert", cfg.TLS.CertFile, "err", err)
+		} else {
+			tlsCfg = &tls.Config{
+				MinVersion:   tls.VersionTLS12,
+				Certificates: []tls.Certificate{cert},
+			}
+		}
+	}
+	if cfg.Listener.SMTPSubmissionTLS.Enabled() && tlsCfg == nil {
+		return nil, fmt.Errorf("smtp submission: implicit TLS is enabled but no usable certificate is configured")
+	}
+
 	if cfg.Listener.SMTPSubmission.Enabled() {
 		httpServer = smtp.NewServer(backend)
 		httpServer.Addr = cfg.Listener.SMTPSubmission.Addr
@@ -385,25 +407,12 @@ func New(cfg config.Config, backend *Backend, logger *slog.Logger, acmeManager *
 		httpServer.ReadTimeout = 30 * time.Second
 		httpServer.WriteTimeout = 30 * time.Second
 		httpServer.EnableSMTPUTF8 = true
+		// STARTTLS on the submission port. With RequireTLS this is the only
+		// way a client on port 587 can authenticate.
+		httpServer.TLSConfig = tlsCfg
 	}
 
 	if cfg.Listener.SMTPSubmissionTLS.Enabled() {
-		var tlsCfg *tls.Config
-		if acmeManager != nil {
-			tlsCfg = acmeManager.TLSConfig()
-		} else {
-			tlsCfg = &tls.Config{
-				MinVersion: tls.VersionTLS12,
-			}
-			if cfg.TLS.CertFile != "" && cfg.TLS.KeyFile != "" {
-				cert, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile)
-				if err == nil {
-					tlsCfg.Certificates = []tls.Certificate{cert}
-				} else {
-					logger.Warn("failed to load TLS cert", "cert", cfg.TLS.CertFile, "err", err)
-				}
-			}
-		}
 		tlsServer = smtp.NewServer(backend)
 		tlsServer.Addr = cfg.Listener.SMTPSubmissionTLS.Addr
 		tlsServer.LMTP = false
