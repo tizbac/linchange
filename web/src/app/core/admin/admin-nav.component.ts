@@ -9,6 +9,7 @@ interface Tab {
 const TABS: Tab[] = [
   { label: $localize`:@@adminNav.domains:Domains`, path: '/admin/domains' },
   { label: $localize`:@@adminNav.organizations:Organizations`, path: '/admin/workgroups' },
+  { label: $localize`:@@adminNav.themes:Themes`, path: '/admin/themes' },
   { label: $localize`:@@adminNav.users:Users`, path: '/admin/users' },
   { label: $localize`:@@adminNav.aliases:Aliases`, path: '/admin/aliases' },
   { label: $localize`:@@adminNav.sharedMailboxes:Shared mailboxes`, path: '/admin/shared-mailboxes' },

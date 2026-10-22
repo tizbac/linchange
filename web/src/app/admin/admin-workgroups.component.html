@@ -143,6 +143,17 @@
                     <admin-field label="Description">
                       <input class="{{ inputClass }}" name="description" [(ngModel)]="wg.description" />
                     </admin-field>
+                    <admin-field
+                      label="Theme"
+                      hint="The default for this organization. A user's own choice still wins."
+                    >
+                      <select class="{{ inputClass }}" name="theme" [(ngModel)]="wg.theme">
+                        <option value="">Use the server default</option>
+                        @for (t of auth.themeOptions(); track t.key) {
+                          <option [value]="t.key">{{ t.name }}</option>
+                        }
+                      </select>
+                    </admin-field>
                     <label class="flex items-center gap-2 self-end pb-1.5 text-sm text-slate-700">
                       <input type="checkbox" name="openBooking" [(ngModel)]="wg.open_booking" />
                       Anyone may book its calendars

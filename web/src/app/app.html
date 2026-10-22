@@ -75,6 +75,17 @@
               </button>
             }
             <select
+              [value]="auth.theme()"
+              (change)="changeTheme($event)"
+              aria-label="Theme"
+              i18n-aria-label="@@nav.theme"
+              class="rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700"
+            >
+              @for (option of auth.themeOptions(); track option.key) {
+                <option [value]="option.key">{{ themeLabel(option) }}</option>
+              }
+            </select>
+            <select
               [value]="locale"
               (change)="switchLanguage($any($event.target).value)"
               aria-label="Language"

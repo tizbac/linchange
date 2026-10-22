@@ -31,11 +31,14 @@ type Workgroup struct {
 	OpenBooking bool   `db:"open_booking"`
 	// LogoUID is the public handle of the organization's logo image, empty
 	// when it has none. LogoSHA256 and LogoMIME describe the blob it names.
-	LogoUID    string    `db:"logo_uid"`
-	LogoSHA256 []byte    `db:"logo_sha256"`
-	LogoMIME   string    `db:"logo_mime"`
-	CreatedAt  time.Time `db:"created_at"`
-	UpdatedAt  time.Time `db:"updated_at"`
+	LogoUID    string `db:"logo_uid"`
+	LogoSHA256 []byte `db:"logo_sha256"`
+	LogoMIME   string `db:"logo_mime"`
+	// Theme is the organization's presentation default, empty when it has not
+	// chosen and the deployment default applies.
+	Theme     string    `db:"theme"`
+	CreatedAt time.Time `db:"created_at"`
+	UpdatedAt time.Time `db:"updated_at"`
 }
 
 // Membership roles.
@@ -89,7 +92,7 @@ const workgroupColumns = `
 	id, name, domain, display_name, description, open_booking,
 	COALESCE(logo_uid, '') AS logo_uid,
 	COALESCE(logo_mime, '') AS logo_mime,
-	logo_sha256, created_at, updated_at`
+	logo_sha256, COALESCE(theme, '') AS theme, created_at, updated_at`
 
 // Create adds a workgroup and its founding members.
 func (w *Workgroups) Create(ctx context.Context, q Querier, req CreateWorkgroupRequest) (Workgroup, error) {
@@ -250,6 +253,21 @@ func (w *Workgroups) ClearLogo(ctx context.Context, q Querier, id int64) error {
 		WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("store: clearing workgroup logo: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetTheme records the organization's presentation default. An empty value
+// clears it so the deployment default applies.
+func (w *Workgroups) SetTheme(ctx context.Context, q Querier, id int64, theme string) error {
+	res, err := q.ExecContext(ctx, `
+		UPDATE workgroups SET theme = NULLIF($2, ''), updated_at = now()
+		WHERE id = $1`, id, strings.TrimSpace(theme))
+	if err != nil {
+		return fmt.Errorf("store: setting workgroup theme: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound

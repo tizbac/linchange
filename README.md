@@ -51,6 +51,9 @@ address-book service to install: everything ships in the same server.
   chat and administration**.
 - English and Italian builds using Angular's own i18n (`@angular/localize`);
   the top bar switches language and remembers the choice.
+- Light, dark and system themes, plus custom CSS themes uploaded as ZIPs by an
+  administrator. The default can be set per organization or with `web.theme`;
+  a user's own choice wins.
 - Conversation view, search, drafts, signatures, inline images, attachment
   handling and import progress.
 - Two-factor authentication with TOTP and recovery codes, password reset,

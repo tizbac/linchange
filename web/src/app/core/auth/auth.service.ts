@@ -1,13 +1,19 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
-import { AuthState, LoginResponse, Me } from './models';
+import { AuthState, LoginResponse, Me, ThemeOption } from './models';
 
 // The API lives on the same origin in production and is proxied there by the
 // dev server, so relative paths are all the app ever needs.
 const API = '/api/v1';
 const K_REFRESH = 'linchange.refresh';
 const K_USER = 'linchange.user';
+
+const BUILTIN_THEMES: ThemeOption[] = [
+  { key: 'light', name: 'Light', kind: 'light' },
+  { key: 'dark', name: 'Dark', kind: 'dark' },
+  { key: 'system', name: 'System', kind: 'system' },
+];
 
 // AuthService owns the signed-in session for the tab and is the single place
 // that talks to the auth endpoints. Other code reads the public signals; only
@@ -44,6 +50,22 @@ export class AuthService {
   // organizationLogo is the public path of the organization's logo, or empty
   // when there is none and the top bar should show the name.
   readonly organizationLogo = computed(() => this._me()?.organization_logo ?? '');
+  // theme is the resolved choice; themeOptions is what a selector offers.
+  readonly theme = computed(() => this._me()?.theme ?? 'system');
+  readonly themeKind = computed(() => this._me()?.theme_kind ?? 'system');
+  readonly themeOptions = computed<ThemeOption[]>(
+    () => this._me()?.theme_options ?? BUILTIN_THEMES,
+  );
+
+  constructor() {
+    // A system theme has to react when the operating system changes, not only
+    // when the page is reloaded.
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+        if ((this._me()?.theme_kind ?? 'system') === 'system') this.applyTheme();
+      });
+    }
+  }
 
   // loadMe refreshes the session description. It is awaited after a sign-in and
   // after a restore so a guard never decides on a stale answer, and it is also
@@ -56,13 +78,60 @@ export class AuthService {
     try {
       const me = await firstValueFrom(this.http.get<Me>(`${API}/auth/me`));
       this._me.set(me);
+      this.applyTheme();
       return me;
     } catch {
       // A failure here is not a reason to sign the user out: the token may
       // still be good, and /me is decoration on top of it. Treating a failed
       // lookup as a lost session would sign people out for a flaky request.
       this._me.set(null);
+      this.applyTheme();
       return null;
+    }
+  }
+
+  // setTheme records the user's choice and applies it at once. The server
+  // returns the resolved selection, which may be a custom theme's CSS path.
+  async setTheme(key: string): Promise<void> {
+    const res = await firstValueFrom(
+      this.http.put<{ key: string; kind: 'light' | 'dark' | 'system' | 'custom'; css?: string }>(
+        `${API}/auth/me/theme`,
+        { theme: key },
+      ),
+    );
+    const me = this._me();
+    if (me) {
+      this._me.set({ ...me, theme: res.key, theme_kind: res.kind, theme_css: res.css });
+    }
+    this.applyTheme();
+  }
+
+  // applyTheme puts the resolved theme on the document: a data-theme attribute
+  // for the built-in light/dark rules, and a linked stylesheet for a custom
+  // theme. "system" is resolved here so the CSS only needs two cases.
+  applyTheme(): void {
+    if (typeof document === 'undefined') return;
+    const kind = this._me()?.theme_kind ?? 'system';
+    const resolved =
+      kind === 'system'
+        ? window.matchMedia?.('(prefers-color-scheme: dark)')?.matches
+          ? 'dark'
+          : 'light'
+        : kind;
+    document.documentElement.dataset['theme'] = resolved;
+
+    const css = this._me()?.theme_css ?? '';
+    let link = document.getElementById('lc-theme-css') as HTMLLinkElement | null;
+    if (css) {
+      if (!link) {
+        link = document.createElement('link');
+        link.id = 'lc-theme-css';
+        link.rel = 'stylesheet';
+        document.head.appendChild(link);
+      }
+      if (link.getAttribute('href') !== css) link.href = css;
+    } else if (link) {
+      link.remove();
     }
   }
 
@@ -158,6 +227,7 @@ export class AuthService {
     this.storage.removeItem(K_USER);
     this._state.set(null);
     this._me.set(null);
+    this.applyTheme();
   }
 
   requestReset(login: string): Promise<unknown> {

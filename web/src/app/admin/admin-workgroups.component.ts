@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@ang
 import { FormsModule } from '@angular/forms';
 import { AdminApi } from '../core/admin/admin-api';
 import { Domain, OrgCalendar, Workgroup, WorkgroupGroup, WorkgroupMember } from '../core/admin/admin.models';
+import { AuthService } from '../core/auth/auth.service';
 import { CalendarShare, ShareCalendarRequest } from '../core/calendar/calendar.models';
 import { errorMessage } from '../core/http-error';
 import {
@@ -44,6 +45,8 @@ import { AdminPageComponent } from '../core/admin/admin-page.component';
 })
 export class AdminWorkgroupsComponent implements OnInit {
   private readonly api = inject(AdminApi);
+  // The organization's theme selector offers the same themes as the top bar.
+  protected readonly auth = inject(AuthService);
 
   protected readonly head = tableHeadClass;
   protected readonly cell = tableCellClass;
@@ -192,6 +195,7 @@ export class AdminWorkgroupsComponent implements OnInit {
         display_name: wg.display_name,
         description: wg.description,
         open_booking: wg.open_booking,
+        theme: wg.theme ?? '',
       });
       this.ok.set(`${updated.display_name || updated.name} was updated.`);
       this.editing.set(null);

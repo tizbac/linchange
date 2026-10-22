@@ -367,6 +367,7 @@ func New() *Config {
 				CredentialTTL: 2 * time.Hour,
 			},
 		},
+		Web: Web{Theme: "system"},
 		Log: Log{
 			Level:       "info",
 			Format:      "json",

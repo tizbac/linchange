@@ -177,6 +177,16 @@ func mountAdminRoutes(r chi.Router, s *Server) {
 		})
 	})
 
+	// --- custom themes ---
+	// A theme is uploaded as a ZIP and stored in the blob store. This is the
+	// only place it can enter the system, which is what keeps an arbitrary
+	// stylesheet out of every user's page.
+	r.Route("/themes", func(r chi.Router) {
+		r.Get("/", s.listThemes)
+		r.Post("/", s.uploadTheme)
+		r.Delete("/{uid}", s.deleteTheme)
+	})
+
 	// --- outbound queue ---
 	// Where undelivered mail can be looked at: what was submitted, who it was
 	// going to, what each attempt said, and a way to try a stuck message
@@ -1463,19 +1473,35 @@ func (s *Server) updateWorkgroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Name        string `json:"name"`
-		DisplayName string `json:"display_name"`
-		Description string `json:"description"`
-		OpenBooking *bool  `json:"open_booking"`
+		Name        string  `json:"name"`
+		DisplayName string  `json:"display_name"`
+		Description string  `json:"description"`
+		OpenBooking *bool   `json:"open_booking"`
+		Theme       *string `json:"theme"`
 	}
 	if err := decodeAdmin(w, r, &in); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	if in.Theme != nil && !s.validTheme(r.Context(), *in.Theme) {
+		s.writeError(w, http.StatusBadRequest, "unknown theme")
 		return
 	}
 	wg, err := s.admin.UpdateWorkgroup(r.Context(), Principal(r.Context()), id, in.Name, in.DisplayName, in.Description, in.OpenBooking)
 	if err != nil {
 		adminErrors(w, s, err)
 		return
+	}
+	if in.Theme != nil {
+		if err := s.workgroups.SetTheme(r.Context(), s.db, id, *in.Theme); err != nil {
+			adminErrors(w, s, err)
+			return
+		}
+		wg, err = s.workgroups.Get(r.Context(), s.db, id)
+		if err != nil {
+			adminErrors(w, s, err)
+			return
+		}
 	}
 	s.writeJSON(w, http.StatusOK, s.workgroupViewOf(r.Context(), Principal(r.Context()), wg))
 }
@@ -2108,7 +2134,9 @@ type workgroupView struct {
 	OpenBooking bool   `json:"open_booking"`
 	// LogoURL is the public image path, empty when the organization has no
 	// logo and the top bar should show its name instead.
-	LogoURL   string `json:"logo_url,omitempty"`
+	LogoURL string `json:"logo_url,omitempty"`
+	// Theme is the organization's default theme key, empty when it has none.
+	Theme     string `json:"theme,omitempty"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
 	// Members ride along with the group. Every screen that shows an organization
@@ -2126,6 +2154,7 @@ func viewWorkgroup(w store.Workgroup) workgroupView {
 		Description: w.Description,
 		OpenBooking: w.OpenBooking,
 		LogoURL:     w.LogoURL(),
+		Theme:       w.Theme,
 		CreatedAt:   w.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:   w.UpdatedAt.UTC().Format(time.RFC3339),
 	}

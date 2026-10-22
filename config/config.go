@@ -21,7 +21,16 @@ type Config struct {
 	Exchange Exchange  `yaml:"exchange"`
 	Meetings Meetings  `yaml:"meetings"`
 	WebRTC   WebRTC    `yaml:"webrtc"`
+	Web      Web       `yaml:"web"`
 	Log      Log       `yaml:"logging"`
+}
+
+// Web holds presentation defaults for the browser UI.
+type Web struct {
+	// Theme is the deployment-wide default: light, dark, system, or
+	// custom:<uid> naming an uploaded theme. A user's own choice wins, then
+	// their organization's, and only then this value.
+	Theme string `yaml:"theme"`
 }
 
 // Server holds identity and filesystem settings shared by every subsystem.

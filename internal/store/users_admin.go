@@ -26,19 +26,22 @@ type User struct {
 	IsDomainAdmin bool `db:"is_domain_admin"`
 	// QuotaBytes is nil when the user inherits the domain (and then global)
 	// default. Zero, when explicit, means unlimited.
-	QuotaBytes         *int64 `db:"quota_bytes"`
-	DailySendLimit     *int   `db:"daily_send_limit"`
-	Timezone           string `db:"timezone"`
-	Language           string `db:"language"`
+	QuotaBytes     *int64 `db:"quota_bytes"`
+	DailySendLimit *int   `db:"daily_send_limit"`
+	Timezone       string `db:"timezone"`
+	Language       string `db:"language"`
+	// Theme is the user's explicit presentation choice, empty when they have
+	// not chosen and the organization or deployment default applies.
+	Theme              string `db:"theme"`
 	MustChangePassword bool   `db:"must_change_password"`
 	// AddressLocal is the lowercased local part, the part before the "@". It is
 	// what the "#sharedmailbox" login convention splits on.
-	AddressLocal string     `db:"address_local"`
+	AddressLocal string `db:"address_local"`
 	// ContactGroupID is the contact group this user belongs to (derived from domain).
-	ContactGroupID *int64 `db:"contact_group_id"`
-	LastLoginAt  *time.Time `db:"last_login_at"`
-	CreatedAt    time.Time  `db:"created_at"`
-	UpdatedAt    time.Time  `db:"updated_at"`
+	ContactGroupID *int64     `db:"contact_group_id"`
+	LastLoginAt    *time.Time `db:"last_login_at"`
+	CreatedAt      time.Time  `db:"created_at"`
+	UpdatedAt      time.Time  `db:"updated_at"`
 }
 
 // CreateUserRequest provisions a principal. Source is fixed at creation: it is
@@ -162,7 +165,7 @@ func (u *Users) Create(ctx context.Context, q Querier, req CreateUserRequest) er
 const userSelect = `
 	SELECT u.address, u.source, u.display_name, u.enabled, u.mailbox_enabled,
 	       u.is_domain_admin, COALESCE(u.quota_bytes, d.default_quota_bytes) AS quota_bytes,
-	       u.daily_send_limit, u.timezone, u.language,
+	       u.daily_send_limit, u.timezone, u.language, COALESCE(u.theme, '') AS theme,
 	       u.must_change_password, u.address_local, u.last_login_at,
 	       u.created_at, u.updated_at
 	FROM users u
@@ -181,6 +184,21 @@ func (u *Users) Get(ctx context.Context, q Querier, address string) (User, error
 		return User{}, err
 	}
 	return row, nil
+}
+
+// SetTheme records a user's presentation choice. An empty value clears it so
+// the organization or deployment default applies again.
+func (u *Users) SetTheme(ctx context.Context, q Querier, address, theme string) error {
+	res, err := q.ExecContext(ctx, `
+		UPDATE users SET theme = NULLIF($2, ''), updated_at = now()
+		WHERE address = $1 AND deleted_at IS NULL`, address, strings.TrimSpace(theme))
+	if err != nil {
+		return fmt.Errorf("store: setting user theme: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // List returns every non-deleted user, ordered by address.

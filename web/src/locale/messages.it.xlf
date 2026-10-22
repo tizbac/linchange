@@ -51,27 +51,55 @@
           <context context-type="linenumber">74,75</context>
         </context-group>
       <target>stai agendo come <x id="INTERPOLATION" equiv-text="{{ auth.impersonating() }}" /> (esci)</target></trans-unit>
+      <trans-unit id="nav.theme" datatype="html">
+        <source>Theme</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">81</context>
+        </context-group>
+      <target>Tema</target></trans-unit>
       <trans-unit id="nav.language" datatype="html">
         <source>Language</source>
         <context-group purpose="location">
           <context context-type="sourcefile">src/app/app.html</context>
-          <context context-type="linenumber">80,81</context>
+          <context context-type="linenumber">91,92</context>
         </context-group>
       <target>Lingua</target></trans-unit>
       <trans-unit id="nav.signOut" datatype="html">
         <source> Sign out </source>
         <context-group purpose="location">
           <context context-type="sourcefile">src/app/app.html</context>
-          <context context-type="linenumber">93,94</context>
+          <context context-type="linenumber">104,105</context>
         </context-group>
       <target>Esci</target></trans-unit>
       <trans-unit id="app.loading" datatype="html">
         <source>Loading</source>
         <context-group purpose="location">
           <context context-type="sourcefile">src/app/app.html</context>
-          <context context-type="linenumber">106</context>
+          <context context-type="linenumber">117</context>
         </context-group>
       <target>Caricamento</target></trans-unit>
+      <trans-unit id="theme.light" datatype="html">
+        <source>Light</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.ts</context>
+          <context context-type="linenumber">40</context>
+        </context-group>
+      <target>Chiaro</target></trans-unit>
+      <trans-unit id="theme.dark" datatype="html">
+        <source>Dark</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.ts</context>
+          <context context-type="linenumber">42</context>
+        </context-group>
+      <target>Scuro</target></trans-unit>
+      <trans-unit id="theme.system" datatype="html">
+        <source>System</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.ts</context>
+          <context context-type="linenumber">44</context>
+        </context-group>
+      <target>Sistema</target></trans-unit>
       <trans-unit id="adminNav.domains" datatype="html">
         <source>Domains</source>
         <context-group purpose="location">
@@ -86,53 +114,60 @@
           <context context-type="linenumber">11</context>
         </context-group>
       <target>Organizzazioni</target></trans-unit>
+      <trans-unit id="adminNav.themes" datatype="html">
+        <source>Themes</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">12</context>
+        </context-group>
+      <target>Temi</target></trans-unit>
       <trans-unit id="adminNav.users" datatype="html">
         <source>Users</source>
         <context-group purpose="location">
           <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
-          <context context-type="linenumber">12</context>
+          <context context-type="linenumber">13</context>
         </context-group>
       <target>Utenti</target></trans-unit>
       <trans-unit id="adminNav.aliases" datatype="html">
         <source>Aliases</source>
         <context-group purpose="location">
           <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
-          <context context-type="linenumber">13</context>
+          <context context-type="linenumber">14</context>
         </context-group>
       <target>Alias</target></trans-unit>
       <trans-unit id="adminNav.sharedMailboxes" datatype="html">
         <source>Shared mailboxes</source>
         <context-group purpose="location">
           <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
-          <context context-type="linenumber">14</context>
+          <context context-type="linenumber">15</context>
         </context-group>
       <target>Caselle condivise</target></trans-unit>
       <trans-unit id="adminNav.imports" datatype="html">
         <source>Imports</source>
         <context-group purpose="location">
           <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
-          <context context-type="linenumber">15</context>
+          <context context-type="linenumber">16</context>
         </context-group>
       <target>Importazioni</target></trans-unit>
       <trans-unit id="adminNav.impersonation" datatype="html">
         <source>Impersonation</source>
         <context-group purpose="location">
           <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
-          <context context-type="linenumber">16</context>
+          <context context-type="linenumber">17</context>
         </context-group>
       <target>Impersonificazione</target></trans-unit>
       <trans-unit id="adminNav.queue" datatype="html">
         <source>Outbound queue</source>
         <context-group purpose="location">
           <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
-          <context context-type="linenumber">17</context>
+          <context context-type="linenumber">18</context>
         </context-group>
       <target>Coda di invio</target></trans-unit>
       <trans-unit id="adminNav.audit" datatype="html">
         <source>Audit log</source>
         <context-group purpose="location">
           <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
-          <context context-type="linenumber">18</context>
+          <context context-type="linenumber">19</context>
         </context-group>
       <target>Registro di audit</target></trans-unit>
       <trans-unit id="partStat.needsAction" datatype="html">

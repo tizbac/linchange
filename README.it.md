@@ -52,6 +52,9 @@ chat, riunioni o rubriche da installare: tutto è nello stesso server.
   riunioni, chat e amministrazione**.
 - Build in inglese e italiano con l'i18n di Angular (`@angular/localize`); la
   barra superiore cambia lingua e ricorda la scelta.
+- Temi chiaro, scuro e di sistema, più temi CSS personalizzati caricati come
+  ZIP da un amministratore. Il predefinito si può impostare per organizzazione
+  o con `web.theme`; la scelta dell'utente ha la precedenza.
 - Vista per conversazioni, ricerca, bozze, firme, immagini inline, gestione degli
   allegati e avanzamento delle importazioni.
 - Autenticazione a due fattori TOTP con codici di recupero, reimpostazione della

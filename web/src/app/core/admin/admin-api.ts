@@ -12,6 +12,7 @@ import {
   OutboxMessageView,
   SharedMailbox,
   SharedMailboxGrant,
+  ThemeRow,
   User,
   Workgroup,
   WorkgroupGroup,
@@ -342,6 +343,23 @@ export class AdminApi {
 
   deleteWorkgroupLogo(id: number): Promise<Workgroup> {
     return firstValueFrom(this.http.delete<Workgroup>(`${API}/workgroups/${id}/logo`));
+  }
+
+  // --- custom themes ---
+
+  listThemes(): Promise<{ themes: ThemeRow[] }> {
+    return this.get('/themes');
+  }
+
+  uploadTheme(name: string, file: File): Promise<ThemeRow> {
+    const form = new FormData();
+    form.append('name', name);
+    form.append('file', file, file.name);
+    return firstValueFrom(this.http.post<ThemeRow>(`${API}/themes`, form));
+  }
+
+  deleteTheme(uid: string): Promise<void> {
+    return this.request('delete', `/themes/${encodeURIComponent(uid)}`, null) as Promise<void>;
   }
 
   listWorkgroupMembers(id: number): Promise<{ members: WorkgroupMember[] }> {

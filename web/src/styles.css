@@ -27,3 +27,108 @@ body {
   color: #0f172a;
   -webkit-font-smoothing: antialiased;
 }
+
+/* --- dark theme ---------------------------------------------------------
+   The app is written with Tailwind's light palette. Rather than putting a
+   dark: variant on every element, the resolved theme sets data-theme on the
+   root and these rules remap the small set of surfaces, text and border
+   utilities the palette actually uses. A custom theme is free to override
+   any of it because its stylesheet is linked after this one. */
+[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+[data-theme="dark"] body {
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+[data-theme="dark"] .bg-slate-50 {
+  background-color: #0f172a;
+}
+[data-theme="dark"] .bg-slate-100 {
+  background-color: #1e293b;
+}
+[data-theme="dark"] .bg-slate-200 {
+  background-color: #334155;
+}
+[data-theme="dark"] .bg-white {
+  background-color: #1e293b;
+}
+
+[data-theme="dark"] .text-slate-900,
+[data-theme="dark"] .text-slate-800,
+[data-theme="dark"] .text-gray-900 {
+  color: #f1f5f9;
+}
+[data-theme="dark"] .text-slate-700,
+[data-theme="dark"] .text-slate-600,
+[data-theme="dark"] .text-gray-700 {
+  color: #cbd5e1;
+}
+[data-theme="dark"] .text-slate-500,
+[data-theme="dark"] .text-slate-400,
+[data-theme="dark"] .text-gray-500 {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .border-slate-200,
+[data-theme="dark"] .border-slate-300,
+[data-theme="dark"] .border-gray-200 {
+  border-color: #334155;
+}
+[data-theme="dark"] .ring-slate-200 {
+  --tw-ring-color: #334155;
+}
+[data-theme="dark"] .hover\:bg-slate-100:hover,
+[data-theme="dark"] .hover\:bg-slate-50:hover {
+  background-color: #334155;
+}
+[data-theme="dark"] .hover\:ring-blue-400:hover {
+  --tw-ring-color: #60a5fa;
+}
+
+[data-theme="dark"] input,
+[data-theme="dark"] textarea,
+[data-theme="dark"] select {
+  background-color: #0f172a;
+  color: #e2e8f0;
+  border-color: #334155;
+}
+[data-theme="dark"] input::placeholder,
+[data-theme="dark"] textarea::placeholder {
+  color: #64748b;
+}
+
+[data-theme="dark"] .bg-red-50 {
+  background-color: #3f1d1d;
+}
+[data-theme="dark"] .text-red-700 {
+  color: #fca5a5;
+}
+[data-theme="dark"] .bg-emerald-50 {
+  background-color: #0f2e24;
+}
+[data-theme="dark"] .text-emerald-800 {
+  color: #6ee7b7;
+}
+[data-theme="dark"] .bg-rose-50 {
+  background-color: #3f1d24;
+}
+[data-theme="dark"] .text-rose-700 {
+  color: #fda4af;
+}
+[data-theme="dark"] .bg-amber-50 {
+  background-color: #3a2e12;
+}
+[data-theme="dark"] .text-amber-800 {
+  color: #fcd34d;
+}
+[data-theme="dark"] .bg-brand-50,
+[data-theme="dark"] .bg-brand-100 {
+  background-color: #25306b;
+}
+[data-theme="dark"] .text-brand-700,
+[data-theme="dark"] .text-brand-800 {
+  color: #a5b4fc;
+}

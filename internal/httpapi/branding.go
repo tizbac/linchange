@@ -16,6 +16,8 @@ import (
 // behind requireAuth; the unguessable handle in the URL is what selects it.
 func (s *Server) mountBranding(r chi.Router) {
 	r.Get("/branding/logo", s.handleOrganizationLogo)
+	r.Get("/branding/themes/{uid}/*", s.handleThemeAsset)
+	r.With(s.requireAuth).Get("/theme-options", s.handleThemeOptions)
 }
 
 // handleOrganizationLogo serves an organization's logo by its public handle.

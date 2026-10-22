@@ -97,6 +97,10 @@ export const routes: Routes = [
         loadComponent: () => import('./admin/admin-workgroups.component').then((m) => m.AdminWorkgroupsComponent),
       },
       {
+        path: 'themes',
+        loadComponent: () => import('./admin/admin-themes.component').then((m) => m.AdminThemesComponent),
+      },
+      {
         path: 'domains',
         loadComponent: () => import('./admin/admin-domains.component').then((m) => m.AdminDomainsComponent),
       },

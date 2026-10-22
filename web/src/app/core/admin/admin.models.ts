@@ -173,6 +173,9 @@ export interface Workgroup {
   open_booking: boolean;
   // logo_url is the public image path; empty when the organization has no logo.
   logo_url?: string;
+  // theme is the organization's default theme key; empty means the server
+  // default applies.
+  theme?: string;
   created_at: string;
   updated_at: string;
   // Named members come back with the group. Everyone in the organization's
@@ -223,4 +226,15 @@ export interface WorkgroupGroup {
   member_count: number;
   created_at: string;
   updated_at: string;
+}
+
+// ThemeRow is a custom theme uploaded as a ZIP. `key` is the value stored in a
+// user or organization preference ("custom:<uid>").
+export interface ThemeRow {
+  uid: string;
+  name: string;
+  key: string;
+  css: string;
+  created_by: string;
+  created_at: string;
 }

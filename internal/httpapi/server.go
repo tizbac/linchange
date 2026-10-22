@@ -101,6 +101,10 @@ type Server struct {
 	// workgroups answers "which organization is this address in", which the top
 	// bar and the address book both need.
 	workgroups *store.Workgroups
+	// themes is the custom theme catalogue; defaultTheme is the deployment
+	// fallback when neither the user nor their organization has chosen.
+	themes       *store.Themes
+	defaultTheme string
 	// blobs serves organization logos and anything else the web client reads
 	// by a public handle rather than through the mail service.
 	blobs *blobstore.Store
@@ -447,6 +451,8 @@ func New(opts Options) (*Server, error) {
 		shared:       store.NewSharedMailboxes(),
 		grants:       store.NewSharedMailboxGrants(),
 		workgroups:   store.NewWorkgroups(),
+		themes:       store.NewThemes(),
+		defaultTheme: defaultTheme(cfg.Web.Theme),
 		blobs:        opts.Blobs,
 		staticDir:    opts.StaticDir,
 		imports:      opts.Imports,
@@ -488,6 +494,7 @@ func (s *Server) Handler() http.Handler {
 			r.Use(s.requireAuth)
 			r.Post("/auth/logout", s.handleLogout)
 			r.Get("/auth/me", s.handleMe)
+			r.Put("/auth/me/theme", s.handleSetTheme)
 			r.Post("/auth/stop-impersonating", s.handleStopImpersonating)
 		})
 

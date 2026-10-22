@@ -40,4 +40,16 @@ export interface Me {
   organization?: string;
   // The public image path of that organization's logo, empty when it has none.
   organization_logo?: string;
+  // The resolved theme (user, then organization, then deployment default) and
+  // its kind. A custom theme also carries the CSS entry point.
+  theme?: string;
+  theme_kind?: 'light' | 'dark' | 'system' | 'custom';
+  theme_css?: string;
+  theme_options?: ThemeOption[];
+}
+
+export interface ThemeOption {
+  key: string;
+  name: string;
+  kind: 'light' | 'dark' | 'system' | 'custom';
 }

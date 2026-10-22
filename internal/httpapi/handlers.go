@@ -204,6 +204,13 @@ type meResponse struct {
 	// OrganizationLogo is the public image path for that organization, or
 	// empty when it has none.
 	OrganizationLogo string `json:"organization_logo,omitempty"`
+	// Theme is the resolved presentation choice (user, then organization, then
+	// deployment default). ThemeKind is light, dark, system or custom; a
+	// custom choice also carries the CSS entry point.
+	Theme        string        `json:"theme"`
+	ThemeKind    string        `json:"theme_kind"`
+	ThemeCSS     string        `json:"theme_css,omitempty"`
+	ThemeOptions []themeOption `json:"theme_options"`
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -225,8 +232,10 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 	// The display name is decoration, so a lookup that fails must not fail the
 	// request: the client can render an address on its own.
+	var userTheme, orgTheme string
 	if u, err := store.NewUsers().Get(r.Context(), s.db, principal.Address); err == nil {
 		out.DisplayName = u.DisplayName
+		userTheme = u.Theme
 	}
 	// The organization is decoration, so a domain that belongs to no workgroup is
 	// not an error: it just means there is no name to show.
@@ -236,7 +245,13 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 			out.Organization = wg.Name
 		}
 		out.OrganizationLogo = wg.LogoURL()
+		orgTheme = wg.Theme
 	}
+	selection := s.resolveTheme(r.Context(), userTheme, orgTheme)
+	out.Theme = selection.Key
+	out.ThemeKind = selection.Kind
+	out.ThemeCSS = selection.CSS
+	out.ThemeOptions = s.themeOptions(r.Context())
 	s.writeJSON(w, http.StatusOK, out)
 }
 
