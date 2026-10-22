@@ -29,6 +29,7 @@ func (s *Server) mountProfile(r chi.Router) {
 		r.Get("/", s.handleProfile)
 		r.Put("/password", s.handleProfilePassword)
 		r.Put("/recovery-email", s.handleProfileRecoveryEmail)
+		r.Put("/out-of-office", s.handleProfileOutOfOffice)
 		r.Post("/2fa/start", s.handleProfile2FAStart)
 		r.Post("/2fa/confirm", s.handleProfile2FAConfirm)
 		r.Post("/2fa/disable", s.handleProfile2FADisable)
@@ -50,8 +51,9 @@ type profileResponse struct {
 	RecoveryEmail string `json:"recovery_email,omitempty"`
 	// MinPasswordLength is what a new password must reach, so the form can say
 	// the real number instead of a guess.
-	MinPasswordLength int              `json:"min_password_length"`
-	TwoFactor         profileTwoFactor `json:"two_factor"`
+	MinPasswordLength int               `json:"min_password_length"`
+	TwoFactor         profileTwoFactor  `json:"two_factor"`
+	OutOfOffice       store.OutOfOffice `json:"out_of_office"`
 }
 
 func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +73,9 @@ func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
 	if rec, err := store.NewTOTP().Get(r.Context(), s.db, address); err == nil {
 		out.TwoFactor.Enabled = rec.Enabled
 		out.TwoFactor.Pending = !rec.Enabled
+	}
+	if ooo, err := store.NewOutOfOffice().Get(r.Context(), s.db, address); err == nil {
+		out.OutOfOffice = ooo
 	}
 	s.writeJSON(w, http.StatusOK, out)
 }
@@ -142,6 +147,70 @@ func (s *Server) handleProfileRecoveryEmail(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleProfileOutOfOffice saves the caller's automatic reply. Dates arrive as
+// RFC 3339 strings; either may be empty, which means "from now" or "until it is
+// switched off". The window is checked here so the message the user sees names
+// their mistake rather than a database constraint.
+func (s *Server) handleProfileOutOfOffice(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Enabled bool    `json:"enabled"`
+		Start   *string `json:"start"`
+		End     *string `json:"end"`
+		Subject string  `json:"subject"`
+		Message string  `json:"message"`
+	}
+	if err := decodeChatJSON(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	parse := func(value *string) (*time.Time, error) {
+		if value == nil || strings.TrimSpace(*value) == "" {
+			return nil, nil
+		}
+		t, err := time.Parse(time.RFC3339, strings.TrimSpace(*value))
+		if err != nil {
+			return nil, err
+		}
+		utc := t.UTC()
+		return &utc, nil
+	}
+	start, err := parse(in.Start)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "the start is not a valid date and time")
+		return
+	}
+	end, err := parse(in.End)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "the end is not a valid date and time")
+		return
+	}
+	if start != nil && end != nil && !end.After(*start) {
+		s.writeError(w, http.StatusBadRequest, "the end must be after the start")
+		return
+	}
+	if in.Enabled && strings.TrimSpace(in.Message) == "" {
+		s.writeError(w, http.StatusBadRequest, "an out-of-office message is needed to enable it")
+		return
+	}
+	if len([]rune(in.Subject)) > 200 || len([]rune(in.Message)) > 10000 {
+		s.writeError(w, http.StatusBadRequest, "the subject or message is too long")
+		return
+	}
+	setting, err := store.NewOutOfOffice().Set(r.Context(), s.db, Principal(r.Context()).Address,
+		store.OutOfOffice{
+			Enabled: in.Enabled,
+			Start:   start,
+			End:     end,
+			Subject: in.Subject,
+			Message: in.Message,
+		})
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "could not save the out-of-office setting")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, setting)
 }
 
 type twoFactorStartResponse struct {

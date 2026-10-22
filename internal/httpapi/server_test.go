@@ -444,6 +444,56 @@ func TestRefreshThenLogoutRevokes(t *testing.T) {
 	}
 }
 
+func TestProfileOutOfOffice(t *testing.T) {
+	db := testMigratedDB(t)
+	srv := newServer(t, db)
+	headers := mailUser(t, srv, db, "alice@example.com")
+
+	code, body := do(t, srv, http.MethodGet, "/api/v1/profile", nil, headers)
+	if code != http.StatusOK {
+		t.Fatalf("profile = %d %v", code, body)
+	}
+	initial, _ := body["out_of_office"].(map[string]any)
+	if initial == nil || initial["enabled"] == true {
+		t.Fatalf("initial out_of_office = %v, want disabled", body["out_of_office"])
+	}
+
+	start := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	end := start.Add(24 * time.Hour)
+	code, body = do(t, srv, http.MethodPut, "/api/v1/profile/out-of-office", map[string]any{
+		"enabled": true,
+		"start":   start.Format(time.RFC3339),
+		"end":     end.Format(time.RFC3339),
+		"subject": "Away",
+		"message": "I am away until tomorrow.",
+	}, headers)
+	if code != http.StatusOK {
+		t.Fatalf("saving out-of-office = %d %v", code, body)
+	}
+	if body["enabled"] != true || body["subject"] != "Away" {
+		t.Errorf("saved setting = %v", body)
+	}
+
+	code, body = do(t, srv, http.MethodGet, "/api/v1/profile", nil, headers)
+	if code != http.StatusOK {
+		t.Fatalf("profile after save = %d %v", code, body)
+	}
+	saved, _ := body["out_of_office"].(map[string]any)
+	if saved == nil || saved["enabled"] != true || saved["message"] != "I am away until tomorrow." {
+		t.Errorf("stored out_of_office = %v", body["out_of_office"])
+	}
+
+	code, _ = do(t, srv, http.MethodPut, "/api/v1/profile/out-of-office", map[string]any{
+		"enabled": true,
+		"start":   end.Format(time.RFC3339),
+		"end":     start.Format(time.RFC3339),
+		"message": "nonsense",
+	}, headers)
+	if code != http.StatusBadRequest {
+		t.Errorf("end before start = %d, want 400", code)
+	}
+}
+
 func TestResetEndpoints(t *testing.T) {
 	ctx := context.Background()
 	db := testMigratedDB(t)

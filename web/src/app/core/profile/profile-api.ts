@@ -10,6 +10,14 @@ export interface ProfileTwoFactor {
   pending: boolean;
 }
 
+export interface OutOfOffice {
+  enabled: boolean;
+  start?: string;
+  end?: string;
+  subject: string;
+  message: string;
+}
+
 export interface Profile {
   address: string;
   display_name?: string;
@@ -17,6 +25,7 @@ export interface Profile {
   recovery_email?: string;
   min_password_length: number;
   two_factor: ProfileTwoFactor;
+  out_of_office: OutOfOffice;
 }
 
 export interface TwoFactorStart {
@@ -47,6 +56,18 @@ export class ProfileApi {
 
   setRecoveryEmail(email: string): Promise<void> {
     return firstValueFrom(this.http.put<void>(`${API}/profile/recovery-email`, { email }));
+  }
+
+  setOutOfOffice(setting: OutOfOffice): Promise<OutOfOffice> {
+    return firstValueFrom(
+      this.http.put<OutOfOffice>(`${API}/profile/out-of-office`, {
+        enabled: setting.enabled,
+        start: setting.start ?? null,
+        end: setting.end ?? null,
+        subject: setting.subject,
+        message: setting.message,
+      }),
+    );
   }
 
   start2FA(): Promise<TwoFactorStart> {

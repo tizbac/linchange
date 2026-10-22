@@ -485,6 +485,9 @@ func (s *session) deliver(ctx context.Context, digest blobstore.Digest, size int
 				Message:      "unable to update quota",
 			}
 		}
+		// An automatic reply goes out after the message is stored, and only
+		// once the store has claimed the correspondent for this period.
+		s.backend.applyOutOfOffice(ctx, owner, meta, parsed, flags)
 		// The scheduling answer is given after the recipient's copy exists,
 		// so an answer the calendar layer refuses is still mail the recipient
 		// can read and answer again from their client.

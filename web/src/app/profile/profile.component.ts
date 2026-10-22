@@ -3,7 +3,7 @@ import { NgClass } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { AuthService } from '../core/auth/auth.service';
 import { errorMessage } from '../core/http-error';
-import { Profile, ProfileApi, TwoFactorStart } from '../core/profile/profile-api';
+import { OutOfOffice, Profile, ProfileApi, TwoFactorStart } from '../core/profile/profile-api';
 
 // The signed-in user's own account. Everything here is about the caller: no
 // address is named in a request, so the server can never be asked to change
@@ -122,6 +122,80 @@ import { Profile, ProfileApi, TwoFactorStart } from '../core/profile/profile-api
               >
                 Save
               </button>
+            </form>
+          </section>
+
+          <section class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 class="text-lg font-semibold text-slate-900" i18n="@@profile.outOfOfficeTitle">
+                  Out of office
+                </h2>
+                <p class="mt-1 text-sm text-slate-500" i18n="@@profile.outOfOfficeDescription">
+                  Send one automatic reply to each person who writes while this is active.
+                </p>
+              </div>
+              <label class="flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" name="oooEnabled" [(ngModel)]="oooEnabled" class="h-4 w-4 rounded border-slate-300" />
+                <span i18n="@@profile.outOfOfficeEnabled">Active</span>
+              </label>
+            </div>
+            <form class="mt-4 space-y-3" (ngSubmit)="saveOutOfOffice()">
+              <div class="grid gap-3 sm:grid-cols-2">
+                <label class="block">
+                  <span class="text-sm font-medium text-slate-700" i18n="@@profile.outOfOfficeStart">Start</span>
+                  <input
+                    type="datetime-local"
+                    name="oooStart"
+                    [(ngModel)]="oooStart"
+                    class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  />
+                </label>
+                <label class="block">
+                  <span class="text-sm font-medium text-slate-700" i18n="@@profile.outOfOfficeEnd">End</span>
+                  <input
+                    type="datetime-local"
+                    name="oooEnd"
+                    [(ngModel)]="oooEnd"
+                    class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  />
+                </label>
+              </div>
+              <label class="block">
+                <span class="text-sm font-medium text-slate-700" i18n="@@profile.outOfOfficeSubject">Subject</span>
+                <input
+                  type="text"
+                  name="oooSubject"
+                  [(ngModel)]="oooSubject"
+                  maxlength="200"
+                  placeholder="Out of office"
+                  class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                />
+              </label>
+              <label class="block">
+                <span class="text-sm font-medium text-slate-700" i18n="@@profile.outOfOfficeMessage">Message</span>
+                <textarea
+                  name="oooMessage"
+                  [(ngModel)]="oooMessage"
+                  rows="4"
+                  maxlength="10000"
+                  placeholder="I am away until Monday and will reply when I return."
+                  class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                ></textarea>
+              </label>
+              <div class="flex flex-wrap items-center gap-3">
+                <button
+                  type="submit"
+                  [disabled]="busy()"
+                  class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:opacity-50"
+                  i18n="@@profile.outOfOfficeSave"
+                >
+                  Save automatic reply
+                </button>
+                <span class="text-xs text-slate-500" i18n="@@profile.outOfOfficeHint">
+                  Each sender is answered once per activation. Saving resets that list.
+                </span>
+              </div>
             </form>
           </section>
 
@@ -309,6 +383,11 @@ export class ProfileComponent implements OnInit {
   protected newPassword = '';
   protected confirmPassword = '';
   protected recoveryEmail = '';
+  protected oooEnabled = false;
+  protected oooStart = '';
+  protected oooEnd = '';
+  protected oooSubject = '';
+  protected oooMessage = '';
   protected confirmCode = '';
   protected disableCode = '';
 
@@ -323,6 +402,12 @@ export class ProfileComponent implements OnInit {
       const profile = await this.api.get();
       this.profile.set(profile);
       this.recoveryEmail = profile.recovery_email ?? '';
+      const ooo = profile.out_of_office;
+      this.oooEnabled = ooo?.enabled ?? false;
+      this.oooStart = this.localInput(ooo?.start);
+      this.oooEnd = this.localInput(ooo?.end);
+      this.oooSubject = ooo?.subject ?? '';
+      this.oooMessage = ooo?.message ?? '';
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {
@@ -361,6 +446,62 @@ export class ProfileComponent implements OnInit {
       await this.api.setRecoveryEmail(this.recoveryEmail.trim());
       this.ok.set($localize`:@@profile.recoverySaved:Recovery email saved.`);
       await this.load();
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  // localInput renders an RFC 3339 instant as the value a datetime-local input
+  // expects, in the browser's own zone.
+  private localInput(value?: string): string {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const pad = (n: number): string => String(n).padStart(2, '0');
+    return (
+      `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+      `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+    );
+  }
+
+  private rfc3339(value: string): string | undefined {
+    if (!value) return undefined;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return undefined;
+    return date.toISOString();
+  }
+
+  protected async saveOutOfOffice(): Promise<void> {
+    this.error.set('');
+    this.ok.set('');
+    if (this.oooEnabled && !this.oooMessage.trim()) {
+      this.error.set($localize`:@@profile.outOfOfficeMessageRequired:A message is needed before automatic replies can be enabled.`);
+      return;
+    }
+    const start = this.rfc3339(this.oooStart);
+    const end = this.rfc3339(this.oooEnd);
+    if (start && end && new Date(end) <= new Date(start)) {
+      this.error.set($localize`:@@profile.outOfOfficeEndBeforeStart:The end must be after the start.`);
+      return;
+    }
+    const setting: OutOfOffice = {
+      enabled: this.oooEnabled,
+      start,
+      end,
+      subject: this.oooSubject.trim(),
+      message: this.oooMessage.trim(),
+    };
+    this.busy.set(true);
+    try {
+      const saved = await this.api.setOutOfOffice(setting);
+      this.ok.set($localize`:@@profile.outOfOfficeSaved:Automatic replies saved.`);
+      this.oooEnabled = saved.enabled;
+      this.oooStart = this.localInput(saved.start);
+      this.oooEnd = this.localInput(saved.end);
+      this.oooSubject = saved.subject;
+      this.oooMessage = saved.message;
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {

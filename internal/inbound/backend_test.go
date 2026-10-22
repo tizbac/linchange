@@ -362,6 +362,56 @@ func TestInboundDeliversMessageToInbox(t *testing.T) {
 	}
 }
 
+// One correspondent gets one automatic reply, however many messages they send.
+// The first message claims the sender; the next four find the claim already
+// taken and queue nothing.
+func TestOutOfOfficeRepliesOncePerSender(t *testing.T) {
+	f := setupInbound(t, nil)
+	ctx := context.Background()
+	if _, err := store.NewOutOfOffice().Set(ctx, f.db, "alice@example.com", store.OutOfOffice{
+		Enabled: true,
+		Subject: "Away",
+		Message: "I am away until Monday.",
+	}); err != nil {
+		t.Fatalf("setting out-of-office: %v", err)
+	}
+
+	c := dialSMTP(t, f.addr)
+	for i := 0; i < 5; i++ {
+		if code, msg := c.cmd("MAIL FROM:<sender@example.com>"); code != 250 {
+			t.Fatalf("MAIL FROM = %d %s", code, msg)
+		}
+		if code, msg := c.cmd("RCPT TO:<alice@example.com>"); code != 250 {
+			t.Fatalf("RCPT TO = %d %s", code, msg)
+		}
+		if code, msg := c.data(inboundMessage("Sender <sender@example.com>", "alice@example.com",
+			fmt.Sprintf("Message %d", i+1), "hello")); code != 250 {
+			t.Fatalf("DATA %d = %d %s", i+1, code, msg)
+		}
+	}
+
+	var queued int
+	if err := f.db.GetContext(ctx, &queued,
+		`SELECT count(*) FROM outbox WHERE submitted_by = 'alice@example.com'`); err != nil {
+		t.Fatalf("counting automatic replies: %v", err)
+	}
+	if queued != 1 {
+		t.Fatalf("queued %d automatic replies, want exactly one", queued)
+	}
+	var digest []byte
+	if err := f.db.GetContext(ctx, &digest,
+		`SELECT blob_sha256 FROM outbox WHERE submitted_by = 'alice@example.com'`); err != nil {
+		t.Fatalf("reading the reply digest: %v", err)
+	}
+	raw, err := f.blobs.Get(blobstore.Digest(digest))
+	if err != nil {
+		t.Fatalf("reading the reply: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(string(raw)), "auto-submitted: auto-replied") {
+		t.Errorf("reply is not marked Auto-Submitted: %s", raw)
+	}
+}
+
 // INBOX is created on demand, so a user who has never received mail has one.
 func TestInboundCreatesInbox(t *testing.T) {
 	f := setupInbound(t, nil)
