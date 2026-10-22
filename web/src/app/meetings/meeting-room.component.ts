@@ -53,6 +53,7 @@ interface CallParticipant {
             <a
               routerLink="/login"
               class="mt-4 inline-block rounded-lg bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-800 transition-colors"
+              i18n="@@meeting.signIn"
             >
               Sign in
             </a>
@@ -63,16 +64,16 @@ interface CallParticipant {
           <div class="flex items-center gap-3">
             <h1 class="text-2xl font-semibold tracking-tight text-slate-900">{{ m.title }}</h1>
             @if (m.cancelled) {
-              <span class="rounded bg-rose-100 px-2 py-0.5 text-sm font-medium text-rose-700">Cancelled</span>
+              <span class="rounded bg-rose-100 px-2 py-0.5 text-sm font-medium text-rose-700" i18n="@@meeting.cancelled">Cancelled</span>
             }
           </div>
           @if (mode() === 'invitee') {
-            <p class="mt-1 text-sm text-slate-500">
+            <p class="mt-1 text-sm text-slate-500" i18n="@@meeting.answeringAs">
               You are answering as <span class="font-medium text-slate-700">{{ inviteeTo() }}</span> —
               the link from your invitation.
             </p>
           } @else if (isOrganizer()) {
-            <p class="mt-1 text-sm text-slate-500">You are the organiser.</p>
+            <p class="mt-1 text-sm text-slate-500" i18n="@@meeting.organiser">You are the organiser.</p>
           }
         </header>
 
@@ -91,15 +92,15 @@ interface CallParticipant {
         <section class="mt-5 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
           <dl class="space-y-3 text-sm">
             <div class="flex gap-3">
-              <dt class="w-24 shrink-0 text-slate-400">When</dt>
+              <dt class="w-24 shrink-0 text-slate-400" i18n="@@meeting.when">When</dt>
               <dd class="text-slate-800">{{ whenText() }}</dd>
             </div>
             <div class="flex gap-3">
-              <dt class="w-24 shrink-0 text-slate-400">Where</dt>
+              <dt class="w-24 shrink-0 text-slate-400" i18n="@@meeting.where">Where</dt>
               <dd class="text-slate-800">{{ m.location || 'The link below' }}</dd>
             </div>
             <div class="flex gap-3">
-              <dt class="w-24 shrink-0 text-slate-400">Organiser</dt>
+              <dt class="w-24 shrink-0 text-slate-400" i18n="@@meeting.organizer">Organiser</dt>
               <dd class="text-slate-800">
                 {{ m.organizer.name || m.organizer.address }}
                 @if (m.organizer.name) {
@@ -109,18 +110,19 @@ interface CallParticipant {
             </div>
             @if (m.description) {
               <div class="flex gap-3">
-                <dt class="w-24 shrink-0 text-slate-400">About</dt>
+                <dt class="w-24 shrink-0 text-slate-400" i18n="@@meeting.about">About</dt>
                 <dd class="whitespace-pre-wrap text-slate-800">{{ m.description }}</dd>
               </div>
             }
             <div class="flex gap-3">
-              <dt class="w-24 shrink-0 text-slate-400">Room link</dt>
+              <dt class="w-24 shrink-0 text-slate-400" i18n="@@meeting.roomLink">Room link</dt>
               <dd class="flex min-w-0 items-center gap-2">
                 <code class="truncate rounded bg-slate-100 px-2 py-1 text-xs text-slate-600">{{ m.joinUrl }}</code>
                 <button
                   type="button"
                   (click)="copyLink(m.joinUrl)"
                   class="shrink-0 text-xs font-medium text-brand-700 hover:text-brand-800"
+                  i18n="@@meeting.copy"
                 >
                   Copy
                 </button>
@@ -134,7 +136,7 @@ interface CallParticipant {
              buttons the server would refuse. -->
         @if (!m.cancelled && iAmGuest()) {
           <section class="mt-5 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-            <h2 class="text-lg font-semibold text-slate-900">Your answer</h2>
+            <h2 class="text-lg font-semibold text-slate-900" i18n="@@meeting.yourAnswer">Your answer</h2>
             <p class="mt-1 text-sm text-slate-500">
               @if (myAnswer() && myAnswer() !== 'NEEDS-ACTION') {
                 You answered <span class="font-medium text-slate-700">{{ label(myAnswer()!) }}</span>.
@@ -171,7 +173,7 @@ interface CallParticipant {
         <!-- Organiser's controls -->
         @if (isOrganizer() && !m.cancelled) {
           <section class="mt-5 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-            <h2 class="text-lg font-semibold text-slate-900">Invitations</h2>
+            <h2 class="text-lg font-semibold text-slate-900" i18n="@@meeting.invitations">Invitations</h2>
             <p class="mt-1 text-sm text-slate-500">
               {{ m.attendees.length }} guests, {{ acceptedCount(m) }} accepted.
               Resending mails everybody their own link again — answers already given stand.
@@ -239,8 +241,8 @@ interface CallParticipant {
           <section class="mt-5 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
             <div class="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <h2 class="text-lg font-semibold text-slate-900">Join the meeting</h2>
-                <p class="mt-1 text-sm text-slate-500">
+                <h2 class="text-lg font-semibold text-slate-900" i18n="@@meeting.joinTitle">Join the meeting</h2>
+                <p class="mt-1 text-sm text-slate-500" i18n="@@meeting.joinHint">
                   The video room opens on its own page. Camera and microphone are optional.
                 </p>
               </div>
@@ -248,6 +250,7 @@ interface CallParticipant {
                 [routerLink]="['/meetings', m.uid, 'room']"
                 [queryParams]="guestParams()"
                 class="rounded-lg bg-brand-700 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-800 transition-colors"
+                i18n="@@meeting.join"
               >
                 Join meeting
               </a>

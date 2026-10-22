@@ -21,6 +21,7 @@
               routerLinkActive="text-brand-700"
               [routerLinkActiveOptions]="{ exact: true }"
               class="text-sm font-medium text-slate-600 transition hover:text-brand-700"
+              i18n="@@nav.mail"
             >
               Mail
             </a>
@@ -31,34 +32,35 @@
               routerLink="/mail/signature"
               routerLinkActive="text-brand-700"
               class="text-sm font-medium text-slate-600 transition hover:text-brand-700"
-            >
+             i18n="@@nav.signature">
               Signature
             </a>
             <a
               routerLink="/calendar"
               routerLinkActive="text-brand-700"
               class="text-sm font-medium text-slate-600 transition hover:text-brand-700"
-            >
+             i18n="@@nav.calendar">
               Calendar
             </a>
             <a
               routerLink="/contacts"
               routerLinkActive="text-brand-700"
               class="text-sm font-medium text-slate-600 transition hover:text-brand-700"
-            >
+             i18n="@@nav.contacts">
               Contacts
             </a>
             <a
               routerLink="/meetings"
               routerLinkActive="text-brand-700"
               class="text-sm font-medium text-slate-600 transition hover:text-brand-700"
-            >
+             i18n="@@nav.meetings">
               Meetings
             </a>
             @if (auth.isDomainAdmin()) {
               <a
                 routerLink="/admin/domains"
                 class="text-sm font-medium text-brand-600 transition hover:text-brand-800"
+                i18n="@@nav.admin"
               >
                 Admin
               </a>
@@ -67,14 +69,26 @@
               <button
                 (click)="stopImpersonating()"
                 class="text-xs font-medium text-violet-700 underline decoration-violet-300 transition hover:text-violet-900"
+                i18n="@@nav.actingAs"
               >
                 acting as {{ auth.impersonating() }} (stop)
               </button>
             }
+            <select
+              [value]="locale"
+              (change)="switchLanguage($any($event.target).value)"
+              aria-label="Language"
+              i18n-aria-label="@@nav.language"
+              class="rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700"
+            >
+              <option value="en">English</option>
+              <option value="it">Italiano</option>
+            </select>
             <span class="text-sm text-slate-600">{{ auth.user() }}</span>
             <button
               (click)="signOut()"
               class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+              i18n="@@nav.signOut"
             >
               Sign out
             </button>
@@ -89,6 +103,7 @@
     <div
       class="h-8 w-8 animate-spin rounded-full border-2 border-brand-600 border-t-transparent"
       aria-label="Loading"
+      i18n-aria-label="@@app.loading"
     ></div>
   </div>
 }

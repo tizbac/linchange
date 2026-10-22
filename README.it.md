@@ -50,6 +50,8 @@ chat, riunioni o rubriche da installare: tutto è nello stesso server.
 
 - Applicazione Angular a pagina singola per **posta, calendario, contatti,
   riunioni, chat e amministrazione**.
+- Build in inglese e italiano con l'i18n di Angular (`@angular/localize`); la
+  barra superiore cambia lingua e ricorda la scelta.
 - Vista per conversazioni, ricerca, bozze, firme, immagini inline, gestione degli
   allegati e avanzamento delle importazioni.
 - Autenticazione a due fattori TOTP con codici di recupero, reimpostazione della

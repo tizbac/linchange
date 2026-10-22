@@ -10,8 +10,8 @@ import { errorMessage } from '../core/http-error';
   template: `
     <div class="flex min-h-screen items-center justify-center px-4">
       <div class="w-full max-w-sm rounded-2xl bg-white p-8 shadow-sm ring-1 ring-slate-200">
-        <h1 class="text-2xl font-semibold tracking-tight text-slate-900">Sign in</h1>
-        <p class="mt-1 text-sm text-slate-500">Use your linchange account to continue.</p>
+        <h1 class="text-2xl font-semibold tracking-tight text-slate-900" i18n="@@login.title">Sign in</h1>
+        <p class="mt-1 text-sm text-slate-500" i18n="@@login.subtitle">Use your linchange account to continue.</p>
 
         @if (error()) {
           <p class="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{{ error() }}</p>
@@ -19,7 +19,7 @@ import { errorMessage } from '../core/http-error';
 
         <form class="mt-6 space-y-4" (ngSubmit)="submit(loginRef, passwordRef)">
           <label class="block text-sm font-medium text-slate-700">
-            Email
+            <span i18n="@@login.email">Email</span>
             <input
               #loginRef
               name="login"
@@ -30,7 +30,7 @@ import { errorMessage } from '../core/http-error';
             />
           </label>
           <label class="mt-4 block text-sm font-medium text-slate-700">
-            Password
+            <span i18n="@@login.password">Password</span>
             <input
               #passwordRef
               name="password"
@@ -44,13 +44,18 @@ import { errorMessage } from '../core/http-error';
             [disabled]="busy()"
             class="mt-2 w-full rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {{ busy() ? 'Signing in…' : 'Sign in' }}
+            @if (busy()) {
+              <span i18n="@@login.signingIn">Signing in…</span>
+            } @else {
+              <span i18n="@@login.signIn">Sign in</span>
+            }
           </button>
         </form>
 
         <a
           routerLink="/forgot-password"
           class="mt-4 block text-center text-sm text-brand-600 hover:underline"
+          i18n="@@login.forgot"
           >Forgot your password?</a
         >
       </div>

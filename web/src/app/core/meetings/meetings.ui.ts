@@ -3,10 +3,10 @@
 // PARTSTAT_LABELS are the answers as a guest list shows them. The wire values
 // are iTIP's; nobody reads one of those on screen.
 export const PARTSTAT_LABELS: Record<string, string> = {
-  'NEEDS-ACTION': 'No answer',
-  ACCEPTED: 'Accepted',
-  DECLINED: 'Declined',
-  TENTATIVE: 'Maybe',
+  'NEEDS-ACTION': $localize`:@@partStat.needsAction:No answer`,
+  ACCEPTED: $localize`:@@partStat.accepted:Accepted`,
+  DECLINED: $localize`:@@partStat.declined:Declined`,
+  TENTATIVE: $localize`:@@partStat.tentative:Maybe`,
 };
 
 export function partStatLabel(partStat: string): string {

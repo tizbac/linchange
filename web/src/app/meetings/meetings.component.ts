@@ -38,8 +38,8 @@ function defaults() {
     <main class="mx-auto max-w-4xl px-6 py-10">
       <header class="flex items-center justify-between">
         <div>
-          <h1 class="text-3xl font-semibold tracking-tight text-slate-900">Meetings</h1>
-          <p class="mt-1 text-sm text-slate-500">
+          <h1 class="text-3xl font-semibold tracking-tight text-slate-900" i18n="@@meetings.title">Meetings</h1>
+          <p class="mt-1 text-sm text-slate-500" i18n="@@meetings.intro">
             A meeting is a calendar event with an invitation: every guest is mailed a link that
             works whether or not they have an account here.
           </p>
@@ -49,17 +49,21 @@ function defaults() {
           (click)="creating.update((v) => !v)"
           class="rounded-lg bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-800 transition-colors"
         >
-          {{ creating() ? 'Close' : 'New meeting' }}
+          @if (creating()) {
+            <span i18n="@@meetings.close">Close</span>
+          } @else {
+            <span i18n="@@meetings.new">New meeting</span>
+          }
         </button>
       </header>
 
       @if (creating()) {
         <section class="mt-6 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-          <h2 class="text-lg font-semibold text-slate-900">New meeting</h2>
+          <h2 class="text-lg font-semibold text-slate-900" i18n="@@meetings.newTitle">New meeting</h2>
 
           <div class="mt-4 grid gap-4 sm:grid-cols-2">
             <label class="block sm:col-span-2">
-              <span class="text-sm font-medium text-slate-700">Title</span>
+              <span class="text-sm font-medium text-slate-700" i18n="@@meetings.titleLabel">Title</span>
               <input
                 type="text"
                 [(ngModel)]="title"
@@ -70,7 +74,7 @@ function defaults() {
             </label>
 
             <label class="block">
-              <span class="text-sm font-medium text-slate-700">Date</span>
+              <span class="text-sm font-medium text-slate-700" i18n="@@meetings.date">Date</span>
               <input
                 type="date"
                 [(ngModel)]="date"
@@ -80,7 +84,7 @@ function defaults() {
             </label>
             <div class="grid grid-cols-2 gap-3">
               <label class="block">
-                <span class="text-sm font-medium text-slate-700">From</span>
+                <span class="text-sm font-medium text-slate-700" i18n="@@meetings.from">From</span>
                 <input
                   type="time"
                   [(ngModel)]="startTime"
@@ -89,7 +93,7 @@ function defaults() {
                 />
               </label>
               <label class="block">
-                <span class="text-sm font-medium text-slate-700">To</span>
+                <span class="text-sm font-medium text-slate-700" i18n="@@meetings.to">To</span>
                 <input
                   type="time"
                   [(ngModel)]="endTime"
@@ -255,9 +259,13 @@ function defaults() {
               (click)="create()"
               class="rounded-lg bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-800 disabled:opacity-50 transition-colors"
             >
-              {{ saving() ? 'Inviting…' : 'Create and invite' }}
+              @if (saving()) {
+                <span i18n="@@meetings.inviting">Inviting…</span>
+              } @else {
+                <span i18n="@@meetings.create">Create and invite</span>
+              }
             </button>
-            <span class="text-sm text-slate-500">Invitations go out immediately, one per guest.</span>
+            <span class="text-sm text-slate-500" i18n="@@meetings.inviteHint">Invitations go out immediately, one per guest.</span>
           </div>
         </section>
       }

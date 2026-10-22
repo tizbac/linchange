@@ -571,7 +571,11 @@ func (s *Server) Handler() http.Handler {
 }
 
 // serveSPA serves a real asset if one exists at the requested path and otherwise
-// hands back index.html, so /login and /second-factor work without a 404.
+// hands back the app shell, so /login and /second-factor work without a 404.
+//
+// Angular builds one shell per locale: /en/ and /it/. A path without a locale is
+// redirected to the visitor's preferred one, which keeps old links and the
+// invitation URLs working.
 func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	if path == "/api" || strings.HasPrefix(path, "/api/") || path == "/healthz" {
@@ -581,24 +585,57 @@ func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 
 	root := filepath.Clean(s.staticDir)
 	rel := strings.Trim(path, "/")
-	full := filepath.Join(root, filepath.FromSlash(rel))
 
-	// r.URL.Path is already cleaned, but keep the resolved file inside the web
-	// root regardless before anything reads from it.
-	if full != root && !strings.HasPrefix(full, root+string(filepath.Separator)) {
+	locale := ""
+	for _, candidate := range []string{"en", "it"} {
+		if rel == candidate || strings.HasPrefix(rel, candidate+"/") {
+			locale = candidate
+			rel = strings.TrimPrefix(strings.TrimPrefix(rel, candidate), "/")
+			break
+		}
+	}
+
+	// A path with no locale is either a real root asset (the web manifest, say)
+	// or an old link. Real files are served; everything else moves under the
+	// preferred locale.
+	if locale == "" {
+		if rel != "" {
+			rootFile := filepath.Join(root, filepath.FromSlash(rel))
+			if info, err := os.Stat(rootFile); err == nil && !info.IsDir() {
+				s.serveFile(w, r, rootFile)
+				return
+			}
+		}
+		target := "/" + preferredLanguage(r) + "/"
+		if rel != "" {
+			target += rel
+		}
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, target, http.StatusFound)
+		return
+	}
+
+	base := filepath.Join(root, locale)
+	shell := filepath.Join(base, "index.html")
+	full := filepath.Join(base, filepath.FromSlash(rel))
+	if rel != "" && !strings.HasPrefix(full, base+string(filepath.Separator)) {
 		s.writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 
-	// The root URL and anything that is not a real file are all the app shell;
-	// the client-side router takes over from there.
-	target := full
-	if rel == "" {
-		target = filepath.Join(root, "index.html")
-	} else if info, err := os.Stat(full); err != nil || info.IsDir() {
-		target = filepath.Join(root, "index.html")
+	target := shell
+	if rel != "" {
+		if info, err := os.Stat(full); err == nil && !info.IsDir() {
+			target = full
+		}
 	}
+	s.serveFile(w, r, target)
+}
 
+// serveFile writes one file from the web root, or a 404 when it is missing.
+func (s *Server) serveFile(w http.ResponseWriter, r *http.Request, target string) {
 	f, err := os.Open(target)
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "not found")
@@ -610,6 +647,30 @@ func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeError(w, http.StatusNotFound, "not found")
+}
+
+// preferredLanguage is the UI language a browser should get. The explicit
+// cookie wins; otherwise the first Italian or English tag in Accept-Language
+// decides. English is the source locale and the fallback.
+func preferredLanguage(r *http.Request) string {
+	if c, err := r.Cookie("linchange_lang"); err == nil {
+		switch c.Value {
+		case "it":
+			return "it"
+		case "en":
+			return "en"
+		}
+	}
+	for _, part := range strings.Split(r.Header.Get("Accept-Language"), ",") {
+		tag := strings.ToLower(strings.TrimSpace(strings.SplitN(part, ";", 2)[0]))
+		if strings.HasPrefix(tag, "it") {
+			return "it"
+		}
+		if strings.HasPrefix(tag, "en") {
+			return "en"
+		}
+	}
+	return "en"
 }
 
 // requireAuth validates the bearer access token and confirms the session it

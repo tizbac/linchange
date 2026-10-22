@@ -69,7 +69,7 @@ interface CallParticipant {
       <div class="flex flex-wrap items-center gap-3 text-xs text-slate-300">
         <span class="flex items-center gap-1.5">
           <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
-          {{ participants().length }} in call
+          <span i18n="@@call.inCall">{{ participants().length }} in call</span>
         </span>
         @if (note()) {
           <span class="text-emerald-400">{{ note() }}</span>
@@ -81,6 +81,7 @@ interface CallParticipant {
           type="button"
           (click)="copyLink(m.joinUrl)"
           class="rounded-lg border border-white/15 px-3 py-1.5 text-xs font-medium hover:bg-white/5"
+          i18n="@@call.copyLink"
         >
           Copy link
         </button>
@@ -88,6 +89,7 @@ interface CallParticipant {
           [routerLink]="['/meetings', m.uid]"
           [queryParams]="guestParams()"
           class="rounded-lg border border-white/15 px-3 py-1.5 text-xs font-medium hover:bg-white/5"
+          i18n="@@call.details"
         >
           Details
         </a>
@@ -100,7 +102,7 @@ interface CallParticipant {
           <div class="mx-3 mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-200 sm:mx-5">
             <span>{{ mediaNotice() }}</span>
             @if (inCall()) {
-              <button type="button" (click)="retryMedia()" class="font-medium underline decoration-amber-400/60 hover:text-amber-100">
+              <button type="button" (click)="retryMedia()" class="font-medium underline decoration-amber-400/60 hover:text-amber-100" i18n="@@call.retryMedia">
                 Try camera and microphone
               </button>
             }
@@ -130,8 +132,12 @@ interface CallParticipant {
                 ></video>
                 <div class="absolute left-2 top-2 flex items-center gap-2 rounded-lg bg-black/70 px-2.5 py-1 text-xs font-medium text-slate-100">
                   <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
-                  {{ screen.self ? 'Your screen' : screen.member + ' is sharing' }}
-                  <span class="font-normal text-slate-400">· view only</span>
+                  @if (screen.self) {
+                    <span i18n="@@call.yourScreen">Your screen</span>
+                  } @else {
+                    <span i18n="@@call.someoneSharing">{{ screen.member }} is sharing</span>
+                  }
+                  <span class="font-normal text-slate-400" i18n="@@call.viewOnly">· view only</span>
                 </div>
               </div>
             </div>
@@ -156,7 +162,7 @@ interface CallParticipant {
                     <div class="flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-brand-600 to-violet-700 text-2xl font-semibold text-white">
                       {{ initials(p.member) }}
                     </div>
-                    <span class="text-xs text-slate-400">Camera off</span>
+                    <span class="text-xs text-slate-400" i18n="@@call.cameraOffLabel">Camera off</span>
                   </div>
                   @if (!p.self) {
                     <audio [srcObject]="p.stream" autoplay></audio>
@@ -164,10 +170,16 @@ interface CallParticipant {
                 }
 
                 <div class="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-black/80 to-transparent px-3 pb-2 pt-8 text-xs">
-                  <span class="truncate font-medium">{{ p.self ? 'You' : p.member }}</span>
+                  <span class="truncate font-medium">
+                    @if (p.self) {
+                      <span i18n="@@call.you">You</span>
+                    } @else {
+                      {{ p.member }}
+                    }
+                  </span>
                   <span class="flex shrink-0 items-center gap-1.5">
                     @if (p.member === floorSpeaker()) {
-                      <span class="rounded bg-brand-500/30 px-1.5 py-0.5 text-[10px] font-medium text-brand-200">floor</span>
+                      <span class="rounded bg-brand-500/30 px-1.5 py-0.5 text-[10px] font-medium text-brand-200" i18n="@@call.floor">floor</span>
                     }
                     @if (!hasAudio(p)) {
                       <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 text-rose-300" fill="none" stroke="currentColor" stroke-width="2" aria-label="Microphone off">
@@ -183,16 +195,16 @@ interface CallParticipant {
 
         @if (isOrganizer() && m.oneWay && raisedHands().length > 0) {
           <div class="mx-3 mb-2 rounded-xl border border-amber-400/30 bg-amber-400/10 p-3 sm:mx-5" data-testid="raised-hands">
-            <p class="text-xs font-semibold text-amber-200">Raised hands</p>
+            <p class="text-xs font-semibold text-amber-200" i18n="@@call.raisedHands">Raised hands</p>
             @for (hand of raisedHands(); track hand) {
               <div class="mt-1 flex flex-wrap items-center justify-between gap-2">
                 <span class="text-xs text-amber-100">{{ hand }}</span>
                 <span class="flex gap-2">
-                  <button type="button" (click)="allowSpeak(hand)" class="rounded-md bg-amber-500 px-2.5 py-1 text-[11px] font-medium text-slate-950 hover:bg-amber-400">
+                  <button type="button" (click)="allowSpeak(hand)" class="rounded-md bg-amber-500 px-2.5 py-1 text-[11px] font-medium text-slate-950 hover:bg-amber-400" i18n="@@call.allowSpeak">
                     Allow to speak
                   </button>
                   @if (floorSpeaker() === hand) {
-                    <button type="button" (click)="revokeSpeak(hand)" class="rounded-md border border-amber-400/40 px-2.5 py-1 text-[11px] font-medium text-amber-200 hover:bg-amber-400/10">
+                    <button type="button" (click)="revokeSpeak(hand)" class="rounded-md border border-amber-400/40 px-2.5 py-1 text-[11px] font-medium text-amber-200 hover:bg-amber-400/10" i18n="@@call.muteGuest">
                       Mute
                     </button>
                   }
@@ -204,9 +216,9 @@ interface CallParticipant {
 
         @if (m.oneWay) {
           <p class="mx-3 mb-1 text-center text-xs text-slate-400 sm:mx-5" data-testid="webinar-note">
-            One-way conference: only the presenter speaks.
+            <span i18n="@@call.webinarNote">One-way conference: only the presenter speaks.</span>
             @if (floorSpeaker()) {
-              <span class="font-medium text-slate-200">{{ floorSpeaker() }}</span> has the floor.
+              <span i18n="@@call.hasFloor">{{ floorSpeaker() }} has the floor.</span>
             }
           </p>
         }
@@ -214,7 +226,11 @@ interface CallParticipant {
         <footer class="flex flex-wrap items-center justify-center gap-2 border-t border-white/10 px-4 py-3">
           @if (!inCall()) {
             <button type="button" (click)="joinCall()" [disabled]="joining()" class="rounded-xl bg-brand-600 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
-              {{ joining() ? 'Joining…' : 'Join call' }}
+              @if (joining()) {
+                <span i18n="@@call.joining">Joining…</span>
+              } @else {
+                <span i18n="@@call.join">Join call</span>
+              }
             </button>
           } @else {
             <button type="button" (click)="toggleMic()" class="flex min-w-16 flex-col items-center gap-1 rounded-xl px-3 py-2 text-[11px] font-medium text-slate-200 hover:bg-white/10">
@@ -222,14 +238,22 @@ interface CallParticipant {
                 <rect x="9" y="3" width="6" height="11" rx="3" />
                 <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
               </svg>
-              {{ micOn() ? 'Mute' : 'Unmute' }}
+              @if (micOn()) {
+                <span i18n="@@call.mute">Mute</span>
+              } @else {
+                <span i18n="@@call.unmute">Unmute</span>
+              }
             </button>
             <button type="button" (click)="toggleCamera()" class="flex min-w-16 flex-col items-center gap-1 rounded-xl px-3 py-2 text-[11px] font-medium text-slate-200 hover:bg-white/10">
               <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8">
                 <rect x="3" y="6" width="12" height="12" rx="2" />
                 <path d="m15 10 6-3v10l-6-3" />
               </svg>
-              {{ cameraOn() ? 'Camera' : 'Camera off' }}
+              @if (cameraOn()) {
+                <span i18n="@@call.camera">Camera</span>
+              } @else {
+                <span i18n="@@call.cameraOff">Camera off</span>
+              }
             </button>
           }
           @if (m.oneWay && !isOrganizer()) {
@@ -237,7 +261,11 @@ interface CallParticipant {
               <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8">
                 <path d="M8 12V5a2 2 0 1 1 4 0v5M12 10V4a2 2 0 1 1 4 0v6M16 11V6a2 2 0 1 1 4 0v8a6 6 0 0 1-6 6h-2a6 6 0 0 1-6-6v-3a2 2 0 1 1 4 0" />
               </svg>
-              {{ handRaised() ? 'Lower hand' : 'Raise hand' }}
+              @if (handRaised()) {
+                <span i18n="@@call.lowerHand">Lower hand</span>
+              } @else {
+                <span i18n="@@call.raiseHand">Raise hand</span>
+              }
             </button>
           }
           @if (!m.oneWay || isOrganizer()) {
@@ -252,7 +280,11 @@ interface CallParticipant {
                 <rect x="3" y="4" width="18" height="12" rx="2" />
                 <path d="M8 20h8M12 16v4M12 13V7m0 0-2 2m2-2 2 2" />
               </svg>
-              {{ sharing() ? 'Stop share' : 'Share' }}
+              @if (sharing()) {
+                <span i18n="@@call.stopShare">Stop share</span>
+              } @else {
+                <span i18n="@@call.share">Share</span>
+              }
             </button>
           }
           <button
@@ -264,13 +296,13 @@ interface CallParticipant {
             <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8">
               <path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-7a8 8 0 1 1 18-4Z" />
             </svg>
-            Chat
+            <span i18n="@@call.chat">Chat</span>
           </button>
           <button type="button" (click)="leaveCall()" class="flex min-w-20 flex-col items-center gap-1 rounded-xl bg-rose-600 px-4 py-2 text-[11px] font-semibold text-white hover:bg-rose-700">
             <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8">
               <path d="M4 14c5-5 11-5 16 0l-3 3-3-2-2 2c-2-1-3-2-4-2s-2 1-4 2l-2-2 2-3Z" />
             </svg>
-            Leave
+            <span i18n="@@call.leave">Leave</span>
           </button>
         </footer>
       </section>
@@ -278,8 +310,8 @@ interface CallParticipant {
       @if (chatOpen() && m.chatConversation) {
         <aside class="flex h-80 w-full shrink-0 flex-col border-t border-white/10 bg-slate-900 lg:h-auto lg:w-80 lg:border-l lg:border-t-0">
           <div class="flex items-center justify-between border-b border-white/10 px-4 py-3">
-            <h2 class="text-sm font-semibold">Chat</h2>
-            <button type="button" (click)="chatOpen.set(false)" class="rounded-md px-2 py-1 text-lg leading-none text-slate-400 hover:bg-white/10 hover:text-white" aria-label="Collapse chat">
+            <h2 class="text-sm font-semibold" i18n="@@call.chatTitle">Chat</h2>
+            <button type="button" (click)="chatOpen.set(false)" class="rounded-md px-2 py-1 text-lg leading-none text-slate-400 hover:bg-white/10 hover:text-white" aria-label="Collapse chat" i18n-aria-label="@@call.collapseChat">
               ×
             </button>
           </div>
@@ -294,7 +326,7 @@ interface CallParticipant {
           } @else if (chat.state() === 'connected') {
             <div #chatLog id="chatLog" class="min-h-0 flex-1 overflow-y-auto bg-slate-950/40 p-3">
               @if (chat.messages().length === 0) {
-                <p class="pt-16 text-center text-xs text-slate-500">No messages yet. Say something.</p>
+                <p class="pt-16 text-center text-xs text-slate-500" i18n="@@call.noMessages">No messages yet. Say something.</p>
               }
               @for (msg of chat.messages(); track msg.id || msg.clientId) {
                 <div class="mb-3 flex gap-2" [ngClass]="isSelf(msg) ? 'flex-row-reverse' : ''">
@@ -322,7 +354,7 @@ interface CallParticipant {
                             <p class="truncate text-xs font-medium text-slate-100">{{ att.name }}</p>
                             <p class="text-[10px] text-slate-400">{{ fileSize(att.size) }}</p>
                           </div>
-                          <button type="button" (click)="downloadAttachment(att)" class="ml-2 shrink-0 rounded px-2 py-1 text-[11px] font-medium text-brand-300 hover:bg-white/10">
+                          <button type="button" (click)="downloadAttachment(att)" class="ml-2 shrink-0 rounded px-2 py-1 text-[11px] font-medium text-brand-300 hover:bg-white/10" i18n="@@call.download">
                             Download
                           </button>
                         </div>
@@ -345,6 +377,8 @@ interface CallParticipant {
                 data-testid="attach-file"
                 aria-label="Attach a file"
                 title="Attach a file (up to 25 MB)"
+                i18n-aria-label="@@call.attachFile"
+                i18n-title="@@call.attachFileTitle"
                 class="rounded-lg border border-white/10 px-2.5 py-2 text-slate-300 hover:bg-white/10 disabled:opacity-50"
               >
                 <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -357,10 +391,11 @@ interface CallParticipant {
                 (ngModelChange)="chat.notifyTyping()"
                 name="draftText"
                 placeholder="Message the room"
+                i18n-placeholder="@@call.messagePlaceholder"
                 autocomplete="off"
                 class="min-w-0 flex-1 rounded-lg border border-white/10 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
-              <button type="submit" [disabled]="chatBusy() || !draftText.trim()" class="rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
+              <button type="submit" [disabled]="chatBusy() || !draftText.trim()" class="rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50" i18n="@@call.send">
                 Send
               </button>
             </form>
@@ -714,7 +749,7 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     // the socket if the chat panel has not been opened yet.
     const meeting = this.meeting();
     if (!meeting?.chatConversation) {
-      this.callError.set('This meeting has no room to join.');
+      this.callError.set($localize`:@@call.noRoom:This meeting has no room to join.`);
       return;
     }
     const access = this.chatAccess();
@@ -722,7 +757,7 @@ export class CallRoomComponent implements OnInit, OnDestroy {
       await this.chat.open(meeting.chatConversation, access);
     }
     if (!this.chat.isOpenFor(meeting.chatConversation)) {
-      this.callError.set(this.chat.error() || 'The call could not connect.');
+      this.callError.set(this.chat.error() || $localize`:@@call.connectFailed:The call could not connect.`);
       return;
     }
 
@@ -760,11 +795,11 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     if (!webinar && !audio) {
       this.mediaNotice.set(
         video
-          ? 'No microphone is available, so you joined listen-only. You can still chat.'
-          : 'No camera or microphone is available, so you joined listen-only. You can still chat.',
+          ? $localize`:@@call.noMic:No microphone is available, so you joined listen-only. You can still chat.`
+          : $localize`:@@call.noDevices:No camera or microphone is available, so you joined listen-only. You can still chat.`,
       );
     } else if (!webinar && !video) {
-      this.mediaNotice.set('No camera is available, so you joined with audio only.');
+      this.mediaNotice.set($localize`:@@call.noCamera:No camera is available, so you joined with audio only.`);
     }
 
     const me = (this.chat.self() || this.auth.user()).toLowerCase();
@@ -829,7 +864,7 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     // A guest in a webinar has no microphone to toggle: the floor is the
     // presenter's to give, and raising a hand is how they ask for it.
     if (this.meeting()?.oneWay && !this.isOrganizer() && !this.floorGranted()) {
-      this.callError.set('Raise your hand to ask the presenter for the floor.');
+      this.callError.set($localize`:@@call.raiseForFloor:Raise your hand to ask the presenter for the floor.`);
       return;
     }
     const track = this.localStream?.getAudioTracks()[0];
@@ -862,11 +897,11 @@ export class CallRoomComponent implements OnInit, OnDestroy {
       return;
     }
     if (this.meeting()?.oneWay && !this.isOrganizer()) {
-      this.screenError.set('Only the presenter can share a screen in a webinar.');
+      this.screenError.set($localize`:@@call.hostOnlyShare:Only the presenter can share a screen in a webinar.`);
       return;
     }
     if (!navigator.mediaDevices?.getDisplayMedia) {
-      this.screenError.set('This browser cannot share a screen.');
+      this.screenError.set($localize`:@@call.noDisplayMedia:This browser cannot share a screen.`);
       return;
     }
     try {
@@ -874,7 +909,7 @@ export class CallRoomComponent implements OnInit, OnDestroy {
       const track = stream.getVideoTracks()[0];
       if (!track) {
         stream.getTracks().forEach((t) => t.stop());
-        this.screenError.set('The screen could not be captured.');
+        this.screenError.set($localize`:@@call.captureFailed:The screen could not be captured.`);
         return;
       }
       // The browser's own "Stop sharing" control ends the track; reflect that
@@ -888,7 +923,7 @@ export class CallRoomComponent implements OnInit, OnDestroy {
       }
       this.chat.sendControl('screen-start');
     } catch {
-      this.screenError.set('Screen sharing was cancelled or refused.');
+      this.screenError.set($localize`:@@call.shareCancelled:Screen sharing was cancelled or refused.`);
     }
   }
 
@@ -1029,7 +1064,7 @@ export class CallRoomComponent implements OnInit, OnDestroy {
       // failed call: if media is already flowing, keep the room usable.
       console.warn('linchange call: signalling frame failed', signal.type, err);
       if (this.participants().length <= 1) {
-        this.callError.set('A call connection could not be established.');
+        this.callError.set($localize`:@@call.connectionFailed:A call connection could not be established.`);
       }
     }
   }

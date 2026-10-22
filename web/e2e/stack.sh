@@ -12,7 +12,7 @@ PORT=${E2E_PORT:-18080}
 
 test -f .env || { echo "e2e: missing .env; run `make dev-config` first" >&2; exit 1; }
 test -f linchange.dev.yaml || { echo "e2e: missing linchange.dev.yaml; run `make dev-config` first" >&2; exit 1; }
-test -f web/dist/linchange-web/browser/index.html || { echo "e2e: missing web build; run `cd web && npm run build` first" >&2; exit 1; }
+test -f web/dist/linchange-web/browser/en/index.html || { echo "e2e: missing web build; run `cd web && npm run build` first" >&2; exit 1; }
 
 set -a; . ./.env; set +a
 

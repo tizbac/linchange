@@ -49,6 +49,8 @@ address-book service to install: everything ships in the same server.
 
 - Angular single-page application for **mail, calendar, contacts, meetings,
   chat and administration**.
+- English and Italian builds using Angular's own i18n (`@angular/localize`);
+  the top bar switches language and remembers the choice.
 - Conversation view, search, drafts, signatures, inline images, attachment
   handling and import progress.
 - Two-factor authentication with TOTP and recovery codes, password reset,

@@ -1,0 +1,770 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<xliff xmlns="urn:oasis:names:tc:xliff:document:1.2" version="1.2">
+  <file source-language="en" datatype="plaintext" original="ng2.template" target-language="it">
+    <body>
+      <trans-unit id="nav.mail" datatype="html">
+        <source> Mail </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">26,27</context>
+        </context-group>
+      <target>Posta</target></trans-unit>
+      <trans-unit id="nav.signature" datatype="html">
+        <source> Signature </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">36,37</context>
+        </context-group>
+      <target>Firma</target></trans-unit>
+      <trans-unit id="nav.calendar" datatype="html">
+        <source> Calendar </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">43,44</context>
+        </context-group>
+      <target>Calendario</target></trans-unit>
+      <trans-unit id="nav.contacts" datatype="html">
+        <source> Contacts </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">50,51</context>
+        </context-group>
+      <target>Contatti</target></trans-unit>
+      <trans-unit id="nav.meetings" datatype="html">
+        <source> Meetings </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">57,58</context>
+        </context-group>
+      <target>Riunioni</target></trans-unit>
+      <trans-unit id="nav.admin" datatype="html">
+        <source> Admin </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">65,66</context>
+        </context-group>
+      <target>Amministrazione</target></trans-unit>
+      <trans-unit id="nav.actingAs" datatype="html">
+        <source> acting as <x id="INTERPOLATION" equiv-text="{{ auth.impersonating() }}" /> (stop) </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">74,75</context>
+        </context-group>
+      <target>stai agendo come <x id="INTERPOLATION" equiv-text="{{ auth.impersonating() }}" /> (esci)</target></trans-unit>
+      <trans-unit id="nav.language" datatype="html">
+        <source>Language</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">80,81</context>
+        </context-group>
+      <target>Lingua</target></trans-unit>
+      <trans-unit id="nav.signOut" datatype="html">
+        <source> Sign out </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">93,94</context>
+        </context-group>
+      <target>Esci</target></trans-unit>
+      <trans-unit id="app.loading" datatype="html">
+        <source>Loading</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">106</context>
+        </context-group>
+      <target>Caricamento</target></trans-unit>
+      <trans-unit id="adminNav.domains" datatype="html">
+        <source>Domains</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">10</context>
+        </context-group>
+      <target>Domini</target></trans-unit>
+      <trans-unit id="adminNav.organizations" datatype="html">
+        <source>Organizations</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">11</context>
+        </context-group>
+      <target>Organizzazioni</target></trans-unit>
+      <trans-unit id="adminNav.users" datatype="html">
+        <source>Users</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">12</context>
+        </context-group>
+      <target>Utenti</target></trans-unit>
+      <trans-unit id="adminNav.aliases" datatype="html">
+        <source>Aliases</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">13</context>
+        </context-group>
+      <target>Alias</target></trans-unit>
+      <trans-unit id="adminNav.sharedMailboxes" datatype="html">
+        <source>Shared mailboxes</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">14</context>
+        </context-group>
+      <target>Caselle condivise</target></trans-unit>
+      <trans-unit id="adminNav.imports" datatype="html">
+        <source>Imports</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">15</context>
+        </context-group>
+      <target>Importazioni</target></trans-unit>
+      <trans-unit id="adminNav.impersonation" datatype="html">
+        <source>Impersonation</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">16</context>
+        </context-group>
+      <target>Impersonificazione</target></trans-unit>
+      <trans-unit id="adminNav.queue" datatype="html">
+        <source>Outbound queue</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">17</context>
+        </context-group>
+      <target>Coda di invio</target></trans-unit>
+      <trans-unit id="adminNav.audit" datatype="html">
+        <source>Audit log</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">18</context>
+        </context-group>
+      <target>Registro di audit</target></trans-unit>
+      <trans-unit id="partStat.needsAction" datatype="html">
+        <source>No answer</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/meetings/meetings.ui.ts</context>
+          <context context-type="linenumber">6</context>
+        </context-group>
+      <target>Nessuna risposta</target></trans-unit>
+      <trans-unit id="partStat.accepted" datatype="html">
+        <source>Accepted</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/meetings/meetings.ui.ts</context>
+          <context context-type="linenumber">7</context>
+        </context-group>
+      <target>Accettato</target></trans-unit>
+      <trans-unit id="partStat.declined" datatype="html">
+        <source>Declined</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/meetings/meetings.ui.ts</context>
+          <context context-type="linenumber">8</context>
+        </context-group>
+      <target>Rifiutato</target></trans-unit>
+      <trans-unit id="partStat.tentative" datatype="html">
+        <source>Maybe</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/meetings/meetings.ui.ts</context>
+          <context context-type="linenumber">9</context>
+        </context-group>
+      <target>Forse</target></trans-unit>
+      <trans-unit id="dashboard.mail" datatype="html">
+        <source>Mail</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/dashboard/dashboard.component.ts</context>
+          <context context-type="linenumber">16,17</context>
+        </context-group>
+      <target>Posta</target></trans-unit>
+      <trans-unit id="dashboard.mailHint" datatype="html">
+        <source>Read, compose, and organize your email.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/dashboard/dashboard.component.ts</context>
+          <context context-type="linenumber">17,19</context>
+        </context-group>
+      <target>Leggi, scrivi e organizza la tua posta.</target></trans-unit>
+      <trans-unit id="dashboard.calendar" datatype="html">
+        <source>Calendar</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/dashboard/dashboard.component.ts</context>
+          <context context-type="linenumber">20,21</context>
+        </context-group>
+      <target>Calendario</target></trans-unit>
+      <trans-unit id="dashboard.calendarHint" datatype="html">
+        <source>Manage events, free/busy, and scheduling.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/dashboard/dashboard.component.ts</context>
+          <context context-type="linenumber">21,23</context>
+        </context-group>
+      <target>Gestisci eventi, disponibilità e pianificazione.</target></trans-unit>
+      <trans-unit id="dashboard.meetings" datatype="html">
+        <source>Meetings</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/dashboard/dashboard.component.ts</context>
+          <context context-type="linenumber">24,25</context>
+        </context-group>
+      <target>Riunioni</target></trans-unit>
+      <trans-unit id="dashboard.meetingsHint" datatype="html">
+        <source>Invite people by email and chat in the meeting room.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/dashboard/dashboard.component.ts</context>
+          <context context-type="linenumber">25,28</context>
+        </context-group>
+      <target>Invita persone via email e chatta nella sala riunioni.</target></trans-unit>
+      <trans-unit id="login.title" datatype="html">
+        <source>Sign in</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/login/login.component.ts</context>
+          <context context-type="linenumber">13,14</context>
+        </context-group>
+      <target>Accedi</target></trans-unit>
+      <trans-unit id="login.subtitle" datatype="html">
+        <source>Use your linchange account to continue.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/login/login.component.ts</context>
+          <context context-type="linenumber">14,16</context>
+        </context-group>
+      <target>Usa il tuo account linchange per continuare.</target></trans-unit>
+      <trans-unit id="login.email" datatype="html">
+        <source>Email</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/login/login.component.ts</context>
+          <context context-type="linenumber">22,23</context>
+        </context-group>
+      <target>Email</target></trans-unit>
+      <trans-unit id="login.password" datatype="html">
+        <source>Password</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/login/login.component.ts</context>
+          <context context-type="linenumber">33,35</context>
+        </context-group>
+      <target>Password</target></trans-unit>
+      <trans-unit id="login.signingIn" datatype="html">
+        <source>Signing in…</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/login/login.component.ts</context>
+          <context context-type="linenumber">48,50</context>
+        </context-group>
+      <target>Accesso in corso…</target></trans-unit>
+      <trans-unit id="login.signIn" datatype="html">
+        <source>Sign in</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/login/login.component.ts</context>
+          <context context-type="linenumber">50,52</context>
+        </context-group>
+      <target>Accedi</target></trans-unit>
+      <trans-unit id="login.forgot" datatype="html">
+        <source>Forgot your password?</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/login/login.component.ts</context>
+          <context context-type="linenumber">59,62</context>
+        </context-group>
+      <target>Password dimenticata?</target></trans-unit>
+      <trans-unit id="call.inCall" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ participants().length }}" /> in call</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">72,73</context>
+        </context-group>
+      <target><x id="INTERPOLATION" equiv-text="{{ participants().length }}" /> nella chiamata</target></trans-unit>
+      <trans-unit id="call.copyLink" datatype="html">
+        <source> Copy link </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">86,88</context>
+        </context-group>
+      <target>Copia link</target></trans-unit>
+      <trans-unit id="call.details" datatype="html">
+        <source> Details </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">94,96</context>
+        </context-group>
+      <target>Dettagli</target></trans-unit>
+      <trans-unit id="call.retryMedia" datatype="html">
+        <source> Try camera and microphone </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">106,107</context>
+        </context-group>
+      <target>Riprova fotocamera e microfono</target></trans-unit>
+      <trans-unit id="call.yourScreen" datatype="html">
+        <source>Your screen</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">136,137</context>
+        </context-group>
+      <target>Il tuo schermo</target></trans-unit>
+      <trans-unit id="call.someoneSharing" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ screen.member }}" /> is sharing</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">138,139</context>
+        </context-group>
+      <target><x id="INTERPOLATION" equiv-text="{{ screen.member }}" /> sta condividendo</target></trans-unit>
+      <trans-unit id="call.viewOnly" datatype="html">
+        <source>· view only</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">140,141</context>
+        </context-group>
+      <target>· solo visione</target></trans-unit>
+      <trans-unit id="call.cameraOffLabel" datatype="html">
+        <source>Camera off</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">165,167</context>
+        </context-group>
+      <target>Fotocamera spenta</target></trans-unit>
+      <trans-unit id="call.you" datatype="html">
+        <source>You</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">175,176</context>
+        </context-group>
+      <target>Tu</target></trans-unit>
+      <trans-unit id="call.floor" datatype="html">
+        <source>floor</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">182,183</context>
+        </context-group>
+      <target>parola</target></trans-unit>
+      <trans-unit id="call.raisedHands" datatype="html">
+        <source>Raised hands</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">198,199</context>
+        </context-group>
+      <target>Mani alzate</target></trans-unit>
+      <trans-unit id="call.allowSpeak" datatype="html">
+        <source> Allow to speak </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">204,205</context>
+        </context-group>
+      <target>Consenti di parlare</target></trans-unit>
+      <trans-unit id="call.muteGuest" datatype="html">
+        <source> Mute </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">208,209</context>
+        </context-group>
+      <target>Silenzia</target></trans-unit>
+      <trans-unit id="call.webinarNote" datatype="html">
+        <source>One-way conference: only the presenter speaks.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">219,220</context>
+        </context-group>
+      <target>Conferenza a senso unico: parla solo il presentatore.</target></trans-unit>
+      <trans-unit id="call.hasFloor" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ floorSpeaker() }}" /> has the floor.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">221,222</context>
+        </context-group>
+      <target><x id="INTERPOLATION" equiv-text="{{ floorSpeaker() }}" /> ha la parola.</target></trans-unit>
+      <trans-unit id="call.joining" datatype="html">
+        <source>Joining…</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">230,231</context>
+        </context-group>
+      <target>Partecipazione…</target></trans-unit>
+      <trans-unit id="call.join" datatype="html">
+        <source>Join call</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">232,234</context>
+        </context-group>
+      <target>Partecipa</target></trans-unit>
+      <trans-unit id="call.mute" datatype="html">
+        <source>Mute</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">242,243</context>
+        </context-group>
+      <target>Silenzia</target></trans-unit>
+      <trans-unit id="call.unmute" datatype="html">
+        <source>Unmute</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">244,246</context>
+        </context-group>
+      <target>Attiva microfono</target></trans-unit>
+      <trans-unit id="call.camera" datatype="html">
+        <source>Camera</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">253,254</context>
+        </context-group>
+      <target>Fotocamera</target></trans-unit>
+      <trans-unit id="call.cameraOff" datatype="html">
+        <source>Camera off</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">255,257</context>
+        </context-group>
+      <target>Fotocamera spenta</target></trans-unit>
+      <trans-unit id="call.lowerHand" datatype="html">
+        <source>Lower hand</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">265,266</context>
+        </context-group>
+      <target>Abbassa la mano</target></trans-unit>
+      <trans-unit id="call.raiseHand" datatype="html">
+        <source>Raise hand</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">267,269</context>
+        </context-group>
+      <target>Alza la mano</target></trans-unit>
+      <trans-unit id="call.stopShare" datatype="html">
+        <source>Stop share</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">284,285</context>
+        </context-group>
+      <target>Interrompi condivisione</target></trans-unit>
+      <trans-unit id="call.share" datatype="html">
+        <source>Share</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">286,288</context>
+        </context-group>
+      <target>Condividi</target></trans-unit>
+      <trans-unit id="call.chat" datatype="html">
+        <source>Chat</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">299,300</context>
+        </context-group>
+      <target>Chat</target></trans-unit>
+      <trans-unit id="call.leave" datatype="html">
+        <source>Leave</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">305,306</context>
+        </context-group>
+      <target>Esci</target></trans-unit>
+      <trans-unit id="call.chatTitle" datatype="html">
+        <source>Chat</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">313,314</context>
+        </context-group>
+      <target>Chat</target></trans-unit>
+      <trans-unit id="call.collapseChat" datatype="html">
+        <source>Collapse chat</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">314</context>
+        </context-group>
+      <target>Comprimi chat</target></trans-unit>
+      <trans-unit id="call.noMessages" datatype="html">
+        <source>No messages yet. Say something.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">329,331</context>
+        </context-group>
+      <target>Nessun messaggio. Scrivi qualcosa.</target></trans-unit>
+      <trans-unit id="call.download" datatype="html">
+        <source> Download </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">358,359</context>
+        </context-group>
+      <target>Scarica</target></trans-unit>
+      <trans-unit id="call.attachFile" datatype="html">
+        <source>Attach a file</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">378,379</context>
+        </context-group>
+      <target>Allega un file</target></trans-unit>
+      <trans-unit id="call.attachFileTitle" datatype="html">
+        <source>Attach a file (up to 25 MB)</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">379,380</context>
+        </context-group>
+      <target>Allega un file (fino a 25 MB)</target></trans-unit>
+      <trans-unit id="call.messagePlaceholder" datatype="html">
+        <source>Message the room</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">393,394</context>
+        </context-group>
+      <target>Scrivi nella sala</target></trans-unit>
+      <trans-unit id="call.send" datatype="html">
+        <source> Send </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">399,400</context>
+        </context-group>
+      <target>Invia</target></trans-unit>
+      <trans-unit id="call.noRoom" datatype="html">
+        <source>This meeting has no room to join.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">752</context>
+        </context-group>
+      <target>Questa riunione non ha una sala a cui partecipare.</target></trans-unit>
+      <trans-unit id="call.connectFailed" datatype="html">
+        <source>The call could not connect.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">760</context>
+        </context-group>
+      <target>Impossibile connettersi alla chiamata.</target></trans-unit>
+      <trans-unit id="call.noMic" datatype="html">
+        <source>No microphone is available, so you joined listen-only. You can still chat.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">798</context>
+        </context-group>
+      <target>Nessun microfono disponibile: sei entrato in sola ascolto. Puoi comunque scrivere in chat.</target></trans-unit>
+      <trans-unit id="call.noDevices" datatype="html">
+        <source>No camera or microphone is available, so you joined listen-only. You can still chat.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">799</context>
+        </context-group>
+      <target>Nessuna fotocamera o microfono disponibile: sei entrato in sola ascolto. Puoi comunque scrivere in chat.</target></trans-unit>
+      <trans-unit id="call.noCamera" datatype="html">
+        <source>No camera is available, so you joined with audio only.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">802</context>
+        </context-group>
+      <target>Nessuna fotocamera disponibile: sei entrato solo con l'audio.</target></trans-unit>
+      <trans-unit id="call.raiseForFloor" datatype="html">
+        <source>Raise your hand to ask the presenter for the floor.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">867</context>
+        </context-group>
+      <target>Alza la mano per chiedere la parola al presentatore.</target></trans-unit>
+      <trans-unit id="call.hostOnlyShare" datatype="html">
+        <source>Only the presenter can share a screen in a webinar.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">900</context>
+        </context-group>
+      <target>Solo il presentatore può condividere lo schermo in un webinar.</target></trans-unit>
+      <trans-unit id="call.noDisplayMedia" datatype="html">
+        <source>This browser cannot share a screen.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">904</context>
+        </context-group>
+      <target>Questo browser non può condividere lo schermo.</target></trans-unit>
+      <trans-unit id="call.captureFailed" datatype="html">
+        <source>The screen could not be captured.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">912</context>
+        </context-group>
+      <target>Impossibile acquisire lo schermo.</target></trans-unit>
+      <trans-unit id="call.shareCancelled" datatype="html">
+        <source>Screen sharing was cancelled or refused.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">926</context>
+        </context-group>
+      <target>Condivisione dello schermo annullata o rifiutata.</target></trans-unit>
+      <trans-unit id="call.connectionFailed" datatype="html">
+        <source>A call connection could not be established.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">1067</context>
+        </context-group>
+      <target>Impossibile stabilire una connessione per la chiamata.</target></trans-unit>
+      <trans-unit id="meeting.signIn" datatype="html">
+        <source> Sign in </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">58,59</context>
+        </context-group>
+      <target>Accedi</target></trans-unit>
+      <trans-unit id="meeting.cancelled" datatype="html">
+        <source>Cancelled</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">67,69</context>
+        </context-group>
+      <target>Annullata</target></trans-unit>
+      <trans-unit id="meeting.answeringAs" datatype="html">
+        <source> You are answering as <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-medium text-slate-700&quot;&gt;" /><x id="INTERPOLATION" equiv-text="{{ inviteeTo() }}" /><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;" /> — the link from your invitation. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">72,74</context>
+        </context-group>
+      <target>Stai rispondendo come <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-medium text-slate-700&quot;&gt;" /> — il link dal tuo invito.</target></trans-unit>
+      <trans-unit id="meeting.organiser" datatype="html">
+        <source>You are the organiser.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">76,78</context>
+        </context-group>
+      <target>Sei l'organizzatore.</target></trans-unit>
+      <trans-unit id="meeting.when" datatype="html">
+        <source>When</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">95,96</context>
+        </context-group>
+      <target>Quando</target></trans-unit>
+      <trans-unit id="meeting.where" datatype="html">
+        <source>Where</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">99,100</context>
+        </context-group>
+      <target>Dove</target></trans-unit>
+      <trans-unit id="meeting.organizer" datatype="html">
+        <source>Organiser</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">103,104</context>
+        </context-group>
+      <target>Organizzatore</target></trans-unit>
+      <trans-unit id="meeting.about" datatype="html">
+        <source>About</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">113,114</context>
+        </context-group>
+      <target>Informazioni</target></trans-unit>
+      <trans-unit id="meeting.roomLink" datatype="html">
+        <source>Room link</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">118,119</context>
+        </context-group>
+      <target>Link della sala</target></trans-unit>
+      <trans-unit id="meeting.copy" datatype="html">
+        <source> Copy </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">127,128</context>
+        </context-group>
+      <target>Copia</target></trans-unit>
+      <trans-unit id="meeting.yourAnswer" datatype="html">
+        <source>Your answer</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">139,140</context>
+        </context-group>
+      <target>La tua risposta</target></trans-unit>
+      <trans-unit id="meeting.invitations" datatype="html">
+        <source>Invitations</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">176,177</context>
+        </context-group>
+      <target>Inviti</target></trans-unit>
+      <trans-unit id="meeting.joinTitle" datatype="html">
+        <source>Join the meeting</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">244,245</context>
+        </context-group>
+      <target>Partecipa alla riunione</target></trans-unit>
+      <trans-unit id="meeting.joinHint" datatype="html">
+        <source> The video room opens on its own page. Camera and microphone are optional. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">246,247</context>
+        </context-group>
+      <target>La sala video si apre in una pagina dedicata. Fotocamera e microfono sono opzionali.</target></trans-unit>
+      <trans-unit id="meeting.join" datatype="html">
+        <source> Join meeting </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">255,256</context>
+        </context-group>
+      <target>Partecipa</target></trans-unit>
+      <trans-unit id="meetings.title" datatype="html">
+        <source>Meetings</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">41,42</context>
+        </context-group>
+      <target>Riunioni</target></trans-unit>
+      <trans-unit id="meetings.intro" datatype="html">
+        <source> A meeting is a calendar event with an invitation: every guest is mailed a link that works whether or not they have an account here. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">43,45</context>
+        </context-group>
+      <target>Una riunione è un evento di calendario con un invito: ogni ospite riceve via email un link che funziona anche senza un account.</target></trans-unit>
+      <trans-unit id="meetings.close" datatype="html">
+        <source>Close</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">53,55</context>
+        </context-group>
+      <target>Chiudi</target></trans-unit>
+      <trans-unit id="meetings.new" datatype="html">
+        <source>New meeting</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">55,57</context>
+        </context-group>
+      <target>Nuova riunione</target></trans-unit>
+      <trans-unit id="meetings.newTitle" datatype="html">
+        <source>New meeting</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">62,64</context>
+        </context-group>
+      <target>Nuova riunione</target></trans-unit>
+      <trans-unit id="meetings.titleLabel" datatype="html">
+        <source>Title</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">66,68</context>
+        </context-group>
+      <target>Titolo</target></trans-unit>
+      <trans-unit id="meetings.date" datatype="html">
+        <source>Date</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">77,78</context>
+        </context-group>
+      <target>Data</target></trans-unit>
+      <trans-unit id="meetings.from" datatype="html">
+        <source>From</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">87,88</context>
+        </context-group>
+      <target>Dalle</target></trans-unit>
+      <trans-unit id="meetings.to" datatype="html">
+        <source>To</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">96,97</context>
+        </context-group>
+      <target>Alle</target></trans-unit>
+      <trans-unit id="meetings.inviting" datatype="html">
+        <source>Inviting…</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">263,265</context>
+        </context-group>
+      <target>Invio in corso…</target></trans-unit>
+      <trans-unit id="meetings.create" datatype="html">
+        <source>Create and invite</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">265,267</context>
+        </context-group>
+      <target>Crea e invita</target></trans-unit>
+      <trans-unit id="meetings.inviteHint" datatype="html">
+        <source>Invitations go out immediately, one per guest.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">268,270</context>
+        </context-group>
+      <target>Gli inviti vengono inviati subito, uno per ospite.</target></trans-unit>
+    </body>
+  </file>
+</xliff>

@@ -7,15 +7,15 @@ interface Tab {
 }
 
 const TABS: Tab[] = [
-  { label: 'Domains', path: '/admin/domains' },
-  { label: 'Organizations', path: '/admin/workgroups' },
-  { label: 'Users', path: '/admin/users' },
-  { label: 'Aliases', path: '/admin/aliases' },
-  { label: 'Shared mailboxes', path: '/admin/shared-mailboxes' },
-  { label: 'Imports', path: '/admin/imports' },
-  { label: 'Impersonation', path: '/admin/impersonation' },
-  { label: 'Outbound queue', path: '/admin/queue' },
-  { label: 'Audit log', path: '/admin/audit' },
+  { label: $localize`:@@adminNav.domains:Domains`, path: '/admin/domains' },
+  { label: $localize`:@@adminNav.organizations:Organizations`, path: '/admin/workgroups' },
+  { label: $localize`:@@adminNav.users:Users`, path: '/admin/users' },
+  { label: $localize`:@@adminNav.aliases:Aliases`, path: '/admin/aliases' },
+  { label: $localize`:@@adminNav.sharedMailboxes:Shared mailboxes`, path: '/admin/shared-mailboxes' },
+  { label: $localize`:@@adminNav.imports:Imports`, path: '/admin/imports' },
+  { label: $localize`:@@adminNav.impersonation:Impersonation`, path: '/admin/impersonation' },
+  { label: $localize`:@@adminNav.queue:Outbound queue`, path: '/admin/queue' },
+  { label: $localize`:@@adminNav.audit:Audit log`, path: '/admin/audit' },
 ];
 
 @Component({
