@@ -185,6 +185,8 @@ func (h *Hub) handle(ctx context.Context, c *client, in frame) error {
 		return h.raiseHand(ctx, c, in, true)
 	case "hand-lower":
 		return h.raiseHand(ctx, c, in, false)
+	case "screen-start", "screen-stop":
+		return h.screenShare(ctx, c, in)
 	case "allow-speak":
 		return h.grantFloor(ctx, c, in, true)
 	case "revoke-speak":
@@ -466,6 +468,29 @@ func (h *Hub) raiseHand(ctx context.Context, c *client, in frame, up bool) error
 	}
 	h.broadcast(members, outFrame{
 		Type:         kind,
+		Conversation: conv.UID,
+		Member:       c.member,
+	})
+	return nil
+}
+
+// screenShare tells the room that one participant started or stopped sharing
+// a screen. In a webinar only the presenter may share; elsewhere anyone can,
+// and the media itself is the separate screen m-line of the call.
+func (h *Hub) screenShare(ctx context.Context, c *client, in frame) error {
+	conv, err := h.conversation(ctx, c, in.Conversation)
+	if err != nil {
+		return err
+	}
+	if in.Type == "screen-start" && conv.OneWay && normalise(conv.Presenter) != c.member {
+		return errors.New("only the presenter can share a screen in a webinar")
+	}
+	members, err := h.svc.MemberAddresses(ctx, conv.ID)
+	if err != nil {
+		return errors.New("could not list the room's members")
+	}
+	h.broadcast(members, outFrame{
+		Type:         strings.ToLower(strings.TrimSpace(in.Type)),
 		Conversation: conv.UID,
 		Member:       c.member,
 	})

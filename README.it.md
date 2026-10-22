@@ -70,7 +70,8 @@ chat, riunioni o rubriche da installare: tutto è nello stesso server.
   e barra laterale della chat comprimibile. Un ospite entra dal link
   dell'invito senza account; fotocamera e microfono sono opzionali.
 - **Chiamate WebRTC** nel browser: media peer-to-peer, griglia centrata su chi
-  parla, alzata di mano e gestione della parola per conferenze a senso unico e
+  parla, condivisione dello schermo come flusso separato solo in visione,
+  alzata di mano e gestione della parola per conferenze a senso unico e
   webinar.
 - **STUN/TURN integrato** per impostazione predefinita, con credenziali TURN a
   breve scadenza e possibilità di usare un server ICE esterno.

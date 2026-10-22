@@ -377,7 +377,9 @@ function isSignalFrame(type: string): boolean {
     type === 'hand-lower' ||
     type === 'allow-speak' ||
     type === 'speaker' ||
-    type === 'hands'
+    type === 'hands' ||
+    type === 'screen-start' ||
+    type === 'screen-stop'
   );
 }
 

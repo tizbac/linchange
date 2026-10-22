@@ -68,8 +68,8 @@ address-book service to install: everything ships in the same server.
   sidebar. A guest joins from the invitation link without an account; camera
   and microphone are optional.
 - **WebRTC calls** in the browser: peer-to-peer media, a speaker-focused grid,
-  hand raising and presenter-controlled floor for one-way conferences and
-  webinars.
+  screen sharing as a separate view-only feed, hand raising and
+  presenter-controlled floor for one-way conferences and webinars.
 - **Built-in STUN/TURN** by default, with short-lived TURN credentials and an
   option to point at an external ICE server instead.
 

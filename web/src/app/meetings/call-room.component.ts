@@ -101,8 +101,31 @@ interface CallParticipant {
             {{ callError() }}
           </div>
         }
+        @if (screenError()) {
+          <div class="mx-3 mt-3 rounded-xl border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-xs text-rose-200 sm:mx-5">
+            {{ screenError() }}
+          </div>
+        }
 
         <div class="min-h-0 flex-1 overflow-y-auto p-3 sm:p-5" data-testid="call-grid">
+          @if (activeScreen(); as screen) {
+            <div data-testid="screen-share" class="mb-3 overflow-hidden rounded-xl bg-black ring-1 ring-white/10">
+              <div class="relative">
+                <video
+                  [srcObject]="screen.stream"
+                  autoplay
+                  playsinline
+                  muted
+                  class="mx-auto max-h-[60vh] w-full object-contain"
+                ></video>
+                <div class="absolute left-2 top-2 flex items-center gap-2 rounded-lg bg-black/70 px-2.5 py-1 text-xs font-medium text-slate-100">
+                  <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                  {{ screen.self ? 'Your screen' : screen.member + ' is sharing' }}
+                  <span class="font-normal text-slate-400">· view only</span>
+                </div>
+              </div>
+            </div>
+          }
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             @for (p of visibleParticipants(); track p.member) {
               <div
@@ -180,8 +203,8 @@ interface CallParticipant {
 
         <footer class="flex flex-wrap items-center justify-center gap-2 border-t border-white/10 px-4 py-3">
           @if (!inCall()) {
-            <button type="button" (click)="joinCall()" class="rounded-xl bg-brand-600 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-700">
-              Join call
+            <button type="button" (click)="joinCall()" [disabled]="joining()" class="rounded-xl bg-brand-600 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
+              {{ joining() ? 'Joining…' : 'Join call' }}
             </button>
           } @else {
             <button type="button" (click)="toggleMic()" class="flex min-w-16 flex-col items-center gap-1 rounded-xl px-3 py-2 text-[11px] font-medium text-slate-200 hover:bg-white/10">
@@ -205,6 +228,21 @@ interface CallParticipant {
                 <path d="M8 12V5a2 2 0 1 1 4 0v5M12 10V4a2 2 0 1 1 4 0v6M16 11V6a2 2 0 1 1 4 0v8a6 6 0 0 1-6 6h-2a6 6 0 0 1-6-6v-3a2 2 0 1 1 4 0" />
               </svg>
               {{ handRaised() ? 'Lower hand' : 'Raise hand' }}
+            </button>
+          }
+          @if (!m.oneWay || isOrganizer()) {
+            <button
+              type="button"
+              (click)="shareScreen()"
+              data-testid="share-screen"
+              class="flex min-w-16 flex-col items-center gap-1 rounded-xl px-3 py-2 text-[11px] font-medium hover:bg-white/10"
+              [ngClass]="sharing() ? 'bg-emerald-500/20 text-emerald-200' : 'text-slate-200'"
+            >
+              <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8">
+                <rect x="3" y="4" width="18" height="12" rx="2" />
+                <path d="M8 20h8M12 16v4M12 13V7m0 0-2 2m2-2 2 2" />
+              </svg>
+              {{ sharing() ? 'Stop share' : 'Share' }}
             </button>
           }
           <button
@@ -317,6 +355,10 @@ export class CallRoomComponent implements OnInit, OnDestroy {
 
   // --- call state ---
   readonly inCall = signal(false);
+  // joining covers the window between the click/auto-join and inCall becoming
+  // true: media permissions and the socket can take a moment, and the Join
+  // button is still on screen until then.
+  readonly joining = signal(false);
   readonly callError = signal('');
   // mediaNotice is a soft status: a call works without a camera or microphone,
   // so a refused permission is information rather than an error.
@@ -332,6 +374,15 @@ export class CallRoomComponent implements OnInit, OnDestroy {
   readonly floorSpeaker = signal('');
   readonly handRaised = signal(false);
   readonly floorGranted = signal(false);
+  // Screen sharing is a second video feed beside the camera. sharing is the
+  // local presenter; remoteScreens holds one stream per sharing participant.
+  readonly sharing = signal(false);
+  readonly remoteScreens = signal<Record<string, MediaStream>>({});
+  // screenSharers is who has announced a live screen. A transceiver alone is
+  // not enough: an unused screen m-line has a receiver track that looks live
+  // even though no frames ever arrive.
+  readonly screenSharers = signal<string[]>([]);
+  readonly screenError = signal('');
 
   // visibleParticipants is the gallery. The local tile comes first and every
   // remote participant follows; unlike the old four-tile layout, a meeting
@@ -341,9 +392,38 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     return [...all.filter((p) => p.self), ...all.filter((p) => !p.self)];
   });
 
+  // activeScreen is the one screen currently shown large. A local share takes
+  // precedence so the presenter sees what everyone else sees. A remote screen
+  // counts only after its screen-start announcement, so an idle screen m-line
+  // cannot put a frozen panel on the wall.
+  readonly activeScreen = computed(() => {
+    if (this.sharing() && this.screenStream) {
+      return { member: 'You', self: true, stream: this.screenStream };
+    }
+    const screens = this.remoteScreens();
+    for (const member of this.screenSharers()) {
+      const stream = screens[member];
+      if (stream) return { member, self: false, stream };
+    }
+    return null;
+  });
+
   private localStream?: MediaStream;
+  private screenStream?: MediaStream;
   private readonly peers = new Map<string, RTCPeerConnection>();
   private readonly remoteStreams = new Map<string, MediaStream>();
+  // ICE can arrive before the offer/answer that gives the peer connection a
+  // remote description. Candidates are held here until that description is
+  // set, instead of being passed to addIceCandidate too early.
+  private readonly pendingIce = new Map<string, RTCIceCandidateInit[]>();
+  // A duplicate rtc-peers frame must not open a second negotiation to the
+  // same peer: that renegotiates a working connection and can freeze it.
+  private readonly offered = new Set<string>();
+  private readonly answered = new Set<string>();
+  // Signals are handled one at a time. A second offer arriving while the
+  // first is still awaiting setRemoteDescription would otherwise be applied
+  // concurrently and fail with a signalling-state error.
+  private signalQueue: Promise<void> = Promise.resolve();
   private signalUnsub?: () => void;
   // A public STUN server is the last-resort fallback; normally the server's
   // /webrtc/ice endpoint supplies the built-in relay or an external one.
@@ -491,10 +571,18 @@ export class CallRoomComponent implements OnInit, OnDestroy {
   // In a one-way meeting only the presenter starts with a live microphone and
   // camera. A guest joins muted and asks for the floor by raising a hand.
   async joinCall(): Promise<void> {
-    if (this.inCall()) return;
+    if (this.inCall() || this.joining()) return;
+    this.joining.set(true);
     this.callError.set('');
     this.mediaNotice.set('');
+    try {
+      await this.startCall();
+    } finally {
+      this.joining.set(false);
+    }
+  }
 
+  private async startCall(): Promise<void> {
     // The call shares the chat socket: it carries both the WebRTC signalling
     // and the webinar's hand/floor frames. Joining the call therefore opens
     // the socket if the chat panel has not been opened yet.
@@ -562,7 +650,11 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     this.participants.set([{ member: me, self: true, stream }]);
     this.addMeter(me, stream);
 
-    this.signalUnsub = this.chat.onSignal((signal) => void this.onSignal(signal));
+    // One queue for every relayed frame: offers, answers and ICE candidates
+    // are applied in arrival order, never in parallel.
+    this.signalUnsub = this.chat.onSignal((signal) => {
+      this.signalQueue = this.signalQueue.then(() => this.onSignal(signal)).catch(() => {});
+    });
     this.chat.sendSignal('rtc-join', '', {});
   }
 
@@ -635,8 +727,70 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     this.cameraOn.set(track.enabled);
   }
 
+  // shareScreen starts a second video feed beside the camera. The screen is
+  // view-only for everyone else: it is shown large and muted, with no remote
+  // control. In a webinar only the presenter may start one.
+  async shareScreen(): Promise<void> {
+    if (this.sharing()) {
+      this.stopScreenShare();
+      return;
+    }
+    if (this.meeting()?.oneWay && !this.isOrganizer()) {
+      this.screenError.set('Only the presenter can share a screen in a webinar.');
+      return;
+    }
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      this.screenError.set('This browser cannot share a screen.');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      const track = stream.getVideoTracks()[0];
+      if (!track) {
+        stream.getTracks().forEach((t) => t.stop());
+        this.screenError.set('The screen could not be captured.');
+        return;
+      }
+      // The browser's own "Stop sharing" control ends the track; reflect that
+      // in the room instead of leaving a frozen screen behind.
+      track.addEventListener('ended', () => this.stopScreenShare());
+      this.screenStream = stream;
+      this.sharing.set(true);
+      this.screenError.set('');
+      for (const pc of this.peers.values()) {
+        this.attachScreenTrack(pc, track);
+      }
+      this.chat.sendControl('screen-start');
+    } catch {
+      this.screenError.set('Screen sharing was cancelled or refused.');
+    }
+  }
+
+  stopScreenShare(): void {
+    if (!this.sharing()) return;
+    this.screenStream?.getTracks().forEach((track) => track.stop());
+    this.screenStream = undefined;
+    this.sharing.set(false);
+    for (const pc of this.peers.values()) {
+      this.attachScreenTrack(pc);
+    }
+    this.chat.sendControl('screen-stop');
+  }
+
+  private removeRemoteScreen(member: string): void {
+    const screens = { ...this.remoteScreens() };
+    if (!(member in screens)) return;
+    delete screens[member];
+    this.remoteScreens.set(screens);
+  }
+
   hasVideo(p: CallParticipant): boolean {
-    return p.stream.getVideoTracks().some((track) => track.readyState === 'live' && track.enabled);
+    // A remote transceiver without a sending peer still exposes a live but
+    // muted track. Muted means no frames have arrived, so this is an avatar,
+    // not a black video tile.
+    return p.stream.getVideoTracks().some(
+      (track) => track.readyState === 'live' && track.enabled && !track.muted,
+    );
   }
 
   toggleHand(): void {
@@ -676,15 +830,18 @@ export class CallRoomComponent implements OnInit, OnDestroy {
           break;
         case 'rtc-answer': {
           const pc = this.peers.get(signal.from);
-          if (pc && signal.sdp) {
+          // An answer is only valid while we have a local offer. A repeated
+          // answer after the connection is stable is ignored rather than
+          // turning a working call into an error banner.
+          if (pc && signal.sdp && pc.signalingState === 'have-local-offer') {
             await pc.setRemoteDescription(signal.sdp as RTCSessionDescriptionInit);
+            await this.flushIce(signal.from, pc);
           }
           break;
         }
         case 'rtc-ice': {
-          const pc = this.peers.get(signal.from);
-          if (pc && signal.candidate) {
-            await pc.addIceCandidate(signal.candidate as RTCIceCandidateInit);
+          if (signal.from && signal.candidate) {
+            await this.addIce(signal.from, signal.candidate as RTCIceCandidateInit);
           }
           break;
         }
@@ -700,6 +857,19 @@ export class CallRoomComponent implements OnInit, OnDestroy {
           break;
         case 'hand-lower':
           this.raisedHands.update((list) => list.filter((m) => m !== signal.member));
+          break;
+        case 'screen-start':
+          if (signal.member && signal.member !== me) {
+            this.screenSharers.update((list) =>
+              list.includes(signal.member as string) ? list : [...list, signal.member as string],
+            );
+          }
+          break;
+        case 'screen-stop':
+          if (signal.member) {
+            this.screenSharers.update((list) => list.filter((m) => m !== signal.member));
+            this.removeRemoteScreen(signal.member);
+          }
           break;
         case 'allow-speak':
           // The server answers the guest it concerns: true enables the
@@ -720,10 +890,21 @@ export class CallRoomComponent implements OnInit, OnDestroy {
           this.raisedHands.set(signal.hands ?? []);
           this.floorSpeaker.set(signal.speaker ?? '');
           break;
-        // rtc-join is informational: the newcomer offers to us.
+        case 'rtc-join':
+          // A newcomer missed an earlier screen-start even though its offer
+          // carries the screen track. Re-announce so its UI shows the screen.
+          if (this.sharing()) {
+            this.chat.sendControl('screen-start');
+          }
+          break;
       }
-    } catch {
-      this.callError.set('A call connection could not be established.');
+    } catch (err) {
+      // A late ICE candidate or a duplicate negotiation attempt is not a
+      // failed call: if media is already flowing, keep the room usable.
+      console.warn('linchange call: signalling frame failed', signal.type, err);
+      if (this.participants().length <= 1) {
+        this.callError.set('A call connection could not be established.');
+      }
     }
   }
 
@@ -735,7 +916,7 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     this.peers.set(remote, pc);
 
     if (withMedia) {
-      this.attachLocalMedia(pc);
+      this.attachLocalMedia(pc, true);
     }
 
     pc.onicecandidate = (event) => {
@@ -744,6 +925,22 @@ export class CallRoomComponent implements OnInit, OnDestroy {
       }
     };
     pc.ontrack = (event) => {
+      // The screen is the third transceiver (microphone, camera, screen). It
+      // is a separate stream so it can be shown large without touching the
+      // camera tile.
+      const trackIndex = pc.getTransceivers().indexOf(event.transceiver);
+      if (trackIndex === 2) {
+        // Keep the screen stream ready; whether it is shown is decided by the
+        // screen-start/screen-stop announcements, not by the track alone.
+        const screens = this.remoteScreens();
+        const screen = screens[remote] ?? new MediaStream();
+        if (!screen.getTrackById(event.track.id)) {
+          screen.addTrack(event.track);
+        }
+        this.remoteScreens.set({ ...screens, [remote]: screen });
+        return;
+      }
+
       // An answerer that attaches its tracks with replaceTrack() does not
       // associate them with a MediaStream, so the offering side receives
       // tracks whose event.streams is empty. Keep one stream per peer and add
@@ -773,52 +970,118 @@ export class CallRoomComponent implements OnInit, OnDestroy {
   }
 
   private async offerTo(remote: string): Promise<void> {
-    const pc = this.createPeer(remote, true);
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    this.chat.sendSignal('rtc-offer', remote, { sdp: offer });
+    // A repeated rtc-peers frame (for example a double join) must not make a
+    // second offer on a connection that is already negotiating.
+    if (this.offered.has(remote)) return;
+    this.offered.add(remote);
+    try {
+      const pc = this.createPeer(remote, true);
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      this.chat.sendSignal('rtc-offer', remote, { sdp: offer });
+    } catch (err) {
+      // Let a later frame try again if this one could not start.
+      this.offered.delete(remote);
+      throw err;
+    }
   }
 
   private async answerOffer(signal: ChatSignal): Promise<void> {
     if (!signal.sdp) return;
-    // The offer carries both audio and video m-lines even from a participant
-    // with no devices. Answer it first, then attach whatever local media we
-    // have to the transceivers the offer created.
-    const pc = this.createPeer(signal.from, false);
-    await pc.setRemoteDescription(signal.sdp as RTCSessionDescriptionInit);
-    this.attachLocalMedia(pc);
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    this.chat.sendSignal('rtc-answer', signal.from, { sdp: answer });
+    // Apply one offer per peer. A duplicate would call setRemoteDescription
+    // twice, which either throws or renegotiates media that is already running.
+    if (this.answered.has(signal.from)) return;
+    this.answered.add(signal.from);
+    try {
+      // The offer carries microphone, camera and screen m-lines even from a
+      // participant with no devices. Answer it first, then attach whatever
+      // local media we have to the transceivers the offer created.
+      const pc = this.createPeer(signal.from, false);
+      await pc.setRemoteDescription(signal.sdp as RTCSessionDescriptionInit);
+      this.attachLocalMedia(pc, false);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      await this.flushIce(signal.from, pc);
+      this.chat.sendSignal('rtc-answer', signal.from, { sdp: answer });
+    } catch (err) {
+      this.answered.delete(signal.from);
+      throw err;
+    }
   }
 
-  // attachLocalMedia adds the local tracks to a peer connection. On the
-  // offering side it creates the m-lines; on the answering side it reuses the
-  // transceivers the offer already created. A missing device leaves that
-  // direction receive-only instead of failing the call.
-  private attachLocalMedia(pc: RTCPeerConnection): void {
-    const stream = this.localStream;
-    const audio = stream?.getAudioTracks()[0];
-    const video = stream?.getVideoTracks()[0];
-    const attach = (kind: 'audio' | 'video', track?: MediaStreamTrack) => {
-      if (!track) return;
-      const transceiver = pc.getTransceivers().find((t) => t.receiver.track.kind === kind);
-      if (transceiver) {
-        transceiver.sender.replaceTrack(track);
-        transceiver.direction = 'sendrecv';
-      } else {
-        pc.addTrack(track, stream as MediaStream);
+  // attachLocalMedia builds the three media lines every call negotiates, in a
+  // fixed order: microphone, camera, and screen. Keeping the screen line in
+  // the first offer means sharing can start later with replaceTrack(), without
+  // a renegotiation that could interrupt a working call.
+  //
+  // On the offering side missing lines are added; on the answering side the
+  // offer already created them and only their tracks and directions are set.
+  // All three are sendrecv, so either side may send at any time.
+  private attachLocalMedia(pc: RTCPeerConnection, offerSide: boolean): void {
+    const audio = this.localStream?.getAudioTracks()[0];
+    const camera = this.localStream?.getVideoTracks()[0];
+    const screen = this.screenStream?.getVideoTracks()[0];
+
+    const configure = (
+      index: number,
+      kind: 'audio' | 'video',
+      track?: MediaStreamTrack,
+    ) => {
+      let transceiver = pc.getTransceivers()[index];
+      if (!transceiver) {
+        // An answer cannot invent an m-line the offer did not carry.
+        if (!offerSide) return;
+        transceiver = pc.addTransceiver(kind, { direction: 'sendrecv' });
       }
+      transceiver.direction = 'sendrecv';
+      void transceiver.sender.replaceTrack(track ?? null);
     };
-    attach('audio', audio);
-    attach('video', video);
-    const has = (kind: 'audio' | 'video') =>
-      pc.getTransceivers().some((t) => t.receiver.track.kind === kind);
-    if (!audio && !has('audio')) {
-      pc.addTransceiver('audio', { direction: 'recvonly' });
+
+    configure(0, 'audio', audio);
+    configure(1, 'video', camera);
+    configure(2, 'video', screen);
+  }
+
+  // attachScreenTrack starts (or stops) the screen feed on one existing peer.
+  // The m-line was negotiated with the first offer, so no renegotiation is
+  // needed and the camera keeps flowing untouched.
+  private attachScreenTrack(pc: RTCPeerConnection, track?: MediaStreamTrack): void {
+    const transceiver = pc.getTransceivers()[2];
+    if (!transceiver) return;
+    transceiver.direction = 'sendrecv';
+    void transceiver.sender.replaceTrack(track ?? null);
+  }
+
+  // addIce applies a candidate now when the peer has a remote description,
+  // and queues it otherwise. The queue is drained once the offer or answer
+  // arrives; this is what stops a fast ICE candidate from aborting a call
+  // that is already showing video.
+  private async addIce(remote: string, candidate: RTCIceCandidateInit): Promise<void> {
+    const pc = this.peers.get(remote);
+    if (!pc || !pc.remoteDescription) {
+      const queued = this.pendingIce.get(remote) ?? [];
+      queued.push(candidate);
+      this.pendingIce.set(remote, queued);
+      return;
     }
-    if (!video && !has('video')) {
-      pc.addTransceiver('video', { direction: 'recvonly' });
+    try {
+      await pc.addIceCandidate(candidate);
+    } catch {
+      // A candidate that arrived after its connection moved on is stale,
+      // not a reason to tear down the rest of the call.
+    }
+  }
+
+  private async flushIce(remote: string, pc: RTCPeerConnection): Promise<void> {
+    const queued = this.pendingIce.get(remote);
+    if (!queued?.length) return;
+    this.pendingIce.delete(remote);
+    for (const candidate of queued) {
+      try {
+        await pc.addIceCandidate(candidate);
+      } catch {
+        // Skip a stale candidate; keep the connection.
+      }
     }
   }
 
@@ -830,6 +1093,16 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     }
     this.participants.update((list) => list.filter((p) => p.member !== member));
     this.remoteStreams.delete(member);
+    this.remoteScreens.update((screens) => {
+      if (!(member in screens)) return screens;
+      const next = { ...screens };
+      delete next[member];
+      return next;
+    });
+    this.screenSharers.update((list) => list.filter((m) => m !== member));
+    this.pendingIce.delete(member);
+    this.offered.delete(member);
+    this.answered.delete(member);
     this.meters.delete(member);
     this.raisedHands.update((list) => list.filter((m) => m !== member));
   }
@@ -908,8 +1181,18 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     }
     this.peers.clear();
     this.remoteStreams.clear();
+    this.remoteScreens.set({});
+    this.screenSharers.set([]);
+    this.pendingIce.clear();
+    this.offered.clear();
+    this.answered.clear();
+    this.signalQueue = Promise.resolve();
     this.participants.set([]);
     this.stopMetering();
+    this.screenStream?.getTracks().forEach((track) => track.stop());
+    this.screenStream = undefined;
+    this.sharing.set(false);
+    this.screenError.set('');
     this.localStream?.getTracks().forEach((track) => track.stop());
     this.localStream = undefined;
     this.inCall.set(false);
@@ -925,7 +1208,11 @@ export class CallRoomComponent implements OnInit, OnDestroy {
   // hasAudio reports whether a participant currently has a live, enabled
   // microphone. A tile with no audio shows the muted marker.
   hasAudio(p: CallParticipant): boolean {
-    return p.stream.getAudioTracks().some((track) => track.readyState === 'live' && track.enabled);
+    // Muted is a receiver track whose sender has not started yet, so it is
+    // treated as no microphone rather than a live one.
+    return p.stream.getAudioTracks().some(
+      (track) => track.readyState === 'live' && track.enabled && !track.muted,
+    );
   }
 
   // initials is the avatar for a participant whose camera is off or absent.
