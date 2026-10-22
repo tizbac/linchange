@@ -144,6 +144,24 @@ func (s *Service) ListAudit(ctx context.Context, actor policy.Principal, f store
 	return s.audit.List(ctx, s.db, f)
 }
 
+// CountAudit is the total behind the page size. The page asks for one page and
+// this says how many there are, so the pager does not have to load the rest.
+func (s *Service) CountAudit(ctx context.Context, actor policy.Principal, f store.AuditFilter) (int64, error) {
+	if err := requireAdmin(actor); err != nil {
+		return 0, err
+	}
+	return s.audit.Count(ctx, s.db, f)
+}
+
+// WalkAudit streams every matching entry without paging. The CSV export uses
+// it so a large log is written as it is read rather than held in memory first.
+func (s *Service) WalkAudit(ctx context.Context, actor policy.Principal, f store.AuditFilter, fn func(store.AuditEntry) error) error {
+	if err := requireAdmin(actor); err != nil {
+		return err
+	}
+	return s.audit.Walk(ctx, s.db, f, fn)
+}
+
 // Note records an event that is not a change: a sign-in, a reset request, a
 // refused action. These are the entries that matter most when nothing happened,
 // and they are written here so the login and reset paths do not each grow their

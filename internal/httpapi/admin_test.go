@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -550,6 +551,90 @@ func TestAdminAuditIsQueryable(t *testing.T) {
 	code, _ = do(t, srv, http.MethodGet, "/api/v1/admin/audit?limit=lots", nil, headers)
 	if code != http.StatusBadRequest {
 		t.Errorf("a non-numeric limit = %d, want 400", code)
+	}
+}
+
+func TestAdminAuditSearchPaginationAndCSV(t *testing.T) {
+	srv, db := newAdminServer(t)
+	_, headers := seedAdmin(t, srv, db)
+
+	for _, address := range []string{"bob@example.com", "carol@example.com"} {
+		if code, body := do(t, srv, http.MethodPost, "/api/v1/admin/users", map[string]any{
+			"address": address, "source": "local", "password": "correct horse battery staple",
+		}, headers); code != http.StatusCreated {
+			t.Fatalf("creating %s = %d %v", address, code, body)
+		}
+	}
+
+	// The single search box matches a value in any field, not only the actor
+	// or target columns the old API exposed separately.
+	code, body := do(t, srv, http.MethodGet,
+		"/api/v1/admin/audit?search=bob&limit=1&offset=0", nil, headers)
+	if code != http.StatusOK {
+		t.Fatalf("searching the audit log = %d %v", code, body)
+	}
+	if total, _ := body["total"].(float64); total != 1 {
+		t.Errorf("total for search=bob = %v, want 1: %v", body["total"], body)
+	}
+	entries, _ := body["entries"].([]any)
+	if len(entries) != 1 {
+		t.Fatalf("search=bob returned %d entries, want 1: %v", len(entries), body)
+	}
+
+	// The same term matches the action column.
+	code, body = do(t, srv, http.MethodGet, "/api/v1/admin/audit?search=user.create", nil, headers)
+	if code != http.StatusOK {
+		t.Fatalf("searching by action = %d %v", code, body)
+	}
+	total, _ := body["total"].(float64)
+	if total < 2 {
+		t.Errorf("total for search=user.create = %v, want at least 2", total)
+	}
+	all, _ := body["entries"].([]any)
+	if len(all) != int(total) {
+		t.Errorf("one page without limit returned %d of %v entries", len(all), total)
+	}
+
+	// Offset pages through the same filtered set.
+	_, first := do(t, srv, http.MethodGet,
+		"/api/v1/admin/audit?search=user.create&limit=1&offset=0", nil, headers)
+	_, second := do(t, srv, http.MethodGet,
+		"/api/v1/admin/audit?search=user.create&limit=1&offset=1", nil, headers)
+	firstEntries, _ := first["entries"].([]any)
+	secondEntries, _ := second["entries"].([]any)
+	if len(firstEntries) != 1 || len(secondEntries) != 1 {
+		t.Fatalf("paging returned %d and %d entries, want 1 each", len(firstEntries), len(secondEntries))
+	}
+	firstID := firstEntries[0].(map[string]any)["id"]
+	secondID := secondEntries[0].(map[string]any)["id"]
+	if firstID == secondID {
+		t.Errorf("offset=1 returned the same entry as offset=0: %v", firstID)
+	}
+
+	// The CSV export applies the same filter but no page: both Bob and Carol's
+	// actions fan out from the action term, while search=bob leaves only Bob.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit.csv?search=bob", nil)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("exporting the audit log = %d %q", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/csv") {
+		t.Errorf("CSV content type = %q, want text/csv", ct)
+	}
+	csvBody := rr.Body.String()
+	lines := strings.Split(strings.TrimSpace(csvBody), "\n")
+	if len(lines) != 2 {
+		t.Errorf("CSV with search=bob has %d lines, want a header and one entry: %q", len(lines), csvBody)
+	}
+	if !strings.Contains(csvBody, "bob@example.com") {
+		t.Errorf("CSV does not contain Bob: %q", csvBody)
+	}
+	if strings.Contains(csvBody, "carol@example.com") {
+		t.Errorf("CSV contains an entry the filter excluded: %q", csvBody)
 	}
 }
 

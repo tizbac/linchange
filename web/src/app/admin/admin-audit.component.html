@@ -1,58 +1,108 @@
-
     <admin-page>
       <admin-nav />
-    <div class="space-y-6">
-      <admin-page-header
-        title="Audit log"
-        hint="A record of every impersonation start (with the actor, target, and reason).
-          Impersonation is the only event currently recorded."
-      >
-        <admin-button (pressed)="reload()">Refresh</admin-button>
-      </admin-page-header>
+      <div class="space-y-6">
+        <admin-page-header
+          title="Audit log"
+          hint="Every privileged action, newest first. Search matches the actor, target, action,
+            target type and id, IP address, timestamp and the detail JSON. The CSV export contains
+            the whole filtered set, not only the current page."
+        >
+          <admin-button (pressed)="reload()" [disabled]="loading()">Refresh</admin-button>
+        </admin-page-header>
 
-      <admin-notice [message]="error()" tone="error" />
+        <admin-notice [message]="error()" tone="error" />
+        <admin-notice [message]="ok()" tone="ok" />
 
-      <admin-panel [bodyClass]="'p-0'">
-        @if (loading()) {
-          <div class="px-5 py-6"><admin-busy [busy]="true" label="Loading audit entries…" /></div>
-        } @else if (entries().length === 0) {
-          <admin-empty text="No audit entries yet." />
-        } @else {
-          <table class="w-full">
-            <thead class="border-b border-slate-200 bg-slate-50">
-              <tr>
-                <th class="{{ head }}">Timestamp</th>
-                <th class="{{ head }}">Event</th>
-                <th class="{{ head }}">Actor</th>
-                <th class="{{ head }}">Target</th>
-                <th class="{{ head }}">Reason</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-100">
-              @for (e of entries(); track e.id) {
+        <form class="flex flex-wrap items-end gap-3" (ngSubmit)="reload(true)">
+          <label class="block min-w-72 flex-1">
+            <span class="mb-1 block text-xs font-medium text-slate-600">Search all fields</span>
+            <input
+              class="{{ input }}"
+              name="search"
+              [(ngModel)]="search"
+              placeholder="actor, target, action, IP, detail…"
+            />
+          </label>
+          <admin-button variant="primary" type="submit">Search</admin-button>
+          @if (search) {
+            <admin-button (pressed)="clearSearch()">Clear</admin-button>
+          }
+          <admin-button (pressed)="exportCsv()" [disabled]="exporting()">
+            {{ exporting() ? 'Exporting…' : 'Export CSV' }}
+          </admin-button>
+        </form>
+
+        <admin-panel [bodyClass]="'p-0'">
+          @if (loading()) {
+            <div class="px-5 py-6"><admin-busy [busy]="true" label="Loading audit entries…" /></div>
+          } @else if (entries().length === 0) {
+            <admin-empty text="No audit entries match that search." />
+          } @else {
+            <table class="w-full">
+              <thead class="border-b border-slate-200 bg-slate-50">
                 <tr>
-                  <td class="{{ cell }}">{{ e.created_at }}</td>
-                  <td class="{{ cell }}">
-                    <span
-                      class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1"
-                      [class]="
-                        e.action === 'impersonation.start'
-                          ? 'bg-violet-50 text-violet-700 ring-violet-200'
-                          : 'bg-slate-100 text-slate-600 ring-slate-200'
-                      "
-                    >
-                      {{ e.action }}
-                    </span>
-                  </td>
-                  <td class="{{ cell }}">{{ e.actor_address || '—' }}</td>
-                  <td class="{{ cell }}">{{ e.target_address || '—' }}</td>
-                  <td class="{{ cell }}">{{ reason(e) }}</td>
+                  <th class="{{ head }}">Timestamp</th>
+                  <th class="{{ head }}">Action</th>
+                  <th class="{{ head }}">Actor</th>
+                  <th class="{{ head }}">Target</th>
+                  <th class="{{ head }}">Type / id</th>
+                  <th class="{{ head }}">IP</th>
+                  <th class="{{ head }}">Detail</th>
                 </tr>
-              }
-            </tbody>
-          </table>
-        }
-      </admin-panel>
-    </div>
-  </admin-page>
-  
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                @for (e of entries(); track e.id) {
+                  <tr>
+                    <td class="{{ cell }} whitespace-nowrap text-slate-600">{{ when(e) }}</td>
+                    <td class="{{ cell }}">
+                      <span
+                        class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1"
+                        [class]="
+                          e.action === 'impersonation.start'
+                            ? 'bg-violet-50 text-violet-700 ring-violet-200'
+                            : 'bg-slate-100 text-slate-600 ring-slate-200'
+                        "
+                      >
+                        {{ e.action }}
+                      </span>
+                    </td>
+                    <td class="{{ cell }}">{{ e.actor_address || '—' }}</td>
+                    <td class="{{ cell }}">{{ e.target_address || '—' }}</td>
+                    <td class="{{ cell }}">
+                      <span class="block text-slate-700">{{ e.target_type || '—' }}</span>
+                      <span class="block text-xs text-slate-500">{{ e.target_id || '—' }}</span>
+                    </td>
+                    <td class="{{ cell }} whitespace-nowrap font-mono text-xs text-slate-600">
+                      {{ e.ip || '—' }}
+                    </td>
+                    <td class="{{ cell }} max-w-md">
+                      @if (detailText(e); as detail) {
+                        <span class="block truncate font-mono text-xs text-slate-600" [title]="detail">
+                          {{ detail }}
+                        </span>
+                      } @else {
+                        <span class="text-slate-400">—</span>
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+            <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-4 py-3 text-sm text-slate-500">
+              <span>
+                {{ total() }} {{ total() === 1 ? 'entry' : 'entries' }} · page
+                {{ page() + 1 }} of {{ pageCount() }}
+              </span>
+              <div class="flex gap-2">
+                <admin-button (pressed)="previousPage()" [disabled]="page() === 0">
+                  Previous
+                </admin-button>
+                <admin-button (pressed)="nextPage()" [disabled]="page() + 1 >= pageCount()">
+                  Next
+                </admin-button>
+              </div>
+            </div>
+          }
+        </admin-panel>
+      </div>
+    </admin-page>

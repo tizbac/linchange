@@ -23,6 +23,31 @@ import { CalendarShare, ShareCalendarRequest } from '../calendar/calendar.models
 
 const API = '/api/v1/admin';
 
+// AuditQuery is the filter shared by the audit table and its CSV export. One
+// shape means an export can never quietly differ from the rows it was started
+// from.
+export interface AuditQuery {
+  search?: string;
+  actor?: string;
+  target?: string;
+  action?: string;
+  sinceDays?: number;
+  limit?: number;
+  offset?: number;
+}
+
+function auditQuery(filter: AuditQuery): string {
+  const parts: string[] = [];
+  if (filter.search) parts.push(`search=${encodeURIComponent(filter.search)}`);
+  if (filter.actor) parts.push(`actor=${encodeURIComponent(filter.actor)}`);
+  if (filter.target) parts.push(`target=${encodeURIComponent(filter.target)}`);
+  if (filter.action) parts.push(`action=${encodeURIComponent(filter.action)}`);
+  if (filter.sinceDays) parts.push(`since_days=${filter.sinceDays}`);
+  if (filter.limit) parts.push(`limit=${filter.limit}`);
+  if (filter.offset) parts.push(`offset=${filter.offset}`);
+  return parts.length ? `?${parts.join('&')}` : '';
+}
+
 // AdminApi is the only place in the app that names an administration endpoint.
 // Components ask for a resource and get the server's own shape back, so a
 // renamed field fails the build in the model file rather than rendering an empty
@@ -217,19 +242,23 @@ export class AdminApi {
 
   // --- audit ---
 
-  listAudit(filter: {
-    actor?: string;
-    target?: string;
-    action?: string;
-    limit?: number;
-  }): Promise<{ entries: AuditEntry[] }> {
-    const parts: string[] = [];
-    if (filter.actor) parts.push(`actor=${encodeURIComponent(filter.actor)}`);
-    if (filter.target) parts.push(`target=${encodeURIComponent(filter.target)}`);
-    if (filter.action) parts.push(`action=${encodeURIComponent(filter.action)}`);
-    if (filter.limit) parts.push(`limit=${filter.limit}`);
-    const query = parts.length ? `?${parts.join('&')}` : '';
-    return this.get(`/audit${query}`);
+  // listAudit returns one page of the audit log. search matches every field
+  // the entry carries; total is the size of the filtered set, not the page.
+  listAudit(filter: AuditQuery): Promise<{
+    entries: AuditEntry[];
+    total: number;
+    limit: number;
+    offset: number;
+  }> {
+    return this.get(`/audit${auditQuery(filter)}`);
+  }
+
+  // exportAudit downloads every entry matching the current filter, with no
+  // page applied. The component turns the blob into a download.
+  exportAudit(filter: AuditQuery): Promise<Blob> {
+    return firstValueFrom(
+      this.http.get(`${API}/audit.csv${auditQuery(filter)}`, { responseType: 'blob' }),
+    );
   }
 
   // --- outbound queue ---

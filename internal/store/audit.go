@@ -30,6 +30,10 @@ type AuditFilter struct {
 	Actor  string
 	Target string
 	Action string
+	// Search is a free-text match across every field an entry carries: actor,
+	// target, action, target type and id, IP, the detail JSON and the
+	// timestamp. It is what the administrator's single search box means.
+	Search string
 	Since  *time.Time
 	Until  *time.Time
 	Limit  int
@@ -77,10 +81,12 @@ const auditSelect = `
 	       ip, detail, created_at
 	FROM audit_log`
 
-// List returns entries newest first, filtered. Unmatched filters are left out
-// of the query entirely rather than compared against NULL, so the indexes on
-// each column are actually usable.
-func (a *AuditLog) List(ctx context.Context, qr Querier, f AuditFilter) ([]AuditEntry, error) {
+// auditWhere builds the shared WHERE clause. Unmatched filters are left out of
+// the query entirely rather than compared against NULL, so the indexes on each
+// column are actually usable. The free-text search is deliberately a single
+// ILIKE over every field: an administrator reading the log does not know which
+// column the value is in, and correctness is worth more here than a scan.
+func auditWhere(f AuditFilter) (string, []any) {
 	var (
 		where []string
 		args  []any
@@ -88,6 +94,21 @@ func (a *AuditLog) List(ctx context.Context, qr Querier, f AuditFilter) ([]Audit
 	add := func(clause string, value any) {
 		args = append(args, value)
 		where = append(where, fmt.Sprintf(clause, len(args)))
+	}
+	if f.Search != "" {
+		args = append(args, "%"+escapeLike(f.Search)+"%")
+		n := len(args)
+		where = append(where, fmt.Sprintf(
+			`(actor_address ILIKE $%d ESCAPE '\'
+			  OR target_address ILIKE $%d ESCAPE '\'
+			  OR action ILIKE $%d ESCAPE '\'
+			  OR target_type ILIKE $%d ESCAPE '\'
+			  OR target_id ILIKE $%d ESCAPE '\'
+			  OR COALESCE(ip::text, '') ILIKE $%d ESCAPE '\'
+			  OR detail::text ILIKE $%d ESCAPE '\'
+			  OR id::text ILIKE $%d ESCAPE '\'
+			  OR created_at::text ILIKE $%d ESCAPE '\')`,
+			n, n, n, n, n, n, n, n, n))
 	}
 	if f.Actor != "" {
 		add("actor_address = $%d", f.Actor)
@@ -104,12 +125,16 @@ func (a *AuditLog) List(ctx context.Context, qr Querier, f AuditFilter) ([]Audit
 	if f.Until != nil {
 		add("created_at < $%d", *f.Until)
 	}
-
-	query := auditSelect
-	if len(where) > 0 {
-		query += " WHERE " + strings.Join(where, " AND ")
+	if len(where) == 0 {
+		return "", nil
 	}
-	query += " ORDER BY created_at DESC, id DESC"
+	return " WHERE " + strings.Join(where, " AND "), args
+}
+
+// List returns entries newest first, filtered and paged.
+func (a *AuditLog) List(ctx context.Context, qr Querier, f AuditFilter) ([]AuditEntry, error) {
+	where, args := auditWhere(f)
+	query := auditSelect + where + " ORDER BY created_at DESC, id DESC"
 
 	limit := f.Limit
 	if limit <= 0 {
@@ -143,6 +168,44 @@ func (a *AuditLog) List(ctx context.Context, qr Querier, f AuditFilter) ([]Audit
 		return nil, fmt.Errorf("store: iterating audit entries: %w", err)
 	}
 	return out, nil
+}
+
+// Count returns how many entries match, ignoring Limit and Offset. The audit
+// page needs it to say "1-50 of 173" without loading the other 123 rows.
+func (a *AuditLog) Count(ctx context.Context, qr Querier, f AuditFilter) (int64, error) {
+	where, args := auditWhere(f)
+	var n int64
+	if err := qr.GetContext(ctx, &n, `SELECT count(*) FROM audit_log`+where, args...); err != nil {
+		return 0, fmt.Errorf("store: counting audit entries: %w", err)
+	}
+	return n, nil
+}
+
+// Walk visits every matching entry newest first and never applies a LIMIT.
+// It is the export path: a log can be larger than the server's memory, so the
+// caller writes each row as it arrives.
+func (a *AuditLog) Walk(ctx context.Context, qr Querier, f AuditFilter, fn func(AuditEntry) error) error {
+	where, args := auditWhere(f)
+	query := auditSelect + where + " ORDER BY created_at DESC, id DESC"
+	rows, err := qr.QueryxContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("store: listing audit entries: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var row auditRow
+		if err := rows.StructScan(&row); err != nil {
+			return fmt.Errorf("store: scanning audit entry: %w", err)
+		}
+		if err := fn(row.entry()); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("store: iterating audit entries: %w", err)
+	}
+	return nil
 }
 
 // CountFor reports how many entries an action has produced, which is how the

@@ -2,10 +2,12 @@ package httpapi
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -199,6 +201,7 @@ func mountAdminRoutes(r chi.Router, s *Server) {
 	})
 
 	r.Get("/audit", s.listAudit)
+	r.Get("/audit.csv", s.exportAuditCSV)
 }
 
 // --- domains ---
@@ -889,26 +892,35 @@ func (s *Server) deleteContactGroup(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
+// auditPageSize is the default number of entries the audit page asks for.
+// maxAuditPageSize bounds what a caller can request; the CSV export is the
+// path for "everything", not a page with a very large number.
+const (
+	auditPageSize    = 50
+	maxAuditPageSize = 200
+)
+
+// auditFilterFromQuery parses the filters the audit page and its CSV export
+// share. Keeping one parser means the export can never quietly use a different
+// set of filters from the table it was launched from.
+func auditFilterFromQuery(q url.Values) (store.AuditFilter, error) {
 	f := store.AuditFilter{
-		Actor:  q.Get("actor"),
-		Target: q.Get("target"),
-		Action: q.Get("action"),
+		Actor:  strings.TrimSpace(q.Get("actor")),
+		Target: strings.TrimSpace(q.Get("target")),
+		Action: strings.TrimSpace(q.Get("action")),
+		Search: strings.TrimSpace(q.Get("search")),
 	}
 	if raw := q.Get("limit"); raw != "" {
 		n, err := strconv.Atoi(raw)
-		if err != nil || n < 0 {
-			s.writeError(w, http.StatusBadRequest, "limit is not a number")
-			return
+		if err != nil || n < 1 {
+			return f, errors.New("limit is not a number")
 		}
 		f.Limit = n
 	}
 	if raw := q.Get("offset"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 0 {
-			s.writeError(w, http.StatusBadRequest, "offset is not a number")
-			return
+			return f, errors.New("offset is not a number")
 		}
 		f.Offset = n
 	}
@@ -917,13 +929,31 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 	if raw := q.Get("since_days"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 0 {
-			s.writeError(w, http.StatusBadRequest, "since_days is not a number")
-			return
+			return f, errors.New("since_days is not a number")
 		}
 		since := time.Now().AddDate(0, 0, -n)
 		f.Since = &since
 	}
+	return f, nil
+}
 
+func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
+	f, err := auditFilterFromQuery(r.URL.Query())
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if f.Limit == 0 {
+		f.Limit = auditPageSize
+	}
+	if f.Limit > maxAuditPageSize {
+		f.Limit = maxAuditPageSize
+	}
+	total, err := s.admin.CountAudit(r.Context(), Principal(r.Context()), f)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
 	entries, err := s.admin.ListAudit(r.Context(), Principal(r.Context()), f)
 	if err != nil {
 		adminErrors(w, s, err)
@@ -933,7 +963,98 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 	for _, e := range entries {
 		out = append(out, viewAudit(e))
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"entries": out})
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"entries": out,
+		"total":   total,
+		"limit":   f.Limit,
+		"offset":  f.Offset,
+	})
+}
+
+// exportAuditCSV writes every entry that matches the current filter, with no
+// page applied. The response streams as the rows are read: an audit log is
+// exactly the table that can be too large to hold in memory.
+func (s *Server) exportAuditCSV(w http.ResponseWriter, r *http.Request) {
+	f, err := auditFilterFromQuery(r.URL.Query())
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// The limit and offset belong to the table, not the export; clearing them
+	// documents that the whole filtered set is what leaves here.
+	f.Limit, f.Offset = 0, 0
+
+	// Authorise before committing a response: an administrator check that
+	// runs only when the first row is read would have already sent a 200 and
+	// a header line to a caller who is not allowed to read any of it.
+	if _, err := s.admin.CountAudit(r.Context(), Principal(r.Context()), f); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition",
+		`attachment; filename="audit-log-`+time.Now().UTC().Format("20060102-150405")+`.csv"`)
+	w.Header().Set("Cache-Control", "no-store")
+
+	cw := csv.NewWriter(w)
+	if err := cw.Write([]string{
+		"id", "created_at", "actor_address", "target_address", "action",
+		"target_type", "target_id", "ip", "detail",
+	}); err != nil {
+		return
+	}
+	// Commit the header before the callback starts. If the query then fails,
+	// the status is already 200 and the truthful response is a truncated file,
+	// not a JSON error inside a CSV.
+	cw.Flush()
+	if cw.Error() != nil {
+		return
+	}
+	err = s.admin.WalkAudit(r.Context(), Principal(r.Context()), f, func(e store.AuditEntry) error {
+		ip := ""
+		if e.IP != nil {
+			ip = e.IP.String()
+		}
+		return cw.Write([]string{
+			strconv.FormatInt(e.ID, 10),
+			e.CreatedAt.UTC().Format(time.RFC3339),
+			csvSafe(derefString(e.ActorAddress)),
+			csvSafe(derefString(e.TargetAddress)),
+			csvSafe(e.Action),
+			csvSafe(e.TargetType),
+			csvSafe(e.TargetID),
+			csvSafe(ip),
+			csvSafe(string(e.Detail)),
+		})
+	})
+	if err != nil {
+		s.log.Error("exporting the audit log", "error", err)
+		return
+	}
+	cw.Flush()
+}
+
+func derefString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+// csvSafe keeps a spreadsheet from treating an attacker-controlled audit
+// field as a formula. The data is not altered for any ordinary value; only a
+// leading marker that Excel or Sheets would execute is quoted with an
+// apostrophe, which both programs display as text.
+func csvSafe(value string) string {
+	if value == "" {
+		return value
+	}
+	switch value[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return "'" + value
+	}
+	return value
 }
 
 // --- outbound queue ---
