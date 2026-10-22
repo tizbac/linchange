@@ -8,6 +8,11 @@ FROM node:22-alpine AS frontend-builder
 
 WORKDIR /app/web
 
+# Match the npm major declared in web/package.json's packageManager. Node 22's
+# bundled npm 10 resolves optional platform bindings differently and rejects the
+# npm 12 lockfile; using the same version here keeps `npm ci` reproducible.
+RUN npm install -g npm@11.20.0
+
 # Copy package files and the install-time scripts.
 #
 # npm ci runs the postinstall hook, and that hook is a file in web/scripts, so

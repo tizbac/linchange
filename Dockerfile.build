@@ -23,6 +23,11 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get update && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# Match the npm major declared in web/package.json's packageManager. Node 22's
+# bundled npm 10 resolves optional platform bindings differently and rejects the
+# npm 12 lockfile; using the same version here keeps `npm ci` reproducible.
+RUN npm install -g npm@11.20.0
+
 # Set working directory
 WORKDIR /build
 
