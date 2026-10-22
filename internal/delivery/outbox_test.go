@@ -74,6 +74,57 @@ func TestDeferredMessageIsClaimedAgainWhenDue(t *testing.T) {
 	}
 }
 
+// Nine recipients received the message and one was deferred. The next pass must
+// hand the delivery path only that one, or the other nine get the message twice.
+func TestOnlyTheDeferredRecipientIsRetried(t *testing.T) {
+	db := testdb.Migrated(t)
+	ctx := context.Background()
+	repo := delivery.NewOutboxRepository(db)
+
+	var id int64
+	if err := db.GetContext(ctx, &id, `
+		INSERT INTO outbox (submitted_by, envelope_from, blob_sha256, size)
+		VALUES ('alice@example.com', 'alice@example.com', '\x01'::bytea, 1)
+		RETURNING id`); err != nil {
+		t.Fatalf("inserting a message: %v", err)
+	}
+	addresses := []string{
+		"r1@example.net", "r2@example.net", "r3@example.net", "r4@example.net", "r5@example.net",
+		"r6@example.net", "r7@example.net", "r8@example.net", "r9@example.net", "r10@example.net",
+	}
+	for i, address := range addresses {
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO outbox_recipients (outbox_id, position, address, kind)
+			VALUES ($1, $2, $3, 'to')`, id, i, address); err != nil {
+			t.Fatalf("inserting recipient %d: %v", i, err)
+		}
+	}
+
+	for i := 0; i < 9; i++ {
+		if err := repo.UpdateRecipientState(ctx, nil, id, i, delivery.RecipientDelivered, ""); err != nil {
+			t.Fatalf("delivering recipient %d: %v", i, err)
+		}
+	}
+	if err := repo.MarkDeferred(ctx, nil, id, 1, "one address is unreachable", time.Now().Add(-time.Second)); err != nil {
+		t.Fatalf("MarkDeferred: %v", err)
+	}
+
+	claimed, err := repo.ClaimForSending(ctx, 10)
+	if err != nil {
+		t.Fatalf("ClaimForSending: %v", err)
+	}
+	if len(claimed) != 1 || claimed[0].ID != id {
+		t.Fatalf("claimed = %+v, want message %d", claimed, id)
+	}
+	unsettled := claimed[0].Unsettled()
+	if len(unsettled) != 1 {
+		t.Fatalf("unsettled recipients = %+v, want only the deferred address", unsettled)
+	}
+	if unsettled[0].Address != "r10@example.net" || unsettled[0].State != delivery.RecipientDeferred {
+		t.Errorf("unsettled = %+v, want r10 deferred", unsettled[0])
+	}
+}
+
 func TestQueueHidesSentAndRetentionDeletesSettledRows(t *testing.T) {
 	db := testdb.Migrated(t)
 	ctx := context.Background()

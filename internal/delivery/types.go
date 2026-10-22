@@ -89,6 +89,22 @@ type OutboxMessage struct {
 	Recipients    []OutboxRecipient `db:"-"`
 }
 
+// Unsettled returns the recipients a delivery pass still has to attempt.
+//
+// A recipient that was delivered or permanently refused on an earlier pass is
+// left alone. This is what makes a message with nine delivered recipients and
+// one deferred recipient retry only the one: re-sending the other nine would
+// deliver the same mail twice.
+func (m OutboxMessage) Unsettled() []OutboxRecipient {
+	out := make([]OutboxRecipient, 0, len(m.Recipients))
+	for _, r := range m.Recipients {
+		if r.State == RecipientPending || r.State == RecipientDeferred {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // OutboxRecipient is one row of the outbox_recipients table.
 type OutboxRecipient struct {
 	Position    int                 `db:"position"`

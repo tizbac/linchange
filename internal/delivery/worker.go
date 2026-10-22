@@ -406,12 +406,7 @@ func (p *Pool) deliver(ctx context.Context, workerID int, msg OutboxMessage) err
 	// Only recipients that have not settled are sent. A message whose local
 	// half has already arrived is retried for the rest, and sending the
 	// first half again would deliver it twice.
-	var pending []OutboxRecipient
-	for _, r := range msg.Recipients {
-		if r.State == RecipientPending || r.State == RecipientDeferred {
-			pending = append(pending, r)
-		}
-	}
+	pending := msg.Unsettled()
 	if len(pending) == 0 {
 		return p.settle(ctx, msg, nil)
 	}
