@@ -64,7 +64,11 @@ export class AdminQueueComponent implements OnInit {
   // recipients side by side for no reason.
   protected readonly detail = signal<OutboxMessageView | null>(null);
 
-  protected stateFilter = '';
+  // Empty means "every visible state". Sent is separate: it is hidden by
+  // default because the queue answers "what has not gone out", and asking for
+  // it is a deliberate act.
+  protected readonly selectedStates = signal<OutboxMessageState[]>([]);
+  protected showSent = false;
   protected submitterFilter = '';
 
   ngOnInit(): void {
@@ -76,7 +80,8 @@ export class AdminQueueComponent implements OnInit {
     this.error.set('');
     try {
       const res = await this.api.listOutbox({
-        state: this.stateFilter || undefined,
+        states: this.selectedStates(),
+        include_sent: this.showSent,
         submitter: this.submitterFilter.trim() || undefined,
         search: this.query.trim() || undefined,
         limit: this.pageSize,
@@ -100,6 +105,74 @@ export class AdminQueueComponent implements OnInit {
   protected goPage(page: number): void {
     this.page = page;
     void this.reload();
+  }
+
+  protected isStateSelected(state: OutboxMessageState): boolean {
+    return this.selectedStates().includes(state);
+  }
+
+  protected toggleState(state: OutboxMessageState): void {
+    const current = this.selectedStates();
+    this.selectedStates.set(
+      current.includes(state) ? current.filter((s) => s !== state) : [...current, state],
+    );
+    this.page = 1;
+    void this.reload();
+  }
+
+  protected setShowSent(show: boolean): void {
+    this.showSent = show;
+    this.page = 1;
+    void this.reload();
+  }
+
+  protected clearFilters(): void {
+    this.selectedStates.set([]);
+    this.showSent = false;
+    this.submitterFilter = '';
+    this.query = '';
+    this.page = 1;
+    void this.reload();
+  }
+
+  // deleteAll removes the whole set the current filters describe, not only the
+  // page on screen. The confirmation names the count so the warning is about
+  // something concrete.
+  protected async deleteAll(): Promise<void> {
+    const filters = this.selectedStates().length
+      ? `states: ${this.selectedStates().join(', ')}`
+      : `all visible states${this.showSent ? ' including sent' : ' excluding sent'}`;
+    const search = this.query.trim() || this.submitterFilter.trim();
+    const scope = search ? `${filters}; matching "${search}"` : filters;
+    if (
+      !confirm(
+        `Delete every message in the queue matching ${scope}?\n\n` +
+          `This removes ${this.total()} message${this.total() === 1 ? '' : 's'} from the ` +
+          'queue and cannot be undone. The messages themselves are not recalled.',
+      )
+    ) {
+      return;
+    }
+    this.busy.set(true);
+    this.error.set('');
+    this.ok.set('');
+    try {
+      const res = await this.api.deleteOutbox({
+        states: this.selectedStates(),
+        include_sent: this.showSent,
+        submitter: this.submitterFilter.trim() || undefined,
+        search: this.query.trim() || undefined,
+      });
+      this.ok.set(
+        `${res.deleted} queue message${res.deleted === 1 ? ' was' : 's were'} deleted.`,
+      );
+      this.page = 1;
+      await this.reload();
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
+    }
   }
 
   // open fetches the message with its recipients. The list deliberately does

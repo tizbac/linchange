@@ -145,6 +145,67 @@ func TestAdminInvitationSetsAPasswordThatCanSignIn(t *testing.T) {
 	}
 }
 
+// The queue hides a successful send by default, lets the reader ask for it,
+// filters several states at once, and deletes exactly the filtered set.
+func TestOutboxHidesSentAndDeletesTheFilteredSet(t *testing.T) {
+	srv, db := newAdminServer(t)
+	_, headers := seedAdmin(t, srv, db)
+
+	insert := func(state string) int64 {
+		t.Helper()
+		var id int64
+		if err := db.GetContext(t.Context(), &id, `
+			INSERT INTO outbox (submitted_by, envelope_from, blob_sha256, size, state)
+			VALUES ('alice@example.com', 'alice@example.com', '\x01'::bytea, 1, $1::outbox_state)
+			RETURNING id`, state); err != nil {
+			t.Fatalf("inserting %s: %v", state, err)
+		}
+		return id
+	}
+	sent := insert("sent")
+	failed := insert("failed")
+	queued := insert("queued")
+
+	code, body := do(t, srv, http.MethodGet, "/api/v1/admin/outbox", nil, headers)
+	if code != http.StatusOK {
+		t.Fatalf("listing the queue = %d %v", code, body)
+	}
+	if total := int(body["total"].(float64)); total != 2 {
+		t.Errorf("default queue total = %d, want 2 (sent hidden)", total)
+	}
+	for _, row := range body["messages"].([]any) {
+		if row.(map[string]any)["state"] == "sent" {
+			t.Error("a sent message was in the default queue")
+		}
+	}
+
+	code, body = do(t, srv, http.MethodGet, "/api/v1/admin/outbox?include_sent=true", nil, headers)
+	if code != http.StatusOK || int(body["total"].(float64)) != 3 {
+		t.Fatalf("queue including sent = %d %v, want all three", code, body)
+	}
+
+	code, body = do(t, srv, http.MethodGet, "/api/v1/admin/outbox?states=failed", nil, headers)
+	if code != http.StatusOK || int(body["total"].(float64)) != 1 {
+		t.Fatalf("queue for failed = %d %v, want one", code, body)
+	}
+
+	code, body = do(t, srv, http.MethodDelete, "/api/v1/admin/outbox?states=failed", nil, headers)
+	if code != http.StatusOK {
+		t.Fatalf("deleting the filtered queue = %d %v", code, body)
+	}
+	if deleted := int(body["deleted"].(float64)); deleted != 1 {
+		t.Errorf("deleted %d messages, want one", deleted)
+	}
+	var remaining int
+	if err := db.GetContext(t.Context(), &remaining,
+		`SELECT count(*) FROM outbox WHERE id IN ($1, $2, $3)`, sent, failed, queued); err != nil {
+		t.Fatalf("counting survivors: %v", err)
+	}
+	if remaining != 2 {
+		t.Errorf("%d messages survived, want the sent and queued ones", remaining)
+	}
+}
+
 func TestAdminRoutesRequireAToken(t *testing.T) {
 	srv, db := newAdminServer(t)
 	seedAdmin(t, srv, db)

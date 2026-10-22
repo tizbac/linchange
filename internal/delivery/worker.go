@@ -178,6 +178,12 @@ func (p *Pool) Start(ctx context.Context) {
 	go func() {
 		defer close(p.done)
 
+		// Retention runs beside delivery: a sent message is removed an hour
+		// after it went, and a permanent failure or bounce after fifteen days.
+		// Doing it here means there is one long-lived process that owns the
+		// outbox rather than a separate scheduler that a test would not start.
+		go p.retention(ctx)
+
 		// Launch worker goroutines.
 		var wg sync.WaitGroup
 		for i := 0; i < p.cfg.Concurrency; i++ {
@@ -214,6 +220,36 @@ func (p *Pool) Stop() {
 // IsActive returns true if the pool has been started and not yet stopped.
 func (p *Pool) IsActive() bool {
 	return !p.stopped.Load()
+}
+
+// retention enforces the queue's storage rule. It runs once at startup and
+// then every five minutes; the one-hour sent window therefore has at most five
+// minutes of slack, which is invisible compared with the hour itself.
+func (p *Pool) retention(ctx context.Context) {
+	purge := func() {
+		if p.cfg.Outbox == nil {
+			return
+		}
+		n, err := p.cfg.Outbox.DeleteExpired(ctx, SentRetention, FailedRetention)
+		if err != nil && ctx.Err() == nil {
+			p.logger.Error("queue retention", "error", err)
+		} else if n > 0 {
+			p.logger.Info("queue retention removed messages", "count", n)
+		}
+	}
+	purge()
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-p.quit:
+			return
+		case <-ticker.C:
+			purge()
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------

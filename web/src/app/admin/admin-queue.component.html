@@ -6,8 +6,13 @@
           title="Outbound queue"
           hint="Every message this server submitted for delivery, newest first, with how many of
             its recipients received it. When mail has not arrived, this is the page that says what
-            happened — and where a message stuck in retry is tried again."
+            happened — and where a message stuck in retry is tried again.
+            Sent messages are hidden by default and removed one hour after delivery; permanent
+            failures and bounces are kept for 15 days; waiting mail stays until it settles."
         >
+          <admin-button variant="danger" [disabled]="busy() || total() === 0" (pressed)="deleteAll()">
+            Delete filtered
+          </admin-button>
           <admin-button (pressed)="reload()">Refresh</admin-button>
         </admin-page-header>
 
@@ -22,14 +27,40 @@
           class="flex flex-wrap items-end gap-3"
           (ngSubmit)="page = 1; reload()"
         >
-          <label class="block">
-            <span class="mb-1 block text-xs font-medium text-slate-600">State</span>
-            <select class="{{ input }}" name="state" [(ngModel)]="stateFilter">
-              <option value="">every state</option>
+          <div class="block">
+            <span class="mb-1 block text-xs font-medium text-slate-600">
+              State tags — none checked shows every visible state
+            </span>
+            <div class="flex flex-wrap gap-2">
               @for (state of states; track state) {
-                <option [value]="state">{{ state }}</option>
+                <label
+                  class="inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium"
+                  [class]="
+                    isStateSelected(state)
+                      ? 'border-brand-300 bg-brand-50 text-brand-800'
+                      : 'border-slate-200 bg-white text-slate-600'
+                  "
+                >
+                  <input
+                    type="checkbox"
+                    class="h-3.5 w-3.5 rounded border-slate-300"
+                    [checked]="isStateSelected(state)"
+                    (change)="toggleState(state)"
+                  />
+                  {{ state }}
+                </label>
               }
-            </select>
+            </div>
+          </div>
+          <label class="flex items-center gap-2 pb-1 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              name="showSent"
+              class="h-4 w-4 rounded border-slate-300"
+              [checked]="showSent"
+              (change)="setShowSent(!showSent)"
+            />
+            Show sent (kept for 1 hour)
           </label>
           <label class="block">
             <span class="mb-1 block text-xs font-medium text-slate-600">Submitted by</span>
@@ -41,16 +72,20 @@
             />
           </label>
           <admin-button variant="primary" type="submit">Filter</admin-button>
-          @if (stateFilter || submitterFilter) {
-            <admin-button
-              (pressed)="stateFilter = ''; submitterFilter = ''; page = 1; reload()"
-            >
-              Clear
-            </admin-button>
+          @if (selectedStates().length || showSent || submitterFilter || query) {
+            <admin-button (pressed)="clearFilters()">Clear</admin-button>
           }
         </form>
 
         <admin-panel [bodyClass]="'p-0'">
+          <div class="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
+            <span class="font-semibold text-slate-700">How long rows stay:</span>
+            sent messages are deleted one hour after delivery and are hidden unless
+            <span class="font-medium">Show sent</span> is ticked. Permanent failures and bounces are
+            kept for 15 days, then deleted. Queued, sending and deferred messages stay until they
+            settle. Deleting a filtered set removes exactly the rows the tags, sender and search
+            select — not only this page.
+          </div>
           @if (loading()) {
             <div class="px-5 py-6"><admin-busy [busy]="true" label="Loading the queue…" /></div>
           } @else if (messages().length === 0) {
@@ -58,7 +93,8 @@
               text="Nothing in the queue with that filter. An empty queue is either good news or a filter that is too narrow."
             />
           } @else {
-            <table class="w-full">
+            <div class="overflow-x-auto">
+            <table class="w-full min-w-[70rem]">
               <thead class="border-b border-slate-200 bg-slate-50">
                 <tr>
                   <th class="{{ head }}">#</th>
@@ -176,6 +212,7 @@
                 }
               </tbody>
             </table>
+            </div>
           }
           <admin-list-footer [page]="page" [total]="total()" [pageSize]="pageSize" (pageChange)="goPage($event)" />
         </admin-panel>

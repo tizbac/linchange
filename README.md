@@ -558,7 +558,11 @@ journalctl -u linchange -f
 curl http://127.0.0.1:8080/healthz
 ```
 
-The admin panel also exposes the outbound queue and the audit log.
+The admin panel also exposes the outbound queue and the audit log. The queue
+keeps a successful send for one hour, hides it unless **Show sent** is ticked,
+keeps permanent failures and bounces for 15 days, and leaves queued, sending and
+deferred messages until they settle. **Delete filtered** removes exactly the
+rows the current tags, sender and search select.
 
 ## Development
 

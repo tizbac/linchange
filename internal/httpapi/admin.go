@@ -279,6 +279,9 @@ func mountAdminRoutes(r chi.Router, s *Server) {
 	// file, read in the dark.
 	r.Route("/outbox", func(r chi.Router) {
 		r.Get("/", s.listOutbox)
+		// The delete is collection-wide and takes the same filters as the
+		// listing: the page can only offer "delete what I am looking at".
+		r.Delete("/", s.deleteOutbox)
 		r.Get("/{id}", s.getOutbox)
 		r.Post("/{id}/requeue", s.requeueOutbox)
 	})
@@ -1343,33 +1346,57 @@ func viewOutboxMessage(msg delivery.OutboxMessage) outboxView {
 	return view
 }
 
-// listOutbox answers what is in the outbound queue, newest first, optionally
-// narrowed to one state or one sender.
-func (s *Server) listOutbox(w http.ResponseWriter, r *http.Request) {
+// outboxFilterFrom reads the queue's filters. The state tags send a comma
+// separated list; the old single "state" parameter is still accepted so an
+// existing bookmark or script keeps working. No tags means every visible
+// state, and sent stays hidden until it is asked for.
+func outboxFilterFrom(r *http.Request) (delivery.QueueFilter, adminListOptions, error) {
 	q := r.URL.Query()
-	filter := delivery.QueueFilter{
-		Submitter: strings.TrimSpace(q.Get("submitter")),
+	filter := delivery.QueueFilter{Submitter: strings.TrimSpace(q.Get("submitter"))}
+	var opts adminListOptions
+
+	tags := strings.TrimSpace(q.Get("states"))
+	if tags == "" {
+		tags = strings.TrimSpace(q.Get("state"))
 	}
-	if state := strings.TrimSpace(q.Get("state")); state != "" {
-		switch state {
-		case "queued", "sending", "sent", "deferred", "failed", "bounced":
-			filter.State = delivery.OutboxState(state)
-		default:
-			// Refused rather than quietly matching nothing. An unknown filter
-			// on the page meant to explain missing mail would otherwise
-			// explain an empty queue instead.
-			s.writeError(w, http.StatusBadRequest, "unknown state")
-			return
+	if tags != "" {
+		for _, raw := range strings.Split(tags, ",") {
+			state := strings.TrimSpace(raw)
+			if state == "" {
+				continue
+			}
+			switch state {
+			case "queued", "sending", "sent", "deferred", "failed", "bounced":
+				filter.States = append(filter.States, delivery.OutboxState(state))
+			default:
+				// Refused rather than quietly matching nothing. An unknown
+				// filter on the page meant to explain missing mail would
+				// otherwise explain an empty queue instead.
+				return filter, opts, fmt.Errorf("unknown state %q", state)
+			}
 		}
+	}
+	if include, err := strconv.ParseBool(strings.TrimSpace(q.Get("include_sent"))); err == nil {
+		filter.IncludeSent = include
 	}
 	opts, err := adminListOptionsFrom(r)
 	if err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
+		return filter, opts, err
 	}
 	filter.Search = opts.Search
 	filter.Limit = opts.Limit
 	filter.Offset = opts.Offset
+	return filter, opts, nil
+}
+
+// listOutbox answers what is in the outbound queue, newest first, optionally
+// narrowed to one or more states or one sender.
+func (s *Server) listOutbox(w http.ResponseWriter, r *http.Request) {
+	filter, opts, err := outboxFilterFrom(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	items, err := s.admin.OutboxQueue(r.Context(), Principal(r.Context()), filter)
 	if err != nil {
@@ -1418,6 +1445,27 @@ func (s *Server) requeueOutbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteOutbox removes everything the current filter selects. The count comes
+// back so the page can report what went; a delete that silently reloads an
+// empty table leaves the administrator unsure whether it worked.
+func (s *Server) deleteOutbox(w http.ResponseWriter, r *http.Request) {
+	filter, _, err := outboxFilterFrom(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Pagination is a property of the view, not of a delete: deleting only
+	// the visible page would be a surprising half-action.
+	filter.Limit = 0
+	filter.Offset = 0
+	deleted, err := s.admin.DeleteOutbox(r.Context(), Principal(r.Context()), filter)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
 }
 
 // --- small helpers ---

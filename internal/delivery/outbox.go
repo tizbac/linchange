@@ -455,12 +455,19 @@ func (r *OutboxRepository) execCtx(ctx context.Context, tx *sqlx.Tx, query strin
 // The administrator's view of the queue.
 // ---------------------------------------------------------------------------
 
-// QueueFilter narrows a queue listing. The zero value asks for every message,
-// which is the answer to "what is in the queue at all" — the first thing
-// wanted when mail has not arrived, before anybody knows what to ask next.
+// QueueFilter narrows a queue listing. The zero value asks for every unsettled
+// or failed message and leaves out the successful sends, which is the answer
+// to "what is wrong" — the first thing wanted when mail has not arrived.
 type QueueFilter struct {
-	// State limits the listing to one state; empty means every state.
-	State OutboxState
+	// State limits the listing to one state; empty means every state. States
+	// takes several at once, which is what the queue tags send.
+	State  OutboxState
+	States []OutboxState
+	// IncludeSent admits delivered messages. They are hidden by default
+	// because a queue is read to find what has not arrived, and a successful
+	// send is not a problem to solve. The retention job removes them an hour
+	// after delivery.
+	IncludeSent bool
 	// Submitter limits it to one sender's messages.
 	Submitter string
 	// Search matches the submitter, envelope sender, message id and last
@@ -477,6 +484,51 @@ const (
 	defaultQueueLimit = 50
 	maxQueueLimit     = 500
 )
+
+// How long the queue keeps the two settled outcomes that an administrator
+// reads after the fact. A successful send is useful for an hour; a permanent
+// failure or a bounce is the evidence behind a complaint and is kept long
+// enough to answer one.
+const (
+	SentRetention   = time.Hour
+	FailedRetention = 15 * 24 * time.Hour
+)
+
+// queueWhere appends the shared filter clauses to a query that already has an
+// "outbox o" alias and returns the arguments it added. ListQueue and
+// CountQueue must agree, or a page and its total describe different sets.
+func queueWhere(filter QueueFilter, args []any) (string, []any) {
+	query := ""
+	states := make([]string, 0, len(filter.States)+1)
+	for _, state := range filter.States {
+		states = append(states, string(state))
+	}
+	if filter.State != "" {
+		states = append(states, string(filter.State))
+	}
+	if len(states) > 0 {
+		args = append(args, states)
+		// Compared as text because the driver sends a text array and the
+		// column is an enum; the cast belongs on the column so Postgres does
+		// not have to infer which side owns the type.
+		query += fmt.Sprintf(" AND o.state::text = ANY($%d::text[])", len(args))
+	} else if !filter.IncludeSent {
+		query += " AND o.state <> 'sent'"
+	}
+	if filter.Submitter != "" {
+		args = append(args, filter.Submitter)
+		query += fmt.Sprintf(" AND o.submitted_by = $%d::citext", len(args))
+	}
+	if filter.Search != "" {
+		args = append(args, "%"+filter.Search+"%")
+		n := len(args)
+		query += fmt.Sprintf(` AND (o.submitted_by::text ILIKE $%[1]d
+			OR o.envelope_from ILIKE $%[1]d
+			OR COALESCE(o.last_error, '') ILIKE $%[1]d
+			OR o.id::text ILIKE $%[1]d)`, n)
+	}
+	return query, args
+}
 
 // OutboxQueueItem is one message as a queue listing draws it: the row, plus
 // the two counts that answer "did it go out?" without opening every message.
@@ -514,25 +566,8 @@ func (r *OutboxRepository) ListQueue(ctx context.Context, tx *sqlx.Tx, filter Qu
 		FROM outbox o
 		WHERE 1 = 1`
 	args := make([]any, 0, 4)
-	if filter.State != "" {
-		args = append(args, filter.State)
-		// The cast is spelled out because state arrives as text and the column
-		// is an enum: without it Postgres is asked to compare an enum with an
-		// untyped parameter and cannot choose a side.
-		query += fmt.Sprintf(" AND o.state = $%d::outbox_state", len(args))
-	}
-	if filter.Submitter != "" {
-		args = append(args, filter.Submitter)
-		query += fmt.Sprintf(" AND o.submitted_by = $%d::citext", len(args))
-	}
-	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
-		n := len(args)
-		query += fmt.Sprintf(` AND (o.submitted_by::text ILIKE $%[1]d
-			OR o.envelope_from ILIKE $%[1]d
-			OR COALESCE(o.last_error, '') ILIKE $%[1]d
-			OR o.id::text ILIKE $%[1]d)`, n)
-	}
+	where, args := queueWhere(filter, args)
+	query += where
 	query += ` ORDER BY o.created_at DESC, o.id DESC`
 
 	limit := filter.Limit
@@ -573,22 +608,8 @@ func (r *OutboxRepository) ListQueue(ctx context.Context, tx *sqlx.Tx, filter Qu
 func (r *OutboxRepository) CountQueue(ctx context.Context, tx *sqlx.Tx, filter QueueFilter) (int, error) {
 	query := `SELECT count(*) FROM outbox o WHERE 1 = 1`
 	args := make([]any, 0, 3)
-	if filter.State != "" {
-		args = append(args, filter.State)
-		query += fmt.Sprintf(" AND o.state = $%d::outbox_state", len(args))
-	}
-	if filter.Submitter != "" {
-		args = append(args, filter.Submitter)
-		query += fmt.Sprintf(" AND o.submitted_by = $%d::citext", len(args))
-	}
-	if filter.Search != "" {
-		args = append(args, "%"+filter.Search+"%")
-		n := len(args)
-		query += fmt.Sprintf(` AND (o.submitted_by::text ILIKE $%[1]d
-			OR o.envelope_from ILIKE $%[1]d
-			OR COALESCE(o.last_error, '') ILIKE $%[1]d
-			OR o.id::text ILIKE $%[1]d)`, n)
-	}
+	where, args := queueWhere(filter, args)
+	query += where
 	var total int
 	var err error
 	if tx != nil {
@@ -600,6 +621,48 @@ func (r *OutboxRepository) CountQueue(ctx context.Context, tx *sqlx.Tx, filter Q
 		return 0, fmt.Errorf("count queue: %w", err)
 	}
 	return total, nil
+}
+
+// DeleteFiltered removes every message the filter selects and returns how many
+// rows went. It is the administrator's "delete all" and is deliberately built
+// from the same clauses as the listing: what was on screen is what is deleted.
+func (r *OutboxRepository) DeleteFiltered(ctx context.Context, filter QueueFilter) (int64, error) {
+	query := `DELETE FROM outbox o WHERE 1 = 1`
+	args := make([]any, 0, 4)
+	where, args := queueWhere(filter, args)
+	query += where
+	res, err := r.execCtx(ctx, nil, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("delete queue: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("delete queue rows: %w", err)
+	}
+	return n, nil
+}
+
+// DeleteExpired enforces the queue's retention rules. A delivered message is
+// kept for sentTTL so an administrator can still see that it went out;
+// permanently failed and bounced messages are kept for failedTTL because they
+// explain a delivery that never happened and are the reason the page is opened.
+// Everything still waiting is left alone.
+func (r *OutboxRepository) DeleteExpired(ctx context.Context, sentTTL, failedTTL time.Duration) (int64, error) {
+	res, err := r.execCtx(ctx, nil, `
+		DELETE FROM outbox
+		WHERE (state = 'sent'
+		       AND COALESCE(sent_at, created_at) < now() - make_interval(secs => $1))
+		   OR (state IN ('failed', 'bounced')
+		       AND COALESCE(dsn_at, failed_at, created_at) < now() - make_interval(secs => $2))`,
+		sentTTL.Seconds(), failedTTL.Seconds())
+	if err != nil {
+		return 0, fmt.Errorf("purge the queue: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("purge the queue rows: %w", err)
+	}
+	return n, nil
 }
 
 // scanQueueItem reads one row of a queue listing.

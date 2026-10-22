@@ -17,12 +17,17 @@ import (
 // so the states on screen are the ones the worker is acting on rather than a
 // second account of them that could disagree.
 
-// OutboxQueue lists the outbound queue, newest first.
+// OutboxQueue lists the outbound queue, newest first. Expired rows are purged
+// first so opening the page never shows a message the retention rule has
+// already promised to remove; the delivery worker runs the same purge on its
+// own timer.
 func (s *Service) OutboxQueue(ctx context.Context, actor policy.Principal, filter delivery.QueueFilter) ([]delivery.OutboxQueueItem, error) {
 	if err := requireAdmin(actor); err != nil {
 		return nil, err
 	}
-	return delivery.NewOutboxRepository(s.db).ListQueue(ctx, nil, filter)
+	repo := delivery.NewOutboxRepository(s.db)
+	_, _ = repo.DeleteExpired(ctx, delivery.SentRetention, delivery.FailedRetention)
+	return repo.ListQueue(ctx, nil, filter)
 }
 
 // OutboxQueueCount returns the size of the filtered queue, so the page can say
@@ -31,7 +36,32 @@ func (s *Service) OutboxQueueCount(ctx context.Context, actor policy.Principal, 
 	if err := requireAdmin(actor); err != nil {
 		return 0, err
 	}
-	return delivery.NewOutboxRepository(s.db).CountQueue(ctx, nil, filter)
+	repo := delivery.NewOutboxRepository(s.db)
+	_, _ = repo.DeleteExpired(ctx, delivery.SentRetention, delivery.FailedRetention)
+	return repo.CountQueue(ctx, nil, filter)
+}
+
+// DeleteOutbox removes every message the filter selects. It is the deliberate
+// counterpart to the retention rule: an administrator who has read a failed
+// delivery can clear it, and the count is returned so the page can say what
+// happened rather than reloading into silence.
+func (s *Service) DeleteOutbox(ctx context.Context, actor policy.Principal, filter delivery.QueueFilter) (int64, error) {
+	if err := requireAdmin(actor); err != nil {
+		return 0, err
+	}
+	deleted, err := delivery.NewOutboxRepository(s.db).DeleteFiltered(ctx, filter)
+	if err != nil {
+		return 0, err
+	}
+	if err := s.record(ctx, s.db, actor, change{
+		action:     ActionOutboxDelete,
+		targetType: "outbox",
+		target:     "filtered queue",
+		detail:     map[string]any{"deleted": deleted},
+	}); err != nil {
+		return 0, err
+	}
+	return deleted, nil
 }
 
 // OutboxMessage returns one queued message with its recipients.

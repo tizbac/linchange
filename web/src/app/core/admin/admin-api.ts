@@ -65,6 +65,28 @@ function listQuery(filter: AdminListFilter = {}): string {
   return parts.length ? `?${parts.join('&')}` : '';
 }
 
+// OutboxQuery is the queue filter shared by the listing and the delete-all
+// call. A delete must remove exactly the set the table was showing.
+export interface OutboxQuery {
+  states?: string[];
+  include_sent?: boolean;
+  submitter?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+function outboxQuery(filter: OutboxQuery): string {
+  const parts: string[] = [];
+  if (filter.states?.length) parts.push(`states=${encodeURIComponent(filter.states.join(','))}`);
+  if (filter.include_sent) parts.push('include_sent=true');
+  if (filter.submitter) parts.push(`submitter=${encodeURIComponent(filter.submitter)}`);
+  if (filter.search) parts.push(`q=${encodeURIComponent(filter.search)}`);
+  if (filter.limit) parts.push(`limit=${filter.limit}`);
+  if (filter.offset) parts.push(`offset=${filter.offset}`);
+  return parts.length ? `?${parts.join('&')}` : '';
+}
+
 // AdminApi is the only place in the app that names an administration endpoint.
 // Components ask for a resource and get the server's own shape back, so a
 // renamed field fails the build in the model file rather than rendering an empty
@@ -292,20 +314,28 @@ export class AdminApi {
   // every message submitted for delivery, newest first, each with the two
   // counts that say whether it went out.
   listOutbox(filter: {
-    state?: string;
+    states?: string[];
+    include_sent?: boolean;
     submitter?: string;
     search?: string;
     limit?: number;
     offset?: number;
   }): Promise<{ messages: OutboxMessageView[]; total: number }> {
-    const parts: string[] = [];
-    if (filter.state) parts.push(`state=${encodeURIComponent(filter.state)}`);
-    if (filter.submitter) parts.push(`submitter=${encodeURIComponent(filter.submitter)}`);
-    if (filter.search) parts.push(`q=${encodeURIComponent(filter.search)}`);
-    if (filter.limit) parts.push(`limit=${filter.limit}`);
-    if (filter.offset) parts.push(`offset=${filter.offset}`);
-    const query = parts.length ? `?${parts.join('&')}` : '';
-    return this.get(`/outbox${query}`);
+    return this.get(`/outbox${outboxQuery(filter)}`);
+  }
+
+  // deleteOutbox removes every message the same filter selects, not only the
+  // visible page. The confirmation belongs in the component: this is the
+  // destructive call it guards.
+  deleteOutbox(filter: {
+    states?: string[];
+    include_sent?: boolean;
+    submitter?: string;
+    search?: string;
+  }): Promise<{ deleted: number }> {
+    return this.request('delete', `/outbox${outboxQuery(filter)}`, null) as Promise<{
+      deleted: number;
+    }>;
   }
 
   // getOutbox opens one message with its recipients: the per-address state
