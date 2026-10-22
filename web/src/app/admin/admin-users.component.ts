@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import { AdminApi } from '../core/admin/admin-api';
 import { User, formatBytes } from '../core/admin/admin.models';
 import { errorMessage } from '../core/http-error';
@@ -44,6 +45,7 @@ import { AdminListFooter, AdminSearch } from '../core/admin/admin-list';
 })
 export class AdminUsersComponent implements OnInit {
   private readonly api = inject(AdminApi);
+  private readonly router = inject(Router);
 
   protected readonly head = tableHeadClass;
   protected readonly cell = tableCellClass;
@@ -218,6 +220,10 @@ export class AdminUsersComponent implements OnInit {
     } finally {
       this.busy.set(false);
     }
+  }
+
+  protected edit(u: User): void {
+    void this.router.navigate(['/admin/users', u.address]);
   }
 
   protected openPassword(u: User): void {

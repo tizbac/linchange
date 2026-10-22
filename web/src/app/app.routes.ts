@@ -160,6 +160,12 @@ export const routes: Routes = [
         title: $localize`:@@title.adminUsers:Users`,
       },
       {
+        path: 'users/:address',
+        loadComponent: () =>
+          import('./admin/admin-user-edit.component').then((m) => m.AdminUserEditComponent),
+        title: $localize`:@@title.adminUserEdit:Edit mailbox`,
+      },
+      {
         path: 'aliases',
         loadComponent: () => import('./admin/admin-aliases.component').then((m) => m.AdminAliasesComponent),
         title: $localize`:@@title.adminAliases:Aliases`,

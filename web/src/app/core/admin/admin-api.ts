@@ -124,6 +124,10 @@ export class AdminApi {
     return this.get(`/users${listQuery(filter)}`);
   }
 
+  getUser(address: string): Promise<User> {
+    return this.get(`/users/${encodeURIComponent(address)}`);
+  }
+
   createUser(body: {
     address: string;
     source?: string;

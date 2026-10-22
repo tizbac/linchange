@@ -187,14 +187,7 @@
                   <td class="{{ cell }}">
                     <admin-dropdown>
                       <span trigger>Actions</span>
-                      <admin-dropdown-item (pressed)="openPassword(u)">Password</admin-dropdown-item>
-                      <admin-dropdown-item (pressed)="openQuota(u)">Quota</admin-dropdown-item>
-                      <admin-dropdown-item (pressed)="openRecovery(u)">Personal email</admin-dropdown-item>
-                      @if (u.recovery_email) {
-                        <admin-dropdown-item [disabled]="busy()" (pressed)="sendInvite(u)">
-                          Send invitation
-                        </admin-dropdown-item>
-                      }
+                      <admin-dropdown-item (pressed)="edit(u)">Edit</admin-dropdown-item>
                       @if (canGrantAdmin(u)) {
                         <admin-dropdown-item
                           [variant]="u.is_domain_admin ? 'default' : 'default'"
