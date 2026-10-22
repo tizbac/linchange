@@ -230,8 +230,16 @@ export class AuthService {
     this.applyTheme();
   }
 
-  requestReset(login: string): Promise<unknown> {
-    return this.post('/auth/reset/request', { login });
+  requestCaptcha(): Promise<{ token: string; image: string; expires_at: string }> {
+    return this.get('/auth/captcha');
+  }
+
+  requestReset(login: string, captchaToken: string, captchaAnswer: string): Promise<unknown> {
+    return this.post('/auth/reset/request', {
+      login,
+      captcha_token: captchaToken,
+      captcha_answer: captchaAnswer,
+    });
   }
 
   completeReset(token: string, password: string): Promise<unknown> {
@@ -269,6 +277,10 @@ export class AuthService {
       });
       void this.loadMe();
     });
+  }
+
+  private get<T>(path: string): Promise<T> {
+    return firstValueFrom(this.http.get<T>(`${API}${path}`));
   }
 
   private post<T>(path: string, body: unknown): Promise<T> {

@@ -25,6 +25,7 @@ import (
 
 	"github.com/linchange/linchange/config"
 	"github.com/linchange/linchange/internal/admin"
+	"github.com/linchange/linchange/internal/auth/captcha"
 	ldapauth "github.com/linchange/linchange/internal/auth/ldap"
 	"github.com/linchange/linchange/internal/auth/lockout"
 	"github.com/linchange/linchange/internal/auth/login"
@@ -71,6 +72,7 @@ type Server struct {
 	log      *slog.Logger
 	auth     *login.Authenticator
 	reset    *reset.Resetter
+	captcha  *captcha.Manager
 	admin    *admin.Service
 	tokens   *token.Manager
 	sessions *store.Sessions
@@ -113,6 +115,9 @@ type Server struct {
 	// service decide with, so there is one answer rather than three.
 	policies  policy.Policy
 	staticDir string
+	// publicURL is the base address links in email point at. It is the same
+	// address meeting invitations use, so an installation configures one place.
+	publicURL string
 	// imports runs remote-IMAP import jobs. It is nil when the application
 	// did not build one (tests that never touch it); the routes are then
 	// simply not mounted.
@@ -177,6 +182,10 @@ type Options struct {
 	WebRTC *webrtc.Service
 	// Contacts is the address book service. Left nil, one is built here.
 	Contacts *contacts.Service
+	// Captcha issues the challenge shown before a password reset. Left nil, a
+	// manager with a fresh random key is built here. Supplying one lets several
+	// front ends share challenges, and lets a test answer its own.
+	Captcha *captcha.Manager
 }
 
 // New builds a Server from an open database and a loaded config.
@@ -302,6 +311,18 @@ func New(opts Options) (*Server, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	// Password reset is reachable without an account, so it is the one form
+	// that needs a challenge a script cannot trivially post. The manager is
+	// created with the server: its key is deliberately not configuration, and
+	// a restart invalidating challenges is acceptable for a ten-minute token.
+	captchaManager := opts.Captcha
+	if captchaManager == nil {
+		captchaManager, err = captcha.New(10 * time.Minute)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// The administration service is built here so the HTTP layer only ever
@@ -444,6 +465,7 @@ func New(opts Options) (*Server, error) {
 		log:               log,
 		auth:              auth,
 		reset:             r,
+		captcha:           captchaManager,
 		admin:             adm,
 		tokens:            tokens,
 		sessions:          store.NewSessions(),
@@ -462,6 +484,7 @@ func New(opts Options) (*Server, error) {
 		defaultTheme:      defaultTheme(cfg.Web.Theme),
 		blobs:             opts.Blobs,
 		staticDir:         opts.StaticDir,
+		publicURL:         strings.TrimSuffix(cfg.MeetingsPublicURL(), "/"),
 		imports:           opts.Imports,
 		meetings:          meetingsService,
 		chat:              chatService,
@@ -492,6 +515,7 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/auth/login", s.handleLogin)
 		r.Post("/auth/second-factor", s.handleSecondFactor)
 		r.Post("/auth/refresh", s.handleRefresh)
+		r.Get("/auth/captcha", s.handleCaptcha)
 		r.Post("/auth/reset/request", s.handleResetRequest)
 		r.Post("/auth/reset/complete", s.handleResetComplete)
 

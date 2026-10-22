@@ -293,12 +293,35 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleCaptcha issues a fresh challenge for the password reset form. It is
+// public for the same reason the form is: the person who needs it cannot sign
+// in.
+func (s *Server) handleCaptcha(w http.ResponseWriter, r *http.Request) {
+	challenge, err := s.captcha.Issue()
+	if err != nil {
+		s.log.ErrorContext(r.Context(), "issuing a captcha failed", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "could not prepare the verification code")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	s.writeJSON(w, http.StatusOK, challenge)
+}
+
 func (s *Server) handleResetRequest(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Login string `json:"login"`
+		Login         string `json:"login"`
+		CaptchaToken  string `json:"captcha_token"`
+		CaptchaAnswer string `json:"captcha_answer"`
 	}
 	if err := decodeJSON(w, r, &in); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	// The challenge is checked before the address is looked at. A refusal must
+	// not tell an unauthenticated caller whether the address exists, and a
+	// captcha answer is exactly the kind of thing a script can vary cheaply.
+	if !s.captcha.Verify(in.CaptchaToken, in.CaptchaAnswer) {
+		s.writeError(w, http.StatusBadRequest, "the verification code was not correct")
 		return
 	}
 

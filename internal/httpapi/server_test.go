@@ -3,6 +3,10 @@ package httpapi_test
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +24,7 @@ import (
 	libtotp "github.com/pquerna/otp/totp"
 
 	"github.com/linchange/linchange/config"
+	"github.com/linchange/linchange/internal/auth/captcha"
 	"github.com/linchange/linchange/internal/auth/password"
 	"github.com/linchange/linchange/internal/auth/totp"
 	"github.com/linchange/linchange/internal/blobstore"
@@ -207,12 +212,65 @@ func testBlobs(t *testing.T) *blobstore.Store {
 	return blobs
 }
 
+func testCaptchaKey() []byte {
+	sum := sha256.Sum256([]byte("httpapi-test-captcha-key"))
+	return sum[:]
+}
+
+// testCaptcha builds a challenge manager with a key the test also knows, so it
+// can answer a challenge it issued without the package exposing the answer.
+func testCaptcha(t *testing.T) *captcha.Manager {
+	t.Helper()
+	m, err := captcha.NewWithKey(testCaptchaKey(), 10*time.Minute)
+	if err != nil {
+		t.Fatalf("building the captcha manager: %v", err)
+	}
+	return m
+}
+
+func solveCaptcha(t *testing.T, challenge captcha.Challenge) string {
+	t.Helper()
+	block, err := aes.NewCipher(testCaptchaKey())
+	if err != nil {
+		t.Fatalf("cipher: %v", err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatalf("sealed box: %v", err)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(challenge.Token)
+	if err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	plain, err := aead.Open(nil, raw[:aead.NonceSize()], raw[aead.NonceSize():], nil)
+	if err != nil {
+		t.Fatalf("opening the challenge: %v", err)
+	}
+	return string(plain[9:])
+}
+
+func resetRequestWithCaptcha(t *testing.T, srv *httpapi.Server, login string) (int, map[string]any) {
+	t.Helper()
+	m := testCaptcha(t)
+	challenge, err := m.Issue()
+	if err != nil {
+		t.Fatalf("issuing a challenge: %v", err)
+	}
+	return do(t, srv, http.MethodPost, "/api/v1/auth/reset/request",
+		map[string]string{
+			"login":          login,
+			"captcha_token":  challenge.Token,
+			"captcha_answer": solveCaptcha(t, challenge),
+		}, nil)
+}
+
 func newServer(t *testing.T, db *sqlx.DB) *httpapi.Server {
 	t.Helper()
 	blobs := testBlobs(t)
 	srv, err := httpapi.New(httpapi.Options{
 		DB: db, Config: testConfig(), Blobs: blobs,
 		Imports: imapimport.New(db, blobs, nil, testConfig().Auth.EncryptionKey),
+		Captcha: testCaptcha(t),
 	})
 	if err != nil {
 		t.Fatalf("building the server: %v", err)
@@ -393,9 +451,15 @@ func TestResetEndpoints(t *testing.T) {
 	addSecondaryEmail(t, db, "alice@example.com", "alice.other@example.com", true, true)
 	srv := newServer(t, db)
 
-	// A request always answers generically and stores a token row.
+	// A request without a challenge is refused before the address is read.
 	code, body := do(t, srv, http.MethodPost, "/api/v1/auth/reset/request",
 		map[string]string{"login": "alice@example.com"}, nil)
+	if code != http.StatusBadRequest {
+		t.Fatalf("reset request without a captcha = %d %v, want 400", code, body)
+	}
+
+	// A request always answers generically and stores a token row.
+	code, body = resetRequestWithCaptcha(t, srv, "alice@example.com")
 	if code != http.StatusOK || body["status"] != "ok" {
 		t.Fatalf("reset request = %d %v, want 200 ok", code, body)
 	}
@@ -408,8 +472,7 @@ func TestResetEndpoints(t *testing.T) {
 	}
 
 	// An unknown address answers the same way and stores nothing.
-	code, body = do(t, srv, http.MethodPost, "/api/v1/auth/reset/request",
-		map[string]string{"login": "ghost@example.com"}, nil)
+	code, body = resetRequestWithCaptcha(t, srv, "ghost@example.com")
 	if code != http.StatusOK || body["status"] != "ok" {
 		t.Fatalf("reset request for unknown address = %d %v, want 200 ok", code, body)
 	}
