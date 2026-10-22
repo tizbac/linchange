@@ -48,6 +48,22 @@ function auditQuery(filter: AuditQuery): string {
   return parts.length ? `?${parts.join('&')}` : '';
 }
 
+// AdminListFilter is the server-side page every administration table asks for.
+// The browser never receives the whole list and then slices it.
+export interface AdminListFilter {
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+function listQuery(filter: AdminListFilter = {}): string {
+  const parts: string[] = [];
+  if (filter.search) parts.push(`q=${encodeURIComponent(filter.search)}`);
+  if (filter.limit) parts.push(`limit=${filter.limit}`);
+  if (filter.offset) parts.push(`offset=${filter.offset}`);
+  return parts.length ? `?${parts.join('&')}` : '';
+}
+
 // AdminApi is the only place in the app that names an administration endpoint.
 // Components ask for a resource and get the server's own shape back, so a
 // renamed field fails the build in the model file rather than rendering an empty
@@ -58,8 +74,8 @@ export class AdminApi {
 
   // --- domains ---
 
-  listDomains(): Promise<{ domains: Domain[] }> {
-    return this.get('/domains');
+  listDomains(filter: AdminListFilter = {}): Promise<{ domains: Domain[]; total: number }> {
+    return this.get(`/domains${listQuery(filter)}`);
   }
 
   createDomain(body: {
@@ -81,8 +97,8 @@ export class AdminApi {
 
   // --- users ---
 
-  listUsers(): Promise<{ users: User[] }> {
-    return this.get('/users');
+  listUsers(filter: AdminListFilter = {}): Promise<{ users: User[]; total: number }> {
+    return this.get(`/users${listQuery(filter)}`);
   }
 
   createUser(body: {
@@ -134,8 +150,8 @@ export class AdminApi {
 
   // --- aliases ---
 
-  listAliases(): Promise<{ aliases: Alias[] }> {
-    return this.get('/aliases');
+  listAliases(filter: AdminListFilter = {}): Promise<{ aliases: Alias[]; total: number }> {
+    return this.get(`/aliases${listQuery(filter)}`);
   }
 
   createAlias(body: {
@@ -171,8 +187,8 @@ export class AdminApi {
 
   // --- shared mailboxes ---
 
-  listSharedMailboxes(): Promise<{ shared_mailboxes: SharedMailbox[] }> {
-    return this.get('/shared-mailboxes');
+  listSharedMailboxes(filter: AdminListFilter = {}): Promise<{ shared_mailboxes: SharedMailbox[]; total: number }> {
+    return this.get(`/shared-mailboxes${listQuery(filter)}`);
   }
 
   declareSharedMailbox(body: {
@@ -214,9 +230,10 @@ export class AdminApi {
 
   // --- impersonation ---
 
-  listImpersonationGrants(actor?: string): Promise<{ grants: ImpersonationGrant[] }> {
-    const query = actor ? `?actor=${encodeURIComponent(actor)}` : '';
-    return this.get(`/impersonation/grants${query}`);
+  listImpersonationGrants(actor?: string, filter: AdminListFilter = {}): Promise<{ grants: ImpersonationGrant[]; total: number }> {
+    const query = listQuery({ ...filter, search: filter.search, limit: filter.limit, offset: filter.offset });
+    const separator = query ? '&' : '?';
+    return this.get(`/impersonation/grants${query}${actor ? `${separator}actor=${encodeURIComponent(actor)}` : ''}`);
   }
 
   grantImpersonation(body: {
@@ -269,12 +286,14 @@ export class AdminApi {
   listOutbox(filter: {
     state?: string;
     submitter?: string;
+    search?: string;
     limit?: number;
     offset?: number;
-  }): Promise<{ messages: OutboxMessageView[] }> {
+  }): Promise<{ messages: OutboxMessageView[]; total: number }> {
     const parts: string[] = [];
     if (filter.state) parts.push(`state=${encodeURIComponent(filter.state)}`);
     if (filter.submitter) parts.push(`submitter=${encodeURIComponent(filter.submitter)}`);
+    if (filter.search) parts.push(`q=${encodeURIComponent(filter.search)}`);
     if (filter.limit) parts.push(`limit=${filter.limit}`);
     if (filter.offset) parts.push(`offset=${filter.offset}`);
     const query = parts.length ? `?${parts.join('&')}` : '';
@@ -296,8 +315,13 @@ export class AdminApi {
 
   // --- imports ---
 
-  listImports(owner?: string): Promise<{ imports: ImportJob[] }> {
-    const query = owner ? `?owner=${encodeURIComponent(owner)}` : '';
+  listImports(filter: AdminListFilter = {}, owner?: string): Promise<{ imports: ImportJob[]; total: number }> {
+    const parts: string[] = [];
+    if (filter.search) parts.push(`q=${encodeURIComponent(filter.search)}`);
+    if (filter.limit) parts.push(`limit=${filter.limit}`);
+    if (filter.offset) parts.push(`offset=${filter.offset}`);
+    if (owner) parts.push(`owner=${encodeURIComponent(owner)}`);
+    const query = parts.length ? `?${parts.join('&')}` : '';
     return this.get(`/imports${query}`);
   }
 
@@ -337,8 +361,8 @@ export class AdminApi {
 
   // --- workgroups ---
 
-  listWorkgroups(): Promise<{ workgroups: Workgroup[] }> {
-    return this.get('/workgroups');
+  listWorkgroups(filter: AdminListFilter = {}): Promise<{ workgroups: Workgroup[]; total: number }> {
+    return this.get(`/workgroups${listQuery(filter)}`);
   }
 
   getWorkgroup(id: number): Promise<Workgroup> {
@@ -376,8 +400,19 @@ export class AdminApi {
 
   // --- custom themes ---
 
-  listThemes(): Promise<{ themes: ThemeRow[] }> {
-    return this.get('/themes');
+  listThemes(filter: AdminListFilter = {}): Promise<{ themes: ThemeRow[]; total: number }> {
+    return this.get(`/themes${listQuery(filter)}`);
+  }
+
+  // exportThemeExample downloads a starter package for one of the built-in
+  // themes. The built-in themes themselves are read-only; the ZIP is the
+  // editable starting point for a custom one.
+  exportThemeExample(name: string): Promise<Blob> {
+    return firstValueFrom(
+      this.http.get(`${API}/themes/example.zip?name=${encodeURIComponent(name)}`, {
+        responseType: 'blob',
+      }),
+    );
   }
 
   uploadTheme(name: string, file: File): Promise<ThemeRow> {
@@ -391,8 +426,8 @@ export class AdminApi {
     return this.request('delete', `/themes/${encodeURIComponent(uid)}`, null) as Promise<void>;
   }
 
-  listWorkgroupMembers(id: number): Promise<{ members: WorkgroupMember[] }> {
-    return this.get(`/workgroups/${id}/members`);
+  listWorkgroupMembers(id: number, filter: AdminListFilter = {}): Promise<{ members: WorkgroupMember[]; total: number }> {
+    return this.get(`/workgroups/${id}/members${listQuery(filter)}`);
   }
 
   addWorkgroupMember(id: number, body: { address: string; role?: 'member' | 'admin' }): Promise<void> {
@@ -405,8 +440,8 @@ export class AdminApi {
 
   // --- organization calendars ---
 
-  listWorkgroupCalendars(id: number): Promise<{ calendars: OrgCalendar[] }> {
-    return this.get(`/workgroups/${id}/calendars`);
+  listWorkgroupCalendars(id: number, filter: AdminListFilter = {}): Promise<{ calendars: OrgCalendar[]; total: number }> {
+    return this.get(`/workgroups/${id}/calendars${listQuery(filter)}`);
   }
 
   createWorkgroupCalendar(
@@ -448,8 +483,8 @@ export class AdminApi {
 
   // --- organization groups ---
 
-  listWorkgroupGroups(id: number): Promise<{ groups: WorkgroupGroup[] }> {
-    return this.get(`/workgroups/${id}/groups`);
+  listWorkgroupGroups(id: number, filter: AdminListFilter = {}): Promise<{ groups: WorkgroupGroup[]; total: number }> {
+    return this.get(`/workgroups/${id}/groups${listQuery(filter)}`);
   }
 
   createWorkgroupGroup(id: number, body: { name: string; description?: string }): Promise<WorkgroupGroup> {

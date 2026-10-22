@@ -221,6 +221,11 @@ func (s *Server) handleAdminListImports(w http.ResponseWriter, r *http.Request) 
 		importErrors(w, s, err)
 		return
 	}
+	opts, err := adminListOptionsFrom(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	var owner *string
 	if v := r.URL.Query().Get("owner"); v != "" {
 		owner = &v
@@ -230,7 +235,10 @@ func (s *Server) handleAdminListImports(w http.ResponseWriter, r *http.Request) 
 		importErrors(w, s, err)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"imports": jobs})
+	out, total := pageAdmin(jobs, opts)
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"imports": out, "total": total, "limit": opts.Limit, "offset": opts.Offset,
+	})
 }
 
 func (s *Server) handleAdminCreateImport(w http.ResponseWriter, r *http.Request) {

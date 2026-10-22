@@ -171,6 +171,12 @@ func requireAdmin(actor policy.Principal) error {
 	return nil
 }
 
+// CanAdmin exposes the same check to handlers that do not act on a stored
+// object but still belong to the administration area.
+func (s *Service) CanAdmin(actor policy.Principal) error {
+	return requireAdmin(actor)
+}
+
 // actor is the change-maker. target is whose data was acted upon; for a domain
 // action there is no target and it is left empty rather than pointed at the
 // actor, so the two columns mean different things in the log.

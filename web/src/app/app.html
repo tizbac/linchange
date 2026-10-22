@@ -12,8 +12,11 @@
                 class="h-8 max-w-[180px] object-contain"
               />
             } @else {
-              <span class="text-lg font-semibold tracking-tight text-brand-700">
-                {{ auth.organization() ? auth.organization() + ' - linchange' : 'linchange' }}
+              <span
+                class="block max-w-[12rem] truncate text-lg font-semibold tracking-tight text-brand-700 sm:max-w-[18rem]"
+                [title]="auth.organization() || 'linchange'"
+              >
+                {{ auth.organization() || 'linchange' }}
               </span>
             }
           </a>

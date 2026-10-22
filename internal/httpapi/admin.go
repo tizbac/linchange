@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -30,6 +31,70 @@ import (
 // mailbox settings are the largest, and nothing legitimate is anywhere near
 // this.
 const maxAdminBody = 64 * 1024
+
+// adminListOptions is the server-side page every administration table uses.
+// Search is one free-text field over the row the table would draw; limit and
+// offset come from the pager, not from the browser slicing its own copy.
+type adminListOptions struct {
+	Search string
+	Limit  int
+	Offset int
+}
+
+func adminListOptionsFrom(r *http.Request) (adminListOptions, error) {
+	q := r.URL.Query()
+	opts := adminListOptions{
+		Search: strings.TrimSpace(q.Get("q")),
+	}
+	if opts.Search == "" {
+		opts.Search = strings.TrimSpace(q.Get("search"))
+	}
+	if raw := q.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			return opts, errors.New("limit is not a number")
+		}
+		if n > 100 {
+			n = 100
+		}
+		opts.Limit = n
+	}
+	if raw := q.Get("offset"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			return opts, errors.New("offset is not a number")
+		}
+		opts.Offset = n
+	}
+	return opts, nil
+}
+
+// pageAdmin scans the row values as the table's search index and returns one
+// page. It is server-side on purpose: an administrator's browser receives
+// twenty rows, not the whole organization, and the total describes the
+// filtered set rather than the page.
+func pageAdmin[T any](items []T, opts adminListOptions) ([]T, int) {
+	filtered := items
+	if opts.Search != "" {
+		query := strings.ToLower(opts.Search)
+		filtered = make([]T, 0, len(items))
+		for _, item := range items {
+			if strings.Contains(strings.ToLower(fmt.Sprintf("%+v", item)), query) {
+				filtered = append(filtered, item)
+			}
+		}
+	}
+	total := len(filtered)
+	start := opts.Offset
+	if start > total {
+		start = total
+	}
+	end := total
+	if opts.Limit > 0 && start+opts.Limit < end {
+		end = start + opts.Limit
+	}
+	return filtered[start:end], total
+}
 
 // adminErrors maps a service error to a status. store's sentinels are compared
 // with errors.Is because a repository may wrap one on its way out.
@@ -186,6 +251,9 @@ func mountAdminRoutes(r chi.Router, s *Server) {
 	r.Route("/themes", func(r chi.Router) {
 		r.Get("/", s.listThemes)
 		r.Post("/", s.uploadTheme)
+		// The built-in themes are not database rows, but they are the best
+		// starting point for a custom one. This returns the starter package.
+		r.Get("/example.zip", s.exportExampleTheme)
 		r.Delete("/{uid}", s.deleteTheme)
 	})
 
@@ -207,16 +275,24 @@ func mountAdminRoutes(r chi.Router, s *Server) {
 // --- domains ---
 
 func (s *Server) listDomains(w http.ResponseWriter, r *http.Request) {
+	opts, err := adminListOptionsFrom(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	domains, err := s.admin.ListDomains(r.Context(), Principal(r.Context()))
 	if err != nil {
 		adminErrors(w, s, err)
 		return
 	}
-	out := make([]domainView, 0, len(domains))
-	for _, d := range domains {
+	page, total := pageAdmin(domains, opts)
+	out := make([]domainView, 0, len(page))
+	for _, d := range page {
 		out = append(out, viewDomain(d))
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"domains": out})
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"domains": out, "total": total, "limit": opts.Limit, "offset": opts.Offset,
+	})
 }
 
 func (s *Server) createDomain(w http.ResponseWriter, r *http.Request) {
@@ -324,16 +400,24 @@ func (s *Server) setDomainStatus(w http.ResponseWriter, r *http.Request) {
 // --- users ---
 
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
+	opts, err := adminListOptionsFrom(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	users, err := s.admin.ListUsers(r.Context(), Principal(r.Context()))
 	if err != nil {
 		adminErrors(w, s, err)
 		return
 	}
-	out := make([]userView, 0, len(users))
+	views := make([]userView, 0, len(users))
 	for _, u := range users {
-		out = append(out, viewUser(u))
+		views = append(views, viewUser(u))
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"users": out})
+	out, total := pageAdmin(views, opts)
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"users": out, "total": total, "limit": opts.Limit, "offset": opts.Offset,
+	})
 }
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
@@ -489,16 +573,24 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 // --- aliases ---
 
 func (s *Server) listAliases(w http.ResponseWriter, r *http.Request) {
+	opts, err := adminListOptionsFrom(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	aliases, err := s.admin.ListAliases(r.Context(), Principal(r.Context()))
 	if err != nil {
 		adminErrors(w, s, err)
 		return
 	}
-	out := make([]aliasView, 0, len(aliases))
+	views := make([]aliasView, 0, len(aliases))
 	for _, a := range aliases {
-		out = append(out, viewAlias(a))
+		views = append(views, viewAlias(a))
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"aliases": out})
+	out, total := pageAdmin(views, opts)
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"aliases": out, "total": total, "limit": opts.Limit, "offset": opts.Offset,
+	})
 }
 
 func (s *Server) createAlias(w http.ResponseWriter, r *http.Request) {
@@ -601,16 +693,24 @@ func (s *Server) updateAliasTargets(w http.ResponseWriter, r *http.Request) {
 // --- shared mailboxes ---
 
 func (s *Server) listSharedMailboxes(w http.ResponseWriter, r *http.Request) {
+	opts, err := adminListOptionsFrom(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	boxes, err := s.admin.ListSharedMailboxes(r.Context(), Principal(r.Context()))
 	if err != nil {
 		adminErrors(w, s, err)
 		return
 	}
-	out := make([]sharedMailboxView, 0, len(boxes))
+	views := make([]sharedMailboxView, 0, len(boxes))
 	for _, b := range boxes {
-		out = append(out, viewSharedMailbox(b))
+		views = append(views, viewSharedMailbox(b))
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"shared_mailboxes": out})
+	out, total := pageAdmin(views, opts)
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"shared_mailboxes": out, "total": total, "limit": opts.Limit, "offset": opts.Offset,
+	})
 }
 
 func (s *Server) declareSharedMailbox(w http.ResponseWriter, r *http.Request) {
@@ -756,12 +856,21 @@ func (s *Server) listImpersonationGrants(w http.ResponseWriter, r *http.Request)
 	if actorAddr == "" {
 		actorAddr = Principal(r.Context()).Address
 	}
+	opts, err := adminListOptionsFrom(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	grants, err := s.admin.ListImpersonationGrants(r.Context(), Principal(r.Context()), actorAddr)
 	if err != nil {
 		adminErrors(w, s, err)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"grants": viewImpersonations(grants)})
+	views := viewImpersonations(grants)
+	out, total := pageAdmin(views, opts)
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"grants": out, "total": total, "limit": opts.Limit, "offset": opts.Offset,
+	})
 }
 
 func (s *Server) grantImpersonation(w http.ResponseWriter, r *http.Request) {
@@ -1179,24 +1288,21 @@ func (s *Server) listOutbox(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if raw := q.Get("limit"); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 0 {
-			s.writeError(w, http.StatusBadRequest, "limit is not a number")
-			return
-		}
-		filter.Limit = n
+	opts, err := adminListOptionsFrom(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
-	if raw := q.Get("offset"); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 0 {
-			s.writeError(w, http.StatusBadRequest, "offset is not a number")
-			return
-		}
-		filter.Offset = n
-	}
+	filter.Search = opts.Search
+	filter.Limit = opts.Limit
+	filter.Offset = opts.Offset
 
 	items, err := s.admin.OutboxQueue(r.Context(), Principal(r.Context()), filter)
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	total, err := s.admin.OutboxQueueCount(r.Context(), Principal(r.Context()), filter)
 	if err != nil {
 		adminErrors(w, s, err)
 		return
@@ -1205,7 +1311,9 @@ func (s *Server) listOutbox(w http.ResponseWriter, r *http.Request) {
 	for _, item := range items {
 		out = append(out, viewOutbox(item))
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"messages": out})
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"messages": out, "total": total, "limit": opts.Limit, "offset": opts.Offset,
+	})
 }
 
 // getOutbox returns one message with its recipients: what was submitted, each
@@ -1515,16 +1623,24 @@ func viewAudit(e store.AuditEntry) auditView {
 // --- workgroups (organizations) ---
 
 func (s *Server) listWorkgroups(w http.ResponseWriter, r *http.Request) {
+	opts, err := adminListOptionsFrom(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	workgroups, err := s.admin.ListWorkgroups(r.Context(), Principal(r.Context()))
 	if err != nil {
 		adminErrors(w, s, err)
 		return
 	}
-	out := make([]workgroupView, 0, len(workgroups))
-	for _, w := range workgroups {
-		out = append(out, s.workgroupViewOf(r.Context(), Principal(r.Context()), w))
+	page, total := pageAdmin(workgroups, opts)
+	out := make([]workgroupView, 0, len(page))
+	for _, wg := range page {
+		out = append(out, s.workgroupViewOf(r.Context(), Principal(r.Context()), wg))
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"workgroups": out})
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"workgroups": out, "total": total, "limit": opts.Limit, "offset": opts.Offset,
+	})
 }
 
 func (s *Server) createWorkgroup(w http.ResponseWriter, r *http.Request) {
@@ -1761,16 +1877,24 @@ func (s *Server) listWorkgroupMembers(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
 		return
 	}
+	opts, err := adminListOptionsFrom(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	members, err := s.admin.ListWorkgroupMembers(r.Context(), Principal(r.Context()), id)
 	if err != nil {
 		adminErrors(w, s, err)
 		return
 	}
-	out := make([]workgroupMemberView, 0, len(members))
+	views := make([]workgroupMemberView, 0, len(members))
 	for _, m := range members {
-		out = append(out, viewWorkgroupMember(m))
+		views = append(views, viewWorkgroupMember(m))
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"members": out})
+	out, total := pageAdmin(views, opts)
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"members": out, "total": total, "limit": opts.Limit, "offset": opts.Offset,
+	})
 }
 
 func (s *Server) addWorkgroupMember(w http.ResponseWriter, r *http.Request) {
@@ -1827,12 +1951,20 @@ func (s *Server) listWorkgroupGroups(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
 		return
 	}
+	opts, err := adminListOptionsFrom(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	groups, err := s.admin.ListWorkgroupGroups(r.Context(), Principal(r.Context()), id)
 	if err != nil {
 		adminErrors(w, s, err)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"groups": viewWorkgroupGroups(groups)})
+	out, total := pageAdmin(viewWorkgroupGroups(groups), opts)
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"groups": out, "total": total, "limit": opts.Limit, "offset": opts.Offset,
+	})
 }
 
 // createWorkgroupGroup adds a group to an organization.
@@ -1995,12 +2127,20 @@ func (s *Server) listWorkgroupCalendars(w http.ResponseWriter, r *http.Request) 
 		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")
 		return
 	}
+	opts, err := adminListOptionsFrom(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	cals, err := s.admin.WorkgroupCalendars(r.Context(), Principal(r.Context()), id)
 	if err != nil {
 		adminErrors(w, s, err)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"calendars": cals})
+	out, total := pageAdmin(cals, opts)
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"calendars": out, "total": total, "limit": opts.Limit, "offset": opts.Offset,
+	})
 }
 
 // createWorkgroupCalendar creates a calendar the whole organization owns.

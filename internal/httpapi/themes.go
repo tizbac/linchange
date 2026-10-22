@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -242,16 +243,153 @@ func viewTheme(t store.Theme) themeAdminView {
 }
 
 func (s *Server) listThemes(w http.ResponseWriter, r *http.Request) {
+	opts, err := adminListOptionsFrom(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	themes, err := s.themes.List(r.Context(), s.db)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "could not load themes")
 		return
 	}
-	out := make([]themeAdminView, 0, len(themes))
+	views := make([]themeAdminView, 0, len(themes))
 	for _, t := range themes {
-		out = append(out, viewTheme(t))
+		views = append(views, viewTheme(t))
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"themes": out})
+	out, total := pageAdmin(views, opts)
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"themes": out, "total": total, "limit": opts.Limit, "offset": opts.Offset,
+	})
+}
+
+// exportExampleTheme writes a starter ZIP with a theme.css at its root. The
+// built-in themes are not editable database rows; this gives an administrator
+// the same starting point without inventing a second editable representation
+// of them.
+func (s *Server) exportExampleTheme(w http.ResponseWriter, r *http.Request) {
+	if err := s.admin.CanAdmin(Principal(r.Context())); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	if name == "" {
+		name = "Example"
+	}
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	add := func(path, content string) error {
+		f, err := zw.Create(path)
+		if err != nil {
+			return err
+		}
+		_, err = f.Write([]byte(content))
+		return err
+	}
+	if err := add("theme.css", themeExampleCSS(name)); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "could not build the example theme")
+		return
+	}
+	if err := add("README.txt", themeExampleReadme(name)); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "could not build the example theme")
+		return
+	}
+	if err := zw.Close(); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "could not build the example theme")
+		return
+	}
+
+	slug := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(name), " ", "-"))
+	if slug == "" {
+		slug = "example"
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", contentDisposition("attachment", "linchange-theme-"+slug+".zip"))
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(buf.Bytes())
+}
+
+func themeExampleCSS(name string) string {
+	dark := strings.EqualFold(name, "Dark")
+	background := "#f1f5f9"
+	surface := "#ffffff"
+	surfaceAlt := "#f8fafc"
+	border := "#e2e8f0"
+	text := "#0f172a"
+	muted := "#64748b"
+	if dark {
+		background = "#0f172a"
+		surface = "#1e293b"
+		surfaceAlt = "#172033"
+		border = "#334155"
+		text = "#e2e8f0"
+		muted = "#94a3b8"
+	}
+	return fmt.Sprintf(`/*
+ * linchange custom theme: %[1]s
+ *
+ * The application sets data-theme="custom" when this theme is selected and
+ * links this file after its own stylesheet, so these rules win without
+ * !important. The classes below are the surfaces, text and borders the
+ * application actually uses; add the ones your deployment needs.
+ *
+ * The package must keep theme.css at its root (or in one top-level folder).
+ * Images referenced from here may sit beside it in the ZIP.
+ */
+
+:root {
+  color-scheme: %[2]s;
+}
+
+body {
+  background: %[3]s;
+  color: %[5]s;
+}
+
+.bg-slate-50 { background-color: %[3]s; }
+.bg-slate-100 { background-color: %[6]s; }
+.bg-slate-200 { background-color: %[4]s; }
+.bg-white { background-color: %[4]s; }
+.bg-white\/90 { background-color: color-mix(in srgb, %[4]s 90%%, transparent); }
+.bg-slate-50\/60 { background-color: color-mix(in srgb, %[6]s 60%%, transparent); }
+
+.text-slate-900,
+.text-slate-800 { color: %[5]s; }
+.text-slate-700,
+.text-slate-600 { color: %[7]s; }
+.text-slate-500,
+.text-slate-400 { color: %[7]s; }
+
+.border-slate-200,
+.border-slate-300,
+.border-slate-200\/80 { border-color: %[8]s; }
+
+input,
+textarea,
+select {
+  background-color: %[4]s;
+  color: %[5]s;
+  border-color: %[8]s;
+}
+
+input::placeholder,
+textarea::placeholder { color: %[7]s; }
+`, name, map[bool]string{true: "dark", false: "light"}[dark], background, surface, text, surfaceAlt, muted, border)
+}
+
+func themeExampleReadme(name string) string {
+	return fmt.Sprintf(`linchange custom theme: %s
+
+Upload this ZIP from Administration -> Themes. It contains:
+
+  theme.css   the entry point, linked after the application stylesheet
+  README.txt  this file
+
+You may add images or fonts beside theme.css and reference them relatively,
+for example url("./background.jpg"). Keep theme.css at the root or in one
+top-level folder. A theme is read-only once uploaded: create a new ZIP to
+change it, then delete the old one.
+`, name)
 }
 
 func (s *Server) uploadTheme(w http.ResponseWriter, r *http.Request) {

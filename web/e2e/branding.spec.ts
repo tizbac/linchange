@@ -68,5 +68,5 @@ test('an organization logo replaces the wordmark and shows in the room', async (
   await page.getByTestId('admin-logo-remove').first().click();
   await expect(page.getByTestId('admin-org-logo')).toHaveCount(0);
   await page.goto('/dashboard');
-  await expect(page.getByText('Example - linchange')).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText('Example', { exact: true })).toBeVisible({ timeout: 15000 });
 });

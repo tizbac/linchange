@@ -16,6 +16,7 @@ import {
 } from '../core/admin/ui';
 import { AdminNavComponent } from '../core/admin/admin-nav.component';
 import { AdminPageComponent } from '../core/admin/admin-page.component';
+import { AdminListFooter, AdminSearch } from '../core/admin/admin-list';
 
 // The queue is where undelivered mail can be looked at: what was submitted,
 // who it was going to, what each attempt said, and a way to try a stuck
@@ -36,6 +37,8 @@ const STATES: OutboxMessageState[] = ['queued', 'sending', 'sent', 'deferred', '
     Panel,
     AdminNavComponent,
     AdminPageComponent,
+    AdminSearch,
+    AdminListFooter,
   ],
   templateUrl: './admin-queue.component.html',
 })
@@ -48,6 +51,10 @@ export class AdminQueueComponent implements OnInit {
   protected readonly states = STATES;
 
   protected readonly messages = signal<OutboxMessageView[]>([]);
+  protected readonly total = signal(0);
+  protected query = '';
+  protected page = 1;
+  protected readonly pageSize = 20;
   protected readonly loading = signal(true);
   protected readonly busy = signal(false);
   protected readonly error = signal('');
@@ -71,13 +78,28 @@ export class AdminQueueComponent implements OnInit {
       const res = await this.api.listOutbox({
         state: this.stateFilter || undefined,
         submitter: this.submitterFilter.trim() || undefined,
+        search: this.query.trim() || undefined,
+        limit: this.pageSize,
+        offset: (this.page - 1) * this.pageSize,
       });
       this.messages.set(res.messages ?? []);
+      this.total.set(res.total);
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {
       this.loading.set(false);
     }
+  }
+
+  protected search(value: string): void {
+    this.query = value;
+    this.page = 1;
+    void this.reload();
+  }
+
+  protected goPage(page: number): void {
+    this.page = page;
+    void this.reload();
   }
 
   // open fetches the message with its recipients. The list deliberately does

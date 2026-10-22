@@ -25,6 +25,15 @@ func (s *Service) OutboxQueue(ctx context.Context, actor policy.Principal, filte
 	return delivery.NewOutboxRepository(s.db).ListQueue(ctx, nil, filter)
 }
 
+// OutboxQueueCount returns the size of the filtered queue, so the page can say
+// how many messages there are without loading the others.
+func (s *Service) OutboxQueueCount(ctx context.Context, actor policy.Principal, filter delivery.QueueFilter) (int, error) {
+	if err := requireAdmin(actor); err != nil {
+		return 0, err
+	}
+	return delivery.NewOutboxRepository(s.db).CountQueue(ctx, nil, filter)
+}
+
 // OutboxMessage returns one queued message with its recipients.
 func (s *Service) OutboxMessage(ctx context.Context, actor policy.Principal, id int64) (delivery.OutboxMessage, error) {
 	if err := requireAdmin(actor); err != nil {

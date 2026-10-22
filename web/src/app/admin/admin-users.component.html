@@ -112,10 +112,13 @@
       }
 
       <admin-panel [bodyClass]="'p-0'">
+        <div class="px-4 pt-4">
+          <admin-search [query]="query" (search)="search($event)" placeholder="Search mailboxes…" />
+        </div>
         @if (loading()) {
           <div class="px-5 py-6"><admin-busy [busy]="true" label="Loading mailboxes…" /></div>
-        } @else if (filtered().length === 0) {
-          <admin-empty [text]="query() ? 'No mailbox matches that search.' : 'No mailboxes yet.'" />
+        } @else if (users().length === 0) {
+          <admin-empty [text]="query ? 'No mailbox matches that search.' : 'No mailboxes yet.'" />
         } @else {
           <table class="w-full">
             <thead class="border-b border-slate-200 bg-slate-50">
@@ -129,7 +132,7 @@
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
-              @for (u of filtered(); track u.address) {
+              @for (u of users(); track u.address) {
                 <tr>
                   <td class="{{ cell }}">
                     <span class="font-medium text-slate-900">{{ u.address }}</span>
@@ -192,6 +195,7 @@
             </tbody>
           </table>
         }
+        <admin-list-footer [page]="page" [total]="total()" [pageSize]="pageSize" (pageChange)="goPage($event)" />
       </admin-panel>
 
       @if (passwordFor(); as target) {

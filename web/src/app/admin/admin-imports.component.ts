@@ -18,6 +18,7 @@ import {
 } from '../core/admin/ui';
 import { AdminNavComponent } from '../core/admin/admin-nav.component';
 import { AdminPageComponent } from '../core/admin/admin-page.component';
+import { AdminListFooter, AdminSearch } from '../core/admin/admin-list';
 import { errorMessage } from '../core/http-error';
 
 // The admin import page. An operator launches an import into any mailbox —
@@ -38,6 +39,8 @@ import { errorMessage } from '../core/http-error';
     Panel,
     AdminNavComponent,
     AdminPageComponent,
+    AdminSearch,
+    AdminListFooter,
   ],
   templateUrl: './admin-imports.component.html',
 })
@@ -49,6 +52,10 @@ export class AdminImportsComponent implements OnInit, OnDestroy {
   protected readonly cell = tableCellClass;
 
   protected readonly jobs = signal<ImportJob[]>([]);
+  protected readonly total = signal(0);
+  protected query = '';
+  protected page = 1;
+  protected readonly pageSize = 20;
   protected readonly users = signal<User[]>([]);
   protected readonly loading = signal(true);
   protected readonly busy = signal(false);
@@ -79,15 +86,31 @@ export class AdminImportsComponent implements OnInit, OnDestroy {
     this.stopPolling();
   }
 
+  protected search(value: string): void {
+    this.query = value;
+    this.page = 1;
+    void this.reload();
+  }
+
+  protected goPage(page: number): void {
+    this.page = page;
+    void this.reload();
+  }
+
   protected async reload(): Promise<void> {
     this.loading.set(true);
     this.error.set('');
     try {
       const [jobsRes, usersRes] = await Promise.all([
-        this.api.listImports(),
+        this.api.listImports({
+          search: this.query || undefined,
+          limit: this.pageSize,
+          offset: (this.page - 1) * this.pageSize,
+        }),
         this.api.listUsers(),
       ]);
       this.jobs.set(jobsRes.imports ?? []);
+      this.total.set(jobsRes.total);
       this.users.set(usersRes.users ?? []);
       this.schedulePoll();
     } catch (err) {

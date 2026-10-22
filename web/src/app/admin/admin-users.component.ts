@@ -19,6 +19,7 @@ import {
 } from '../core/admin/ui';
 import { AdminNavComponent } from '../core/admin/admin-nav.component';
 import { AdminPageComponent } from '../core/admin/admin-page.component';
+import { AdminListFooter, AdminSearch } from '../core/admin/admin-list';
 
 @Component({
   selector: 'app-admin-users',
@@ -36,6 +37,8 @@ import { AdminPageComponent } from '../core/admin/admin-page.component';
     Panel,
     AdminNavComponent,
     AdminPageComponent,
+    AdminSearch,
+    AdminListFooter,
   ],
   templateUrl: './admin-users.component.html',
 })
@@ -48,7 +51,10 @@ export class AdminUsersComponent implements OnInit {
   protected readonly bytes = formatBytes;
 
   protected readonly users = signal<User[]>([]);
-  protected readonly query = signal('');
+  protected readonly total = signal(0);
+  protected query = '';
+  protected page = 1;
+  protected readonly pageSize = 20;
   protected readonly loading = signal(true);
   protected readonly busy = signal(false);
   protected readonly creating = signal(false);
@@ -82,21 +88,6 @@ export class AdminUsersComponent implements OnInit {
     isDomainAdmin: false,
   };
 
-  // filtered is computed rather than a search over the DOM: the list is the
-  // only copy of the data, so searching it cannot fall out of step with what is
-  // on screen.
-  protected readonly filtered = () => {
-    const q = this.query().trim().toLowerCase();
-    const all = this.users();
-    if (!q) return all;
-    return all.filter(
-      (u) =>
-        u.address.toLowerCase().includes(q) ||
-        (u.display_name ?? '').toLowerCase().includes(q) ||
-        u.source.includes(q),
-    );
-  };
-
   ngOnInit(): void {
     this.reload();
   }
@@ -105,13 +96,29 @@ export class AdminUsersComponent implements OnInit {
     this.loading.set(true);
     this.error.set('');
     try {
-      const res = await this.api.listUsers();
+      const res = await this.api.listUsers({
+        search: this.query || undefined,
+        limit: this.pageSize,
+        offset: (this.page - 1) * this.pageSize,
+      });
       this.users.set(res.users ?? []);
+      this.total.set(res.total);
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {
       this.loading.set(false);
     }
+  }
+
+  protected search(value: string): void {
+    this.query = value;
+    this.page = 1;
+    void this.reload();
+  }
+
+  protected goPage(page: number): void {
+    this.page = page;
+    void this.reload();
   }
 
   protected async create(): Promise<void> {

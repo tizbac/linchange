@@ -17,6 +17,7 @@ import {
 } from '../core/admin/ui';
 import { AdminNavComponent } from '../core/admin/admin-nav.component';
 import { AdminPageComponent } from '../core/admin/admin-page.component';
+import { AdminListFooter, AdminSearch } from '../core/admin/admin-list';
 
 @Component({
   selector: 'app-admin-domains',
@@ -32,6 +33,8 @@ import { AdminPageComponent } from '../core/admin/admin-page.component';
     Panel,
     AdminNavComponent,
     AdminPageComponent,
+    AdminSearch,
+    AdminListFooter,
   ],
   templateUrl: './admin-domains.component.html',
 })
@@ -44,11 +47,15 @@ export class AdminDomainsComponent implements OnInit {
   protected readonly bytes = formatBytes;
 
   protected readonly domains = signal<Domain[]>([]);
+  protected readonly total = signal(0);
   protected readonly loading = signal(true);
   protected readonly busy = signal(false);
   protected readonly creating = signal(false);
   protected readonly error = signal('');
   protected readonly ok = signal('');
+  protected query = '';
+  protected page = 1;
+  protected readonly pageSize = 20;
 
   protected draft = { name: '', description: '', quotaMiB: null as number | null, isLocal: true };
 
@@ -71,13 +78,29 @@ export class AdminDomainsComponent implements OnInit {
     this.loading.set(true);
     this.error.set('');
     try {
-      const res = await this.api.listDomains();
+      const res = await this.api.listDomains({
+        search: this.query || undefined,
+        limit: this.pageSize,
+        offset: (this.page - 1) * this.pageSize,
+      });
       this.domains.set(res.domains ?? []);
+      this.total.set(res.total);
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {
       this.loading.set(false);
     }
+  }
+
+  protected search(value: string): void {
+    this.query = value;
+    this.page = 1;
+    void this.reload();
+  }
+
+  protected goPage(page: number): void {
+    this.page = page;
+    void this.reload();
   }
 
   protected toggleCreate(): void {

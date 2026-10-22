@@ -87,6 +87,9 @@
       }
 
       <admin-panel [bodyClass]="'p-0'">
+        <div class="px-4 pt-4">
+          <admin-search [query]="query" (search)="search($event)" placeholder="Search grants…" />
+        </div>
         @if (loading()) {
           <div class="px-5 py-6"><admin-busy [busy]="true" label="Loading grants…" /></div>
         } @else if (grants().length === 0) {
@@ -135,6 +138,7 @@
             </tbody>
           </table>
         }
+        <admin-list-footer [page]="page" [total]="total()" [pageSize]="pageSize" (pageChange)="goPage($event)" />
       </admin-panel>
     </div>
   </admin-page>

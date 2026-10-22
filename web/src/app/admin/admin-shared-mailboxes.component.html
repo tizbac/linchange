@@ -48,6 +48,10 @@
         </admin-panel>
       }
 
+      <div class="px-1">
+        <admin-search [query]="query" (search)="search($event)" placeholder="Search shared mailboxes…" />
+      </div>
+
       @if (loading()) {
         <admin-panel><admin-busy [busy]="true" label="Loading shared mailboxes…" /></admin-panel>
       } @else if (boxes().length === 0) {
@@ -148,5 +152,7 @@
           </admin-panel>
         }
       }
+      <admin-list-footer [page]="page" [total]="total()" [pageSize]="pageSize" (pageChange)="goPage($event)" />
     </div>
+    </admin-page>
   

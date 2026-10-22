@@ -638,6 +638,44 @@ func TestAdminAuditSearchPaginationAndCSV(t *testing.T) {
 	}
 }
 
+func TestAdminListsArePagedAndSearchable(t *testing.T) {
+	srv, db := newAdminServer(t)
+	_, headers := seedAdmin(t, srv, db)
+	for _, address := range []string{"bob@example.com", "carol@example.com"} {
+		if code, body := do(t, srv, http.MethodPost, "/api/v1/admin/users", map[string]any{
+			"address": address, "source": "local", "password": "correct horse battery staple",
+		}, headers); code != http.StatusCreated {
+			t.Fatalf("creating %s = %d %v", address, code, body)
+		}
+	}
+
+	code, body := do(t, srv, http.MethodGet, "/api/v1/admin/users?limit=1&offset=0&q=bob", nil, headers)
+	if code != http.StatusOK {
+		t.Fatalf("paged users = %d %v", code, body)
+	}
+	if total, _ := body["total"].(float64); total != 1 {
+		t.Errorf("search total = %v, want 1: %v", body["total"], body)
+	}
+	users, _ := body["users"].([]any)
+	if len(users) != 1 {
+		t.Fatalf("page returned %d users, want 1: %v", len(users), body)
+	}
+	if user, _ := users[0].(map[string]any); user["address"] != "bob@example.com" {
+		t.Errorf("search returned %v, want Bob", user)
+	}
+
+	// Without a limit the API keeps its old shape and returns the full list,
+	// so existing scripts do not start seeing only one page.
+	code, body = do(t, srv, http.MethodGet, "/api/v1/admin/users", nil, headers)
+	if code != http.StatusOK {
+		t.Fatalf("unpaged users = %d %v", code, body)
+	}
+	all, _ := body["users"].([]any)
+	if len(all) < 3 {
+		t.Errorf("unpaged list returned %d users, want at least 3", len(all))
+	}
+}
+
 func TestAdminImpersonationGrantsOverHTTP(t *testing.T) {
 	srv, db := newAdminServer(t)
 	adminAddr, headers := seedAdmin(t, srv, db)

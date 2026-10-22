@@ -57,6 +57,10 @@
           </admin-panel>
         }
 
+        <div class="px-1">
+          <admin-search [query]="query" (search)="search($event)" placeholder="Search organizations…" />
+        </div>
+
         @if (loading()) {
           <admin-panel><admin-busy [busy]="true" label="Loading organizations…" /></admin-panel>
         } @else if (workgroups().length === 0) {
@@ -83,6 +87,12 @@
                     }
                   </span>
                   <span class="flex-1"></span>
+                  <a
+                    [routerLink]="['/admin/workgroups', wg.id]"
+                    class="inline-flex items-center justify-center rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700"
+                  >
+                    Manage
+                  </a>
                   <admin-button (pressed)="openEdit(wg)">Edit</admin-button>
                   <admin-button (pressed)="openMembers(wg)">Add a member</admin-button>
                   <admin-button variant="danger" [disabled]="busy()" (pressed)="remove(wg)">
@@ -527,6 +537,7 @@
               </div>
             </admin-panel>
           }
+          <admin-list-footer [page]="page" [total]="total()" [pageSize]="pageSize" (pageChange)="goPage($event)" />
         }
       </div>
     </admin-page>

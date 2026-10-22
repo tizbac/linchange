@@ -18,6 +18,7 @@ import {
 } from '../core/admin/ui';
 import { AdminNavComponent } from '../core/admin/admin-nav.component';
 import { AdminPageComponent } from '../core/admin/admin-page.component';
+import { AdminListFooter, AdminSearch } from '../core/admin/admin-list';
 
 @Component({
   selector: 'app-admin-shared-mailboxes',
@@ -34,6 +35,8 @@ import { AdminPageComponent } from '../core/admin/admin-page.component';
     Panel,
     AdminNavComponent,
     AdminPageComponent,
+    AdminSearch,
+    AdminListFooter,
   ],
   templateUrl: './admin-shared-mailboxes.component.html',
 })
@@ -45,6 +48,10 @@ export class AdminSharedMailboxesComponent implements OnInit {
   protected readonly inputClass = inputClass;
 
   protected readonly boxes = signal<SharedMailbox[]>([]);
+  protected readonly total = signal(0);
+  protected query = '';
+  protected page = 1;
+  protected readonly pageSize = 20;
   protected readonly loading = signal(true);
   protected readonly busy = signal(false);
   protected readonly creating = signal(false);
@@ -71,16 +78,32 @@ export class AdminSharedMailboxesComponent implements OnInit {
     this.error.set('');
     try {
       const [boxesRes, usersRes] = await Promise.all([
-        this.api.listSharedMailboxes(),
+        this.api.listSharedMailboxes({
+          search: this.query || undefined,
+          limit: this.pageSize,
+          offset: (this.page - 1) * this.pageSize,
+        }),
         this.api.listUsers(),
       ]);
       this.boxes.set(boxesRes.shared_mailboxes ?? []);
+      this.total.set(boxesRes.total);
       this.availableUsers.set((usersRes.users ?? []).map(u => u.address));
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {
       this.loading.set(false);
     }
+  }
+
+  protected search(value: string): void {
+    this.query = value;
+    this.page = 1;
+    void this.reload();
+  }
+
+  protected goPage(page: number): void {
+    this.page = page;
+    void this.reload();
   }
 
   protected async create(): Promise<void> {

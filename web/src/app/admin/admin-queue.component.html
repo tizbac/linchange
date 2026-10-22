@@ -14,9 +14,13 @@
         <admin-notice [message]="error()" tone="error" />
         <admin-notice [message]="ok()" tone="ok" />
 
+        <div class="px-1">
+          <admin-search [query]="query" (search)="search($event)" placeholder="Search sender, recipient or error…" />
+        </div>
+
         <form
           class="flex flex-wrap items-end gap-3"
-          (ngSubmit)="reload()"
+          (ngSubmit)="page = 1; reload()"
         >
           <label class="block">
             <span class="mb-1 block text-xs font-medium text-slate-600">State</span>
@@ -39,7 +43,7 @@
           <admin-button variant="primary" type="submit">Filter</admin-button>
           @if (stateFilter || submitterFilter) {
             <admin-button
-              (pressed)="stateFilter = ''; submitterFilter = ''; reload()"
+              (pressed)="stateFilter = ''; submitterFilter = ''; page = 1; reload()"
             >
               Clear
             </admin-button>
@@ -173,6 +177,7 @@
               </tbody>
             </table>
           }
+          <admin-list-footer [page]="page" [total]="total()" [pageSize]="pageSize" (pageChange)="goPage($event)" />
         </admin-panel>
       </div>
     </admin-page>

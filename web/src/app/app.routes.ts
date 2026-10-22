@@ -139,6 +139,12 @@ export const routes: Routes = [
         title: $localize`:@@title.adminOrganizations:Organizations`,
       },
       {
+        path: 'workgroups/:id',
+        loadComponent: () =>
+          import('./admin/admin-workgroup-manage.component').then((m) => m.AdminWorkgroupManageComponent),
+        title: $localize`:@@title.adminOrganization:Organization`,
+      },
+      {
         path: 'themes',
         loadComponent: () => import('./admin/admin-themes.component').then((m) => m.AdminThemesComponent),
         title: $localize`:@@title.adminThemes:Themes`,

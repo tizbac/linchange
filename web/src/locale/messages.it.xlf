@@ -2343,6 +2343,13 @@ carol@esterno.example</target></trans-unit>
           <context context-type="linenumber">186</context>
         </context-group>
       <target>Importazioni</target></trans-unit>
+<trans-unit id="title.adminOrganization" datatype="html">
+        <source>Organization</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">145</context>
+        </context-group>
+      <target>Organizzazione</target></trans-unit>
     </body>
   </file>
 </xliff>

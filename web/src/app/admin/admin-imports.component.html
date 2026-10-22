@@ -126,6 +126,9 @@
       }
 
       <admin-panel title="Import jobs" [bodyClass]="'p-0'">
+        <div class="px-4 pt-4">
+          <admin-search [query]="query" (search)="search($event)" placeholder="Search imports…" />
+        </div>
         <admin-busy [busy]="loading()" label="Loading imports…" />
         @if (!loading() && !jobs().length) {
           <admin-empty label="No imports yet" />
@@ -190,6 +193,7 @@
             </tbody>
           </table>
         }
+        <admin-list-footer [page]="page" [total]="total()" [pageSize]="pageSize" (pageChange)="goPage($event)" />
       </admin-panel>
     </div>
   </admin-page>

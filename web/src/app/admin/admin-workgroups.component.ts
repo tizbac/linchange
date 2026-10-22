@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
 import { AdminApi } from '../core/admin/admin-api';
 import { Domain, OrgCalendar, Workgroup, WorkgroupGroup, WorkgroupMember } from '../core/admin/admin.models';
 import { AuthService } from '../core/auth/auth.service';
@@ -20,6 +21,7 @@ import {
 } from '../core/admin/ui';
 import { AdminNavComponent } from '../core/admin/admin-nav.component';
 import { AdminPageComponent } from '../core/admin/admin-page.component';
+import { AdminListFooter, AdminSearch } from '../core/admin/admin-list';
 
 // Organizations are workgroups: a named group of people defined by the domains
 // it owns. Anyone with an address in one of those domains belongs to it, so the
@@ -30,6 +32,7 @@ import { AdminPageComponent } from '../core/admin/admin-page.component';
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
     FormsModule,
+    RouterLink,
     AdminButton,
     Busy,
     Field,
@@ -40,6 +43,8 @@ import { AdminPageComponent } from '../core/admin/admin-page.component';
     Panel,
     AdminNavComponent,
     AdminPageComponent,
+    AdminSearch,
+    AdminListFooter,
   ],
   templateUrl: './admin-workgroups.component.html',
 })
@@ -53,6 +58,10 @@ export class AdminWorkgroupsComponent implements OnInit {
   protected readonly inputClass = inputClass;
 
   protected readonly workgroups = signal<Workgroup[]>([]);
+  protected readonly total = signal(0);
+  protected query = '';
+  protected page = 1;
+  protected readonly pageSize = 20;
   protected readonly domains = signal<Domain[]>([]);
   protected readonly users = signal<string[]>([]);
   protected readonly loading = signal(true);
@@ -96,11 +105,16 @@ export class AdminWorkgroupsComponent implements OnInit {
     this.error.set('');
     try {
       const [groups, domainRes, userRes] = await Promise.all([
-        this.api.listWorkgroups(),
+        this.api.listWorkgroups({
+          search: this.query || undefined,
+          limit: this.pageSize,
+          offset: (this.page - 1) * this.pageSize,
+        }),
         this.api.listDomains(),
         this.api.listUsers(),
       ]);
       this.workgroups.set(groups.workgroups ?? []);
+      this.total.set(groups.total);
       this.domains.set(domainRes.domains ?? []);
       this.users.set((userRes.users ?? []).map((u) => u.address));
     } catch (err) {
@@ -108,6 +122,17 @@ export class AdminWorkgroupsComponent implements OnInit {
     } finally {
       this.loading.set(false);
     }
+  }
+
+  protected search(value: string): void {
+    this.query = value;
+    this.page = 1;
+    void this.reload();
+  }
+
+  protected goPage(page: number): void {
+    this.page = page;
+    void this.reload();
   }
 
   protected async create(): Promise<void> {

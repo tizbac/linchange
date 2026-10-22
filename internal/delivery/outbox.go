@@ -463,6 +463,9 @@ type QueueFilter struct {
 	State OutboxState
 	// Submitter limits it to one sender's messages.
 	Submitter string
+	// Search matches the submitter, envelope sender, message id and last
+	// error, which is the free-text an administrator has in mind.
+	Search string
 	// Limit caps the page: zero takes the default, and the default is capped
 	// so that one mistaken request cannot ask for the whole table.
 	Limit int
@@ -522,6 +525,14 @@ func (r *OutboxRepository) ListQueue(ctx context.Context, tx *sqlx.Tx, filter Qu
 		args = append(args, filter.Submitter)
 		query += fmt.Sprintf(" AND o.submitted_by = $%d::citext", len(args))
 	}
+	if filter.Search != "" {
+		args = append(args, "%"+filter.Search+"%")
+		n := len(args)
+		query += fmt.Sprintf(` AND (o.submitted_by::text ILIKE $%[1]d
+			OR o.envelope_from ILIKE $%[1]d
+			OR COALESCE(o.last_error, '') ILIKE $%[1]d
+			OR o.id::text ILIKE $%[1]d)`, n)
+	}
 	query += ` ORDER BY o.created_at DESC, o.id DESC`
 
 	limit := filter.Limit
@@ -555,6 +566,40 @@ func (r *OutboxRepository) ListQueue(ctx context.Context, tx *sqlx.Tx, filter Qu
 		return nil, fmt.Errorf("iterate queue: %w", err)
 	}
 	return out, nil
+}
+
+// CountQueue returns how many messages match the queue filter. It uses the
+// same clauses as ListQueue so a page and its total cannot disagree.
+func (r *OutboxRepository) CountQueue(ctx context.Context, tx *sqlx.Tx, filter QueueFilter) (int, error) {
+	query := `SELECT count(*) FROM outbox o WHERE 1 = 1`
+	args := make([]any, 0, 3)
+	if filter.State != "" {
+		args = append(args, filter.State)
+		query += fmt.Sprintf(" AND o.state = $%d::outbox_state", len(args))
+	}
+	if filter.Submitter != "" {
+		args = append(args, filter.Submitter)
+		query += fmt.Sprintf(" AND o.submitted_by = $%d::citext", len(args))
+	}
+	if filter.Search != "" {
+		args = append(args, "%"+filter.Search+"%")
+		n := len(args)
+		query += fmt.Sprintf(` AND (o.submitted_by::text ILIKE $%[1]d
+			OR o.envelope_from ILIKE $%[1]d
+			OR COALESCE(o.last_error, '') ILIKE $%[1]d
+			OR o.id::text ILIKE $%[1]d)`, n)
+	}
+	var total int
+	var err error
+	if tx != nil {
+		err = tx.QueryRowContext(ctx, query, args...).Scan(&total)
+	} else {
+		err = r.db.QueryRowContext(ctx, query, args...).Scan(&total)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("count queue: %w", err)
+	}
+	return total, nil
 }
 
 // scanQueueItem reads one row of a queue listing.

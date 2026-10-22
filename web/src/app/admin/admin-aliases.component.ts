@@ -17,6 +17,7 @@ import {
 } from '../core/admin/ui';
 import { AdminNavComponent } from '../core/admin/admin-nav.component';
 import { AdminPageComponent } from '../core/admin/admin-page.component';
+import { AdminListFooter, AdminSearch } from '../core/admin/admin-list';
 
 interface TargetDraft {
   targetKind: 'user' | 'shared' | 'workgroup';
@@ -39,6 +40,8 @@ interface TargetDraft {
     Panel,
     AdminNavComponent,
     AdminPageComponent,
+    AdminSearch,
+    AdminListFooter,
   ],
   templateUrl: './admin-aliases.component.html',
 })
@@ -50,6 +53,10 @@ export class AdminAliasesComponent implements OnInit {
   protected readonly inputClass = inputClass;
 
   protected readonly aliases = signal<Alias[]>([]);
+  protected readonly total = signal(0);
+  protected query = '';
+  protected page = 1;
+  protected readonly pageSize = 20;
   protected readonly loading = signal(true);
   protected readonly busy = signal(false);
   protected readonly creating = signal(false);
@@ -158,12 +165,28 @@ export class AdminAliasesComponent implements OnInit {
     }
   }
 
+  protected search(value: string): void {
+    this.query = value;
+    this.page = 1;
+    void this.reload();
+  }
+
+  protected goPage(page: number): void {
+    this.page = page;
+    void this.reload();
+  }
+
   protected async reload(): Promise<void> {
     this.loading.set(true);
     this.error.set('');
     try {
-      const res = await this.api.listAliases();
+      const res = await this.api.listAliases({
+        search: this.query || undefined,
+        limit: this.pageSize,
+        offset: (this.page - 1) * this.pageSize,
+      });
       this.aliases.set(res.aliases ?? []);
+      this.total.set(res.total);
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {

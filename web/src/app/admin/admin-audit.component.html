@@ -38,7 +38,8 @@
           } @else if (entries().length === 0) {
             <admin-empty text="No audit entries match that search." />
           } @else {
-            <table class="w-full">
+            <div class="overflow-x-auto">
+              <table class="w-full min-w-[64rem]">
               <thead class="border-b border-slate-200 bg-slate-50">
                 <tr>
                   <th class="{{ head }}">Timestamp</th>
@@ -87,7 +88,8 @@
                   </tr>
                 }
               </tbody>
-            </table>
+              </table>
+            </div>
             <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-4 py-3 text-sm text-slate-500">
               <span>
                 {{ total() }} {{ total() === 1 ? 'entry' : 'entries' }} · page
