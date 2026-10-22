@@ -158,14 +158,25 @@ func TestOrganizationDirectory(t *testing.T) {
 		t.Fatalf("an outsider sees the organization directory: %+v", eveBooks)
 	}
 
-	// A member reads but does not write; an administrator writes.
+	// The directory is read-only for everyone: a member's write is refused and
+	// so is an administrator's. The cards come from the accounts, not from
+	// editing this book.
 	if _, err := svc.CreateCard(ctx, "bob@example.com", org.ID,
 		contacts.Input{DisplayName: "X", Emails: []contacts.Email{{Value: "x@example.com"}}}); !errors.Is(err, contacts.ErrDenied) {
 		t.Errorf("member writing to the directory = %v, want ErrDenied", err)
 	}
 	if _, err := svc.CreateCard(ctx, "dave@example.com", org.ID,
-		contacts.Input{DisplayName: "Eve", Emails: []contacts.Email{{Value: "eve@other.example"}}}); err != nil {
-		t.Errorf("administrator writing to the directory: %v", err)
+		contacts.Input{DisplayName: "Eve", Emails: []contacts.Email{{Value: "eve@other.example"}}}); !errors.Is(err, contacts.ErrDenied) {
+		t.Errorf("administrator writing to the directory = %v, want ErrDenied", err)
+	}
+	for _, who := range []string{"bob@example.com", "dave@example.com", "alice@example.com"} {
+		level, ok, err := store.NewAddressBooks().Access(ctx, db, org.ID, who)
+		if err != nil || !ok {
+			t.Fatalf("Access(%s) = %v, %v, want membership", who, ok, err)
+		}
+		if level.Level != store.AddressBookShareRead {
+			t.Errorf("Access(%s).Level = %q, want read", who, level.Level)
+		}
 	}
 
 	// The card created at user creation carries the phone that was given.

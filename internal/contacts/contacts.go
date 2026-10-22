@@ -145,8 +145,9 @@ const (
 )
 
 // EnsureOrganization returns the workgroup's directory, creating it on first
-// use. The first administrator to need one becomes its owner; every member of
-// the organization reads it, and administrators may write it.
+// use. The first administrator to need one is recorded as its owner, but the
+// book is read-only for every member: its cards come from the organization's
+// accounts, not from editing the address book.
 func (s *Service) EnsureOrganization(ctx context.Context, owner string, workgroupID int64) (store.AddressBook, error) {
 	return s.books.EnsureOrganization(ctx, s.db, owner, workgroupID, organizationBookName, organizationBookSlug)
 }

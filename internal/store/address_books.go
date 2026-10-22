@@ -267,6 +267,13 @@ func (b *AddressBooks) Accessible(ctx context.Context, q Querier, address string
 		return nil, err
 	}
 	for _, book := range owned {
+		if book.Scope == AddressBookOrganization {
+			// The organization directory is a projection of the accounts, not
+			// a book its creator owns in any useful sense. Everyone who can
+			// read it reads it; nobody edits it through the contacts API.
+			books[book.ID] = AddressBookAccess{AddressBook: book, Level: AddressBookShareRead}
+			continue
+		}
 		books[book.ID] = AddressBookAccess{AddressBook: book, Level: AddressBookShareWrite, IsOwner: true}
 	}
 
@@ -384,27 +391,25 @@ func (b *AddressBooks) Access(ctx context.Context, q Querier, bookID int64, addr
 	}
 	address = strings.ToLower(strings.TrimSpace(address))
 
-	if strings.EqualFold(book.Owner, address) {
-		return AddressBookAccess{AddressBook: book, Level: AddressBookShareWrite, IsOwner: true}, true, nil
-	}
-	switch book.Scope {
-	case AddressBookPersonal:
-		return AddressBookAccess{AddressBook: book}, false, nil
-	case AddressBookOrganization:
+	// The organization directory is read-only even for the administrator who
+	// created it. Its contents are the organization's accounts, maintained by
+	// account creation and the directory sync rather than by editing cards.
+	if book.Scope == AddressBookOrganization {
 		member, err := b.isOrganizationMember(ctx, q, book, address)
 		if err != nil {
 			return AddressBookAccess{}, false, err
 		}
 		if member {
-			admin, err := b.isDomainAdmin(ctx, q, address)
-			if err != nil {
-				return AddressBookAccess{}, false, err
-			}
-			if admin {
-				return AddressBookAccess{AddressBook: book, Level: AddressBookShareWrite}, true, nil
-			}
 			return AddressBookAccess{AddressBook: book, Level: AddressBookShareRead}, true, nil
 		}
+		return AddressBookAccess{AddressBook: book}, false, nil
+	}
+
+	if strings.EqualFold(book.Owner, address) {
+		return AddressBookAccess{AddressBook: book, Level: AddressBookShareWrite, IsOwner: true}, true, nil
+	}
+	switch book.Scope {
+	case AddressBookPersonal:
 		return AddressBookAccess{AddressBook: book}, false, nil
 	case AddressBookShared:
 		level, err := b.ShareLevel(ctx, q, bookID, address)
@@ -435,29 +440,15 @@ func (b *AddressBooks) isOrganizationMember(ctx context.Context, q Querier, book
 		           OR EXISTS (
 		               SELECT 1 FROM domains d
 		               WHERE d.workgroup_id = w.id
-		                 AND lower(d.name) = lower(split_part($2::text, '@', 2))))
+		                 AND lower(d.name) = lower(split_part($2::text, '@', 2)))
+		           OR EXISTS (
+		               SELECT 1 FROM workgroup_members m
+		               WHERE m.workgroup_id = w.id AND m.address = $2::citext))
 		)`, *book.WorkgroupID, address)
 	if err != nil {
 		return false, fmt.Errorf("store: checking organization membership: %w", err)
 	}
 	return member, nil
-}
-
-// isDomainAdmin reports whether the address administers its domain. An
-// organization's directory is maintained by its administrators, so they may
-// write it; everyone else in the organization reads it.
-func (b *AddressBooks) isDomainAdmin(ctx context.Context, q Querier, address string) (bool, error) {
-	var admin bool
-	err := q.GetContext(ctx, &admin,
-		`SELECT COALESCE(is_domain_admin, false) FROM users WHERE address = $1`,
-		strings.ToLower(strings.TrimSpace(address)))
-	if IsNotFound(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("store: checking the domain administrator: %w", err)
-	}
-	return admin, nil
 }
 
 // ShareLevel returns the level a person holds on a book through its shares,
