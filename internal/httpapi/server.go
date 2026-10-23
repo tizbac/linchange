@@ -48,6 +48,7 @@ import (
 	"github.com/linchange/linchange/internal/imapimport"
 	"github.com/linchange/linchange/internal/mapihttp"
 	"github.com/linchange/linchange/internal/meetings"
+	"github.com/linchange/linchange/internal/sfu"
 	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/webmail"
 	"github.com/linchange/linchange/internal/webrtc"
@@ -395,6 +396,18 @@ func New(opts Options) (*Server, error) {
 	// socket layer; the service is the durable one.
 	chatService := chat.New(opts.DB, opts.Blobs, log)
 	chatHub := chat.NewHub(chatService, log)
+	// Meeting media is routed through this process rather than through a
+	// browser mesh. It uses the same public address and ICE servers the TURN
+	// service advertises so a browser outside the host network can reach it.
+	var iceServers []config.ICEServer
+	if opts.WebRTC != nil {
+		iceServers = opts.WebRTC.ICEServers()
+	}
+	chatHub.SetSFU(sfu.New(sfu.Options{
+		PublicIP:   cfg.Server.PublicIP,
+		ICEServers: iceServers,
+		Logger:     log,
+	}))
 
 	// The meetings service turns a calendar event into an invitation: one
 	// email per guest with their own reply link, and a chat room in the local

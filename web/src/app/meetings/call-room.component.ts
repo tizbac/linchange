@@ -563,6 +563,21 @@ export class CallRoomComponent implements OnInit, OnDestroy {
   private screenStream?: MediaStream;
   private readonly peers = new Map<string, RTCPeerConnection>();
   private readonly remoteStreams = new Map<string, MediaStream>();
+
+  // Larger rooms switch to one PeerConnection to the server-side router. The
+  // router forwards audio from the ten people who are speaking and video only
+  // for the streams this client asked to see.
+  private sfuMode = false;
+  private sfuPC?: RTCPeerConnection;
+  private sfuAudioSender?: RTCRtpSender;
+  private sfuCameraSender?: RTCRtpSender;
+  private sfuScreenSender?: RTCRtpSender;
+  private sfuLocalAttached = false;
+  private sfuAudioAllowed = false;
+  private sfuSpeaking = false;
+  private sfuSources: string[] = [];
+  private sfuSubscription = '';
+  private readonly sfuStreams = new Map<string, MediaStream>();
   // ICE can arrive before the offer/answer that gives the peer connection a
   // remote description. Candidates are held here until that description is
   // set, instead of being passed to addIceCandidate too early.
@@ -993,6 +1008,7 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     }
     track.enabled = !track.enabled;
     this.micOn.set(track.enabled);
+    if (!track.enabled) void this.setSFUAudioSending(false);
   }
 
   toggleCamera(): void {
@@ -1003,6 +1019,7 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     }
     track.enabled = !track.enabled;
     this.cameraOn.set(track.enabled);
+    void this.syncSFUMedia();
   }
 
   // shareScreen starts a second video feed beside the camera. The screen is
@@ -1038,6 +1055,7 @@ export class CallRoomComponent implements OnInit, OnDestroy {
       for (const pc of this.peers.values()) {
         await this.attachScreenTrack(pc, track);
       }
+      await this.syncSFUMedia();
       this.chat.sendControl('screen-start');
     } catch {
       this.screenError.set($localize`:@@call.shareCancelled:Screen sharing was cancelled or refused.`);
@@ -1052,6 +1070,7 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     for (const pc of this.peers.values()) {
       void this.attachScreenTrack(pc);
     }
+    void this.syncSFUMedia();
     this.chat.sendControl('screen-stop');
   }
 
@@ -1095,7 +1114,45 @@ export class CallRoomComponent implements OnInit, OnDestroy {
     const me = (this.chat.self() || this.auth.user()).toLowerCase();
     try {
       switch (signal.type) {
+        case 'rtc-mode':
+          if (signal.sfu === true && !this.sfuMode) {
+            await this.startSFU();
+          } else if (signal.sfu === false && this.sfuMode) {
+            await this.stopSFU();
+          }
+          break;
+        case 'sfu-offer':
+          await this.answerSFUOffer(signal);
+          break;
+        case 'sfu-answer':
+          if (this.sfuPC && signal.sdp && this.sfuPC.signalingState === 'have-local-offer') {
+            await this.sfuPC.setRemoteDescription(signal.sdp as RTCSessionDescriptionInit);
+          }
+          break;
+        case 'sfu-ice':
+          if (this.sfuPC && signal.candidate) {
+            try {
+              await this.sfuPC.addIceCandidate(signal.candidate as RTCIceCandidateInit);
+            } catch {
+              // A candidate from a previous negotiation is harmless.
+            }
+          }
+          break;
+        case 'sfu-sources':
+          this.sfuSources = signal.streams ?? [];
+          this.syncSFUSubscription();
+          break;
+        case 'sfu-audio':
+          this.sfuAudioAllowed = signal.allowed === true;
+          await this.setSFUAudioSending(this.sfuAudioAllowed && this.sfuSpeaking);
+          break;
         case 'rtc-peers':
+          // In SFU mode the list is who is in the room, not a set of peers to
+          // offer to. The media router carries the call.
+          if (this.sfuMode) {
+            for (const peer of signal.peers ?? []) this.ensureParticipant(peer);
+            break;
+          }
           // This tab is the newcomer, so it offers to everyone already here.
           // The existing peers wait for that offer, which keeps both sides from
           // offering at once.
@@ -1126,6 +1183,7 @@ export class CallRoomComponent implements OnInit, OnDestroy {
         case 'rtc-leave':
           if (signal.member) {
             this.dropPeer(signal.member);
+            this.removeSFUParticipant(signal.member);
           }
           break;
         case 'hand-raise':
@@ -1169,6 +1227,7 @@ export class CallRoomComponent implements OnInit, OnDestroy {
           this.floorSpeaker.set(signal.speaker ?? '');
           break;
         case 'rtc-join':
+          if (this.sfuMode && signal.member) this.ensureParticipant(signal.member);
           // A newcomer missed an earlier screen-start even though its offer
           // carries the screen track. Re-announce so its UI shows the screen.
           if (this.sharing()) {
@@ -1184,6 +1243,194 @@ export class CallRoomComponent implements OnInit, OnDestroy {
         this.callError.set($localize`:@@call.connectionFailed:A call connection could not be established.`);
       }
     }
+  }
+
+  // --- server-side media for larger rooms ---------------------------------
+
+  private async startSFU(): Promise<void> {
+    this.sfuMode = true;
+    this.sfuLocalAttached = false;
+    this.sfuAudioAllowed = false;
+    this.sfuSpeaking = false;
+    this.sfuSources = [];
+    this.sfuSubscription = '';
+    for (const pc of this.peers.values()) pc.close();
+    this.peers.clear();
+    this.offered.clear();
+    this.answered.clear();
+    this.remoteStreams.clear();
+    this.sfuStreams.clear();
+    this.remoteScreens.set({});
+    this.screenSharers.set([]);
+    const me = (this.chat.self() || this.auth.user()).toLowerCase();
+    this.participants.set([{ member: me, self: true, stream: this.localStream ?? new MediaStream() }]);
+    this.chat.sendControl('sfu-join');
+  }
+
+  private async stopSFU(): Promise<void> {
+    this.sfuMode = false;
+    this.sfuPC?.close();
+    this.sfuPC = undefined;
+    this.sfuAudioSender = undefined;
+    this.sfuCameraSender = undefined;
+    this.sfuScreenSender = undefined;
+    this.sfuLocalAttached = false;
+    this.sfuAudioAllowed = false;
+    this.sfuSpeaking = false;
+    this.sfuSubscription = '';
+    this.sfuStreams.clear();
+    this.remoteScreens.set({});
+    this.screenSharers.set([]);
+    // Ask the room for the members again; this is also what starts the mesh
+    // offers for a room that has dropped back to four people.
+    this.chat.sendSignal('rtc-join', '', {});
+  }
+
+  private createSFUPeer(): RTCPeerConnection {
+    const pc = new RTCPeerConnection({ iceServers: this.iceServers });
+    this.sfuPC = pc;
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        this.chat.sendControl('sfu-ice', { candidate: event.candidate.toJSON() });
+      }
+    };
+    pc.ontrack = (event) => this.onSFUTrack(event);
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        this.callError.set($localize`:@@call.connectionFailed:A call connection could not be established.`);
+      }
+    };
+    return pc;
+  }
+
+  private async answerSFUOffer(signal: ChatSignal): Promise<void> {
+    if (!signal.sdp) return;
+    const pc = this.sfuPC ?? this.createSFUPeer();
+    await pc.setRemoteDescription(signal.sdp as RTCSessionDescriptionInit);
+    if (!this.sfuLocalAttached) {
+      await this.attachSFULocal(pc);
+      this.sfuLocalAttached = true;
+    }
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    this.chat.sendControl('sfu-answer', { sdp: answer });
+  }
+
+  // The first server offer carries three receive lines, in the same order the
+  // peer-to-peer mesh uses: microphone, camera, screen. Subsequent offers only
+  // add the video the server has decided this client may see.
+  private async attachSFULocal(pc: RTCPeerConnection): Promise<void> {
+    const audio = this.localStream?.getAudioTracks()[0];
+    const camera = this.localStream?.getVideoTracks()[0];
+    const screen = this.screenStream?.getVideoTracks()[0];
+    const transceivers = pc.getTransceivers();
+    const attach = async (index: number, track?: MediaStreamTrack): Promise<RTCRtpSender | undefined> => {
+      const transceiver = transceivers[index];
+      if (!transceiver) return undefined;
+      transceiver.direction = 'sendonly';
+      await transceiver.sender.replaceTrack(track ?? null);
+      return transceiver.sender;
+    };
+    this.sfuAudioSender = await attach(0, this.sfuAudioAllowed ? audio : undefined);
+    this.sfuCameraSender = await attach(1, this.cameraOn() ? camera : undefined);
+    this.sfuScreenSender = await attach(2, this.sharing() ? screen : undefined);
+  }
+
+  private async setSFUAudioSending(send: boolean): Promise<void> {
+    if (!this.sfuAudioSender) return;
+    const track = this.localStream?.getAudioTracks()[0];
+    await this.sfuAudioSender.replaceTrack(send && track && track.enabled ? track : null);
+  }
+
+  private async syncSFUMedia(): Promise<void> {
+    if (!this.sfuMode) return;
+    if (this.sfuCameraSender) {
+      const camera = this.localStream?.getVideoTracks()[0];
+      await this.sfuCameraSender.replaceTrack(this.cameraOn() ? camera ?? null : null);
+    }
+    if (this.sfuScreenSender) {
+      const screen = this.screenStream?.getVideoTracks()[0];
+      await this.sfuScreenSender.replaceTrack(this.sharing() ? screen ?? null : null);
+    }
+  }
+
+  private onSFUTrack(event: RTCTrackEvent): void {
+    // The server names its local track after the source. A browser that does
+    // not materialise the MSID still gives us the track id, which is the same
+    // source key.
+    const streamID = event.streams[0]?.id || event.track.id;
+    if (!streamID) return;
+    const screen = streamID.endsWith(':screen');
+    const member = screen ? streamID.slice(0, -':screen'.length) : streamID;
+    let stream = this.sfuStreams.get(streamID);
+    if (!stream) {
+      stream = new MediaStream();
+      this.sfuStreams.set(streamID, stream);
+    }
+    if (!stream.getTrackById(event.track.id)) stream.addTrack(event.track);
+    if (screen) {
+      this.remoteScreens.update((screens) => ({ ...screens, [member]: stream! }));
+      if (!this.screenSharers().includes(member)) {
+        this.screenSharers.update((list) => [...list, member]);
+      }
+    } else {
+      this.participants.update((list) => [
+        ...list.filter((p) => p.member !== member),
+        { member, self: false, stream: stream! },
+      ]);
+      this.addMeter(member, stream);
+    }
+    const refresh = (): void => {
+      this.participants.update((list) => [...list]);
+      this.remoteScreens.update((screens) => ({ ...screens }));
+    };
+    event.track.addEventListener('unmute', refresh);
+    event.track.addEventListener('mute', refresh);
+    event.track.addEventListener('ended', refresh);
+  }
+
+  private ensureParticipant(member: string): void {
+    if (!member || member === (this.chat.self() || this.auth.user()).toLowerCase()) return;
+    this.participants.update((list) =>
+      list.some((p) => p.member === member)
+        ? list
+        : [...list, { member, self: false, stream: this.sfuStreams.get(member) ?? new MediaStream() }],
+    );
+  }
+
+  private removeSFUParticipant(member: string): void {
+    this.participants.update((list) => list.filter((p) => p.member !== member));
+    this.sfuStreams.delete(member);
+    this.sfuStreams.delete(`${member}:screen`);
+    const screens = { ...this.remoteScreens() };
+    delete screens[member];
+    this.remoteScreens.set(screens);
+    this.screenSharers.update((list) => list.filter((m) => m !== member));
+  }
+
+  // syncSFUSubscription is the client half of "tell the server what I am
+  // watching". The list is capped at ten by the server; the client asks for
+  // screens first, then the people whose tiles are on screen.
+  private syncSFUSubscription(): void {
+    if (!this.sfuMode) return;
+    const me = (this.chat.self() || this.auth.user()).toLowerCase();
+    const available = this.sfuSources.filter((key) => !key.startsWith(`${me}`) && key.toLowerCase() !== me);
+    const ordered = [...available.filter((key) => key.endsWith(':screen')), ...available.filter((key) => !key.endsWith(':screen'))];
+    const selected = ordered.slice(0, 10);
+    const signature = selected.join(',');
+    if (signature === this.sfuSubscription) return;
+    this.sfuSubscription = signature;
+    this.chat.sendControl('sfu-subscribe', { streams: selected });
+  }
+
+  // setSFUSpeaking is driven by the microphone meter. A silent microphone is
+  // detached from the sender entirely, not merely muted: the server never sees
+  // silence as a stream.
+  private setSFUSpeaking(speaking: boolean): void {
+    if (!this.sfuMode || speaking === this.sfuSpeaking) return;
+    this.sfuSpeaking = speaking;
+    this.chat.sendControl('sfu-speaking', { speaking });
+    if (!speaking) void this.setSFUAudioSending(false);
   }
 
   private createPeer(remote: string): RTCPeerConnection {
@@ -1445,6 +1692,14 @@ export class CallRoomComponent implements OnInit, OnDestroy {
         .filter(([, level]) => level > 0.03)
         .sort((a, b) => b[1] - a[1])[0];
       this.activeSpeaker.set(active ? active[0] : '');
+      if (this.sfuMode) {
+        const me = (this.chat.self() || this.auth.user()).toLowerCase();
+        const level = this.levels()[me] ?? 0;
+        // Hysteresis keeps a breath between words from tearing the track down
+        // and back up on every poll.
+        if (!this.sfuSpeaking && level > 0.04) this.setSFUSpeaking(true);
+        else if (this.sfuSpeaking && level < 0.02) this.setSFUSpeaking(false);
+      }
     }, 150);
   }
 
@@ -1467,6 +1722,17 @@ export class CallRoomComponent implements OnInit, OnDestroy {
       pc.close();
     }
     this.peers.clear();
+    this.sfuPC?.close();
+    this.sfuPC = undefined;
+    this.sfuAudioSender = undefined;
+    this.sfuCameraSender = undefined;
+    this.sfuScreenSender = undefined;
+    this.sfuMode = false;
+    this.sfuLocalAttached = false;
+    this.sfuAudioAllowed = false;
+    this.sfuSpeaking = false;
+    this.sfuSubscription = '';
+    this.sfuStreams.clear();
     this.remoteStreams.clear();
     this.remoteScreens.set({});
     this.screenSharers.set([]);

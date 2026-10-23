@@ -50,6 +50,8 @@ export interface ChatSignal {
   allowed?: boolean;
   speaker?: string;
   hands?: string[];
+  sfu?: boolean;
+  streams?: string[];
 }
 
 interface InboundFrame {
@@ -66,6 +68,8 @@ interface InboundFrame {
   allowed?: boolean;
   speaker?: string;
   hands?: string[];
+  sfu?: boolean;
+  streams?: string[];
 }
 
 // ChatService owns this tab's chat socket and the conversation it is showing.
@@ -343,6 +347,8 @@ export class ChatService {
         allowed: frame.allowed,
         speaker: frame.speaker,
         hands: frame.hands,
+        sfu: frame.sfu,
+        streams: frame.streams,
       };
       for (const handler of this.signalHandlers) {
         handler(signal);
@@ -420,6 +426,7 @@ export class ChatService {
 function isSignalFrame(type: string): boolean {
   return (
     type.startsWith('rtc-') ||
+    type.startsWith('sfu-') ||
     type === 'hand-raise' ||
     type === 'hand-lower' ||
     type === 'allow-speak' ||

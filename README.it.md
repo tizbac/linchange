@@ -79,10 +79,13 @@ chat, riunioni o rubriche da installare: tutto è nello stesso server.
   annullamento, e una sala riunioni a tutto schermo con galleria in stile Teams
   e barra laterale della chat comprimibile. Un ospite entra dal link
   dell'invito senza account; fotocamera e microfono sono opzionali.
-- **Chiamate WebRTC** nel browser: media peer-to-peer, griglia centrata su chi
-  parla, condivisione dello schermo come flusso separato solo in visione,
-  alzata di mano e gestione della parola per conferenze a senso unico e
-  webinar.
+- **Chiamate WebRTC** nel browser: media instradati dal server integrato, così
+  ogni partecipante mantiene una sola connessione e una stanza può arrivare a
+  cento persone. Ogni client riceve fino a dieci flussi di fotocamera o
+  schermo; l'audio segue i dieci interlocutori attivi e un microfono silenzioso
+  non invia nulla. La condivisione dello schermo è un flusso separato solo in
+  visione, con alzata di mano e gestione della parola per conferenze a senso
+  unico e webinar.
 - **STUN/TURN integrato** per impostazione predefinita, con credenziali TURN a
   breve scadenza e possibilità di usare un server ICE esterno.
 

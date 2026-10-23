@@ -76,8 +76,11 @@ address-book service to install: everything ships in the same server.
   full-screen meeting room with a Teams-style gallery and a collapsible chat
   sidebar. A guest joins from the invitation link without an account; camera
   and microphone are optional.
-- **WebRTC calls** in the browser: peer-to-peer media, a speaker-focused grid,
-  screen sharing as a separate view-only feed, hand raising and
+- **WebRTC calls** in the browser: media routed through the built-in server,
+  so every participant keeps one connection and a room can grow to a hundred
+  people. Each client receives up to ten camera or screen streams; audio
+  follows the ten active speakers, and silent microphones send nothing.
+  Screen sharing is a separate view-only feed, with hand raising and a
   presenter-controlled floor for one-way conferences and webinars.
 - **Built-in STUN/TURN** by default, with short-lived TURN credentials and an
   option to point at an external ICE server instead.

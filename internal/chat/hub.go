@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/linchange/linchange/internal/sfu"
 )
 
 // Hub carries live chat over WebSocket: messages, typing, read receipts, and
@@ -33,7 +35,14 @@ type Hub struct {
 	// they live with the connections rather than in the database.
 	grants map[int64]string
 	hands  map[int64]map[string]struct{}
+	// sfu routes the media of larger calls. It is nil in deployments and
+	// tests that never wire one, in which case every call stays peer-to-peer.
+	sfu *sfu.Manager
 }
+
+// SetSFU attaches the server-side media router. It is set once during
+// construction, before any socket is accepted.
+func (h *Hub) SetSFU(manager *sfu.Manager) { h.sfu = manager }
 
 // callRoom is the set of members currently in one meeting's call, kept with the
 // room's public uid so a departure can be announced without a database round
@@ -41,6 +50,10 @@ type Hub struct {
 type callRoom struct {
 	uid     string
 	members map[string]struct{}
+	// sfu is true while the room is above the peer-to-peer threshold. It is
+	// part of the live call rather than of the meeting so it disappears with
+	// the last participant.
+	sfu bool
 }
 
 // client is one live socket.
@@ -72,6 +85,9 @@ type frame struct {
 	SDP           json.RawMessage `json:"sdp,omitempty"`
 	Candidate     json.RawMessage `json:"candidate,omitempty"`
 	ClientID      string          `json:"clientId,omitempty"`
+	// Streams and Speaking belong to the server-side media path used by calls.
+	Streams  []string `json:"streams,omitempty"`
+	Speaking bool     `json:"speaking,omitempty"`
 }
 
 // outFrame is one server-to-client message. One struct serves every event type
@@ -94,6 +110,10 @@ type outFrame struct {
 	Allowed *bool    `json:"allowed,omitempty"`
 	Speaker string   `json:"speaker,omitempty"`
 	Hands   []string `json:"hands,omitempty"`
+	// SFU tells the room to use the server-side media router. Streams carries
+	// the published sources the router is currently offering to a subscriber.
+	SFU     *bool    `json:"sfu,omitempty"`
+	Streams []string `json:"streams,omitempty"`
 }
 
 // NewHub builds the hub over a chat service.
@@ -218,6 +238,8 @@ func (h *Hub) handle(ctx context.Context, c *client, in frame) error {
 		return h.leaveCall(ctx, c, in)
 	case "rtc-offer", "rtc-answer", "rtc-ice":
 		return h.relay(ctx, c, in)
+	case "sfu-join", "sfu-answer", "sfu-ice", "sfu-subscribe", "sfu-speaking":
+		return h.sfuSignal(ctx, c, in)
 	case "hand-raise":
 		return h.raiseHand(ctx, c, in, true)
 	case "hand-lower":
@@ -323,8 +345,8 @@ func (h *Hub) markRead(ctx context.Context, c *client, in frame) error {
 }
 
 // joinCall puts the member into the meeting's call and tells them who is
-// already there. The list is the peers they must open a WebRTC connection to;
-// the server only introduces them and relays the signalling.
+// already there. Media always goes through the server-side router; the peers
+// list is the room's membership for the participant UI.
 func (h *Hub) joinCall(ctx context.Context, c *client, in frame) error {
 	conv, err := h.conversation(ctx, c, in.Conversation)
 	if err != nil {
@@ -347,7 +369,21 @@ func (h *Hub) joinCall(ctx context.Context, c *client, in frame) error {
 			others = append(others, member)
 		}
 	}
+	sfuMode := h.sfu != nil
+	changed := room.sfu != sfuMode
+	room.sfu = sfuMode
 	h.mu.Unlock()
+
+	if changed && sfuMode {
+		// The router is the only media path, so every participant in the room
+		// learns the mode together.
+		on := true
+		h.broadcast(append(append([]string(nil), others...), c.member), outFrame{
+			Type:         "rtc-mode",
+			Conversation: conv.UID,
+			SFU:          &on,
+		})
+	}
 
 	if err := c.send(outFrame{
 		Type:         "rtc-peers",
@@ -355,6 +391,18 @@ func (h *Hub) joinCall(ctx context.Context, c *client, in frame) error {
 		Peers:        others,
 	}); err != nil {
 		return err
+	}
+	if sfuMode && !changed {
+		// A late joiner that arrived after the room switched still needs the
+		// mode; the broadcast above only fires on the crossing.
+		on := true
+		if err := c.send(outFrame{
+			Type:         "rtc-mode",
+			Conversation: conv.UID,
+			SFU:          &on,
+		}); err != nil {
+			return err
+		}
 	}
 
 	// Hand/floor state is a moment, not history, so a late joiner is told
@@ -406,6 +454,7 @@ func (h *Hub) dropFromCall(conversationID int64, member string) {
 		remaining = append(remaining, other)
 	}
 	uid := room.uid
+	wasSFU := room.sfu
 	// A member who leaves gives up the floor and any raised hand: neither
 	// outlives the connection that held it.
 	revoked := h.grants[conversationID] == member
@@ -427,6 +476,9 @@ func (h *Hub) dropFromCall(conversationID int64, member string) {
 		Conversation: uid,
 		Member:       member,
 	})
+	if wasSFU {
+		h.sfu.Leave(uid, member)
+	}
 	if revoked {
 		h.broadcast(remaining, outFrame{
 			Type:         "speaker",
@@ -470,6 +522,64 @@ func (h *Hub) relay(ctx context.Context, c *client, in frame) error {
 		return errors.New("the recipient is not connected")
 	}
 	return nil
+}
+
+// sfuSignal routes the server-side media signalling for one room. The socket
+// and its conversation membership are the authorisation: the media manager
+// never sees a member that this check did not admit.
+func (h *Hub) sfuSignal(ctx context.Context, c *client, in frame) error {
+	if h.sfu == nil {
+		return errors.New("server-side media is not enabled")
+	}
+	conv, err := h.conversation(ctx, c, in.Conversation)
+	if err != nil {
+		return err
+	}
+	if conv.Kind != KindMeeting {
+		return errors.New("media is only available in meeting rooms")
+	}
+	h.mu.RLock()
+	inCall := false
+	if room := h.calls[conv.ID]; room != nil {
+		_, inCall = room.members[c.member]
+	}
+	h.mu.RUnlock()
+	if !inCall {
+		return errors.New("join the call before its media")
+	}
+	send := func(sig sfu.Signal) {
+		out := outFrame{
+			Type:         sig.Type,
+			Conversation: conv.UID,
+			SDP:          sig.SDP,
+			Candidate:    sig.Candidate,
+			Streams:      sig.Streams,
+			Member:       sig.Member,
+		}
+		if sig.Type == "sfu-audio" {
+			allowed := sig.Allowed
+			out.Allowed = &allowed
+		}
+		if err := c.send(out); err != nil {
+			h.log.Warn("chat: sfu signal failed", "type", sig.Type, "member", c.member, "error", err)
+		}
+	}
+	switch in.Type {
+	case "sfu-join":
+		return h.sfu.Join(conv.UID, c.member, send)
+	case "sfu-answer":
+		return h.sfu.Answer(conv.UID, c.member, in.SDP)
+	case "sfu-ice":
+		return h.sfu.AddCandidate(conv.UID, c.member, in.Candidate)
+	case "sfu-subscribe":
+		h.sfu.Subscribe(conv.UID, c.member, in.Streams)
+		return nil
+	case "sfu-speaking":
+		h.sfu.Speaking(conv.UID, c.member, in.Speaking)
+		return nil
+	default:
+		return errors.New("unknown media frame")
+	}
 }
 
 // raiseHand asks for the floor in a one-way meeting, or withdraws the request.
