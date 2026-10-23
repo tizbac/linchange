@@ -337,14 +337,12 @@ func (s *Service) Send(ctx context.Context, owner string, req ComposeRequest) (S
 		return SendResult{}, err
 	}
 
-	from := strings.ToLower(strings.TrimSpace(req.From))
-	if from == "" {
-		from = strings.ToLower(owner)
-	}
+	from := composeAddress(req.From, owner)
 	// Otherwise a client could send as anybody by putting their address in From.
 	if from != strings.ToLower(owner) && !s.sendsAs(ctx, owner, from) {
 		return SendResult{}, fmt.Errorf("%w: you cannot send as %s", ErrDenied, from)
 	}
+	fromName := s.senderDisplayName(ctx, from)
 
 	// The signature goes on after validation and before the message is built,
 	// because it is part of what is sent rather than part of what the user
@@ -355,7 +353,7 @@ func (s *Service) Send(ctx context.Context, owner string, req ComposeRequest) (S
 		return SendResult{}, err
 	}
 
-	raw, err := s.buildWithImages(&req, from, mail.NewMessageID(s.hostname), images)
+	raw, err := s.buildWithImages(&req, from, fromName, mail.NewMessageID(s.hostname), images)
 	if err != nil {
 		return SendResult{}, err
 	}
@@ -415,7 +413,8 @@ func (s *Service) SaveDraft(ctx context.Context, owner string, req ComposeReques
 	}
 
 	messageID := mail.NewMessageID(s.hostname)
-	raw, err := s.buildDraft(&req, owner, messageID)
+	fromName := s.senderDisplayName(ctx, owner)
+	raw, err := s.buildDraft(&req, owner, fromName, messageID)
 	if err != nil {
 		return 0, err
 	}
@@ -454,8 +453,8 @@ func (s *Service) discardDraft(ctx context.Context, owner string, id int64) erro
 }
 
 // build turns a compose request into RFC 5322 bytes.
-func (s *Service) build(req *ComposeRequest, from, messageID string) ([]byte, error) {
-	return s.buildAs(req, from, messageID, nil, false)
+func (s *Service) build(req *ComposeRequest, from, fromName, messageID string) ([]byte, error) {
+	return s.buildAs(req, from, fromName, messageID, nil, false)
 }
 
 // buildWithImages is build for a message that carries images the signature
@@ -463,8 +462,8 @@ func (s *Service) build(req *ComposeRequest, from, messageID string) ([]byte, er
 // the signature is read once, by the caller that already knows what the user
 // sent, and reading it again for the build would be a second chance to disagree
 // with the copy that was appended to the body.
-func (s *Service) buildWithImages(req *ComposeRequest, from, messageID string, images []mail.InlineImage) ([]byte, error) {
-	return s.buildAs(req, from, messageID, images, false)
+func (s *Service) buildWithImages(req *ComposeRequest, from, fromName, messageID string, images []mail.InlineImage) ([]byte, error) {
+	return s.buildAs(req, from, fromName, messageID, images, false)
 }
 
 // buildDraft renders a request that is only being stored.
@@ -477,21 +476,18 @@ func (s *Service) buildWithImages(req *ComposeRequest, from, messageID string, i
 // It never carries the signature either, for the same reason it is not required
 // to be complete: the signature is added when the message goes out, so a draft
 // saved ten times has one signature when it is sent rather than ten in the folder.
-func (s *Service) buildDraft(req *ComposeRequest, from, messageID string) ([]byte, error) {
-	return s.buildAs(req, from, messageID, nil, true)
+func (s *Service) buildDraft(req *ComposeRequest, from, fromName, messageID string) ([]byte, error) {
+	return s.buildAs(req, from, fromName, messageID, nil, true)
 }
 
-func (s *Service) buildAs(req *ComposeRequest, from, messageID string, signatureImages []mail.InlineImage, asDraft bool) ([]byte, error) {
+func (s *Service) buildAs(req *ComposeRequest, from, fromName, messageID string, signatureImages []mail.InlineImage, asDraft bool) ([]byte, error) {
 	attachments, err := s.decodeAttachments(req.Attachment)
 	if err != nil {
 		return nil, err
 	}
 
 	builder := mail.NewBuilder()
-	builder.From(mail.Address{Address: from})
-	if n := senderName(req.From); n != "" {
-		builder.From(mail.Address{Address: from, Name: n})
-	}
+	builder.From(mail.Address{Address: from, Name: fromName})
 	if asDraft {
 		builder.Draft()
 	}
@@ -740,11 +736,40 @@ func cutByte(b []byte, sep byte) (before, after []byte, found bool) {
 	return b, nil, false
 }
 
-// senderName returns the display name a composer put on the From address, which
-// is only usable if it is the caller's own address.
-func senderName(from string) string {
-	_, name, _ := strings.Cut(strings.TrimSpace(from), "<")
-	return strings.Trim(strings.TrimSpace(name), " <>")
+// composeAddress extracts the mailbox from a client-supplied From value.
+//
+// The web client sends a bare address, but other clients put a display name in
+// the same field. The display name is never trusted: the From name is read from
+// the account or shared mailbox being sent as.
+func composeAddress(raw, owner string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		raw = owner
+	}
+	if list, err := mail.ParseAddressList(raw); err == nil && len(list) == 1 {
+		return strings.ToLower(strings.TrimSpace(list[0].Address))
+	}
+	return strings.ToLower(raw)
+}
+
+// senderDisplayName returns the name that belongs beside from in the From
+// header. A shared mailbox uses the team name, an alias its own label, and a
+// person the name stored on their account.
+func (s *Service) senderDisplayName(ctx context.Context, from string) string {
+	if box, err := s.shared.Get(ctx, s.db, from); err == nil {
+		if name := strings.TrimSpace(box.DisplayName); name != "" {
+			return name
+		}
+	}
+	if alias, err := s.aliases.Get(ctx, s.db, from); err == nil {
+		if name := strings.TrimSpace(alias.DisplayName); name != "" {
+			return name
+		}
+	}
+	if user, err := s.users.Get(ctx, s.db, from); err == nil {
+		return strings.TrimSpace(user.DisplayName)
+	}
+	return ""
 }
 
 func toMailAddresses(in []Address) []mail.Address {

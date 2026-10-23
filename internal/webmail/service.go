@@ -69,6 +69,7 @@ type Service struct {
 
 	mailboxes  *imapd.MailboxRepo
 	messages   *imapd.MessageRepo
+	users      *store.Users
 	aliases    *store.Aliases
 	shared     *store.SharedMailboxes
 	grants     *store.SharedMailboxGrants
@@ -132,6 +133,7 @@ func New(opts Options) (*Service, error) {
 		maxMessageBytes:    maxMessage,
 		mailboxes:          imapd.NewMailboxRepo(),
 		messages:           imapd.NewMessageRepo(),
+		users:              store.NewUsers(),
 		aliases:            store.NewAliases(),
 		shared:             store.NewSharedMailboxes(),
 		grants:             store.NewSharedMailboxGrants(),
