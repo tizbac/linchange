@@ -1160,3 +1160,77 @@ func TestAdminCalendarSharesNameTheGroup(t *testing.T) {
 		t.Errorf("after removing the share, the list is %d %v, want an empty 200", code, listed)
 	}
 }
+
+// The group member view is a table of its own: it searches and pages on the
+// server so opening a group with thousands of addresses does not send the whole
+// directory to the browser.
+func TestAdminGroupMembersCanBeSearchedAndPaged(t *testing.T) {
+	srv, db := newAdminServer(t)
+	_, headers := seedAdmin(t, srv, db)
+
+	code, wg := do(t, srv, http.MethodPost, "/api/v1/admin/workgroups",
+		map[string]any{"name": "Example", "domain": "example.com"}, headers)
+	if code != http.StatusCreated {
+		t.Fatalf("creating the organization = %d %v, want 201", code, wg)
+	}
+	wgID := int(wg["id"].(float64))
+	code, group := do(t, srv, http.MethodPost,
+		fmt.Sprintf("/api/v1/admin/workgroups/%d/groups", wgID),
+		map[string]any{"name": "Sales"}, headers)
+	if code != http.StatusCreated {
+		t.Fatalf("creating the group = %d %v, want 201", code, group)
+	}
+	groupID := int(group["id"].(float64))
+	membersURL := fmt.Sprintf("/api/v1/admin/workgroups/%d/groups/%d/members", wgID, groupID)
+	for _, address := range []string{"bob@example.com", "carol@example.com", "dave@example.com"} {
+		seedUser(t, db, address, "local", true, true)
+		code, body := do(t, srv, http.MethodPost, membersURL,
+			map[string]any{"address": address}, headers)
+		if code != http.StatusNoContent {
+			t.Fatalf("adding %s = %d %v, want 204", address, code, body)
+		}
+	}
+
+	code, listed := do(t, srv, http.MethodGet, membersURL+"?q=carol&limit=1", nil, headers)
+	if code != http.StatusOK {
+		t.Fatalf("searching members = %d %v, want 200", code, listed)
+	}
+	if got := membersOf(listed); len(got) != 1 || got[0] != "carol@example.com" {
+		t.Errorf("members matching carol = %v, want carol@example.com", got)
+	}
+	if got := int(listed["total"].(float64)); got != 1 {
+		t.Errorf("total matching carol = %d, want 1", got)
+	}
+
+	code, listed = do(t, srv, http.MethodGet, membersURL+"?limit=2&offset=1", nil, headers)
+	if code != http.StatusOK {
+		t.Fatalf("paging members = %d %v, want 200", code, listed)
+	}
+	if got := membersOf(listed); len(got) != 2 || got[0] != "carol@example.com" || got[1] != "dave@example.com" {
+		t.Errorf("second page = %v, want carol and dave", got)
+	}
+	if got := int(listed["total"].(float64)); got != 3 {
+		t.Errorf("total = %d, want 3", got)
+	}
+
+	code, body := do(t, srv, http.MethodDelete,
+		membersURL+"/carol%40example.com", nil, headers)
+	if code != http.StatusNoContent {
+		t.Fatalf("removing carol = %d %v, want 204", code, body)
+	}
+	code, listed = do(t, srv, http.MethodGet, membersURL, nil, headers)
+	if code != http.StatusOK || len(membersOf(listed)) != 2 {
+		t.Errorf("after removing carol, members = %d %v, want two", code, listed)
+	}
+}
+
+func membersOf(body map[string]any) []string {
+	raw, _ := body["members"].([]any)
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if address, ok := item.(string); ok {
+			out = append(out, address)
+		}
+	}
+	return out
+}

@@ -2166,12 +2166,19 @@ func (s *Server) deleteWorkgroupGroup(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// listWorkgroupGroupMembers answers who is in a group. For the organization's
-// own group that is every address in its domains, which is worth showing rather
-// than hiding behind a count: it is the group somebody picks to reach everyone.
+// listWorkgroupGroupMembers answers who is in a group, filtered and paged by the
+// same q/limit/offset contract as the other administrative tables. For the
+// organization's own group that is every address in its domains, which is worth
+// showing rather than hiding behind a count: it is the group somebody picks to
+// reach everyone.
 func (s *Server) listWorkgroupGroupMembers(w http.ResponseWriter, r *http.Request) {
 	id, groupID, ok := s.workgroupGroupPath(w, r)
 	if !ok {
+		return
+	}
+	opts, err := adminListOptionsFrom(r)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	members, err := s.admin.WorkgroupGroupMembers(r.Context(), Principal(r.Context()), id, groupID)
@@ -2179,7 +2186,10 @@ func (s *Server) listWorkgroupGroupMembers(w http.ResponseWriter, r *http.Reques
 		adminErrors(w, s, err)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"members": members})
+	out, total := pageAdmin(members, opts)
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"members": out, "total": total, "limit": opts.Limit, "offset": opts.Offset,
+	})
 }
 
 // addWorkgroupGroupMember adds an address to a group.

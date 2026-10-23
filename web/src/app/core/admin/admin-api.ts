@@ -571,8 +571,12 @@ export class AdminApi {
     return this.request('delete', `/workgroups/${id}/groups/${groupID}`, null) as Promise<void>;
   }
 
-  listWorkgroupGroupMembers(id: number, groupID: number): Promise<{ members: string[] }> {
-    return this.get(`/workgroups/${id}/groups/${groupID}/members`);
+  listWorkgroupGroupMembers(
+    id: number,
+    groupID: number,
+    filter: AdminListFilter = {},
+  ): Promise<{ members: string[]; total: number }> {
+    return this.get(`/workgroups/${id}/groups/${groupID}/members${listQuery(filter)}`);
   }
 
   addWorkgroupGroupMember(id: number, groupID: number, body: { address: string }): Promise<void> {

@@ -274,45 +274,112 @@ type Tab = 'general' | 'members' | 'calendars' | 'groups' | 'addressbooks';
           }
 
           @if (tab() === 'groups') {
-            <admin-panel title="Groups" [bodyClass]="'p-0'">
-              <div class="flex flex-wrap items-end gap-3 px-4 pt-4">
-                <admin-search [query]="groupQuery" (search)="searchGroups($event)" placeholder="Search groups…" />
-                <span class="flex-1"></span>
-                <label class="block">
-                  <span class="mb-1 block text-xs font-medium text-slate-600">New group</span>
-                  <input class="{{ inputClass }}" name="newGroup" [(ngModel)]="newGroup" placeholder="Name" />
-                </label>
-                <admin-button [disabled]="busy() || !newGroup.trim()" (pressed)="createGroup()">Create</admin-button>
-              </div>
-              <table class="mt-4 w-full">
-                <thead class="border-b border-slate-200 bg-slate-50">
-                  <tr>
-                    <th class="{{ head }}">Name</th>
-                    <th class="{{ head }}">Members</th>
-                    <th class="{{ head }}"></th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-slate-100">
-                  @for (group of groups(); track group.id) {
-                    <tr>
-                      <td class="{{ cell }} font-medium">
-                        {{ group.name }}
-                        @if (group.everyone) { <span class="ml-2 text-xs text-slate-400">everyone</span> }
-                      </td>
-                      <td class="{{ cell }}">{{ group.member_count }}</td>
-                      <td class="{{ cell }} text-right">
-                        @if (!group.everyone) {
-                          <admin-button variant="danger" [disabled]="busy()" (pressed)="removeGroup(group)">Delete</admin-button>
+            @if (selectedGroup(); as group) {
+              <admin-panel
+                [title]="'Members of ' + group.name"
+                [hint]="group.everyone
+                  ? 'Everyone with an address in this organization’s domains. Membership follows the directory and cannot be edited here.'
+                  : 'Addresses that receive mail sent to this group.'"
+                [bodyClass]="'p-0'"
+              >
+                <div class="flex flex-wrap items-end gap-3 px-4 pt-4">
+                  <admin-button [disabled]="busy()" (pressed)="closeGroupMembers()">Back to groups</admin-button>
+                  <span class="flex-1"></span>
+                  @if (!group.everyone) {
+                    <label class="block">
+                      <span class="mb-1 block text-xs font-medium text-slate-600">Add member</span>
+                      <input
+                        class="{{ inputClass }} min-w-64"
+                        name="newGroupMember"
+                        [(ngModel)]="newGroupMember"
+                        list="group-member-addresses"
+                        placeholder="name@example.com"
+                      />
+                      <datalist id="group-member-addresses">
+                        @for (address of groupMemberCandidates(); track address) {
+                          <option [value]="address"></option>
                         }
-                      </td>
-                    </tr>
-                  } @empty {
-                    <tr><td class="{{ cell }} text-slate-500" colspan="3">No groups match.</td></tr>
+                      </datalist>
+                    </label>
+                    <admin-button [disabled]="busy() || !newGroupMember.trim()" (pressed)="addGroupMember()">Add</admin-button>
                   }
-                </tbody>
-              </table>
-              <admin-list-footer [page]="groupPage" [total]="groupTotal()" [pageSize]="pageSize" (pageChange)="goGroupPage($event)" />
-            </admin-panel>
+                </div>
+                <div class="px-4 pt-4">
+                  <admin-search [query]="groupMemberQuery" (search)="searchGroupMembers($event)" placeholder="Search members…" />
+                </div>
+                <table class="mt-4 w-full">
+                  <thead class="border-b border-slate-200 bg-slate-50">
+                    <tr>
+                      <th class="{{ head }}">Address</th>
+                      <th class="{{ head }}"></th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-100">
+                    @for (member of groupMembers(); track member) {
+                      <tr>
+                        <td class="{{ cell }}">{{ member }}</td>
+                        <td class="{{ cell }} text-right">
+                          @if (!group.everyone) {
+                            <admin-button variant="danger" [disabled]="busy()" (pressed)="removeGroupMember(member)">Remove</admin-button>
+                          }
+                        </td>
+                      </tr>
+                    } @empty {
+                      <tr><td class="{{ cell }} text-slate-500" colspan="2">No members match.</td></tr>
+                    }
+                  </tbody>
+                </table>
+                <admin-list-footer
+                  [page]="groupMemberPage"
+                  [total]="groupMemberTotal()"
+                  [pageSize]="pageSize"
+                  (pageChange)="goGroupMemberPage($event)"
+                />
+              </admin-panel>
+            } @else {
+              <admin-panel title="Groups" [bodyClass]="'p-0'">
+                <div class="flex flex-wrap items-end gap-3 px-4 pt-4">
+                  <admin-search [query]="groupQuery" (search)="searchGroups($event)" placeholder="Search groups…" />
+                  <span class="flex-1"></span>
+                  <label class="block">
+                    <span class="mb-1 block text-xs font-medium text-slate-600">New group</span>
+                    <input class="{{ inputClass }}" name="newGroup" [(ngModel)]="newGroup" placeholder="Name" />
+                  </label>
+                  <admin-button [disabled]="busy() || !newGroup.trim()" (pressed)="createGroup()">Create</admin-button>
+                </div>
+                <table class="mt-4 w-full">
+                  <thead class="border-b border-slate-200 bg-slate-50">
+                    <tr>
+                      <th class="{{ head }}">Name</th>
+                      <th class="{{ head }}">Members</th>
+                      <th class="{{ head }}"></th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-100">
+                    @for (group of groups(); track group.id) {
+                      <tr>
+                        <td class="{{ cell }} font-medium">
+                          {{ group.name }}
+                          @if (group.everyone) { <span class="ml-2 text-xs text-slate-400">everyone</span> }
+                        </td>
+                        <td class="{{ cell }}">{{ group.member_count }}</td>
+                        <td class="{{ cell }} text-right">
+                          <span class="inline-flex justify-end gap-2">
+                            <admin-button [disabled]="busy()" (pressed)="openGroupMembers(group)">Members</admin-button>
+                            @if (!group.everyone) {
+                              <admin-button variant="danger" [disabled]="busy()" (pressed)="removeGroup(group)">Delete</admin-button>
+                            }
+                          </span>
+                        </td>
+                      </tr>
+                    } @empty {
+                      <tr><td class="{{ cell }} text-slate-500" colspan="3">No groups match.</td></tr>
+                    }
+                  </tbody>
+                </table>
+                <admin-list-footer [page]="groupPage" [total]="groupTotal()" [pageSize]="pageSize" (pageChange)="goGroupPage($event)" />
+              </admin-panel>
+            }
           }
 
           @if (tab() === 'addressbooks') {
@@ -443,6 +510,15 @@ export class AdminWorkgroupManageComponent implements OnInit {
   protected groupQuery = '';
   protected groupPage = 1;
   protected newGroup = '';
+  // selectedGroup opens the member view for one group. Its member list is a
+  // page of its own: an organization-wide group can hold every mailbox, so the
+  // groups table must not fetch the members for every row.
+  protected readonly selectedGroup = signal<WorkgroupGroup | null>(null);
+  protected readonly groupMembers = signal<string[]>([]);
+  protected readonly groupMemberTotal = signal(0);
+  protected groupMemberQuery = '';
+  protected groupMemberPage = 1;
+  protected newGroupMember = '';
   // allGroups is the complete picker list, not the current page of the groups
   // tab: sharing with a group must not depend on which page is visible.
   protected readonly allGroups = signal<WorkgroupGroup[]>([]);
@@ -770,6 +846,91 @@ export class AdminWorkgroupManageComponent implements OnInit {
   protected goGroupPage(page: number): void {
     this.groupPage = page;
     void this.loadGroups();
+  }
+
+  protected openGroupMembers(group: WorkgroupGroup): void {
+    this.selectedGroup.set(group);
+    this.groupMembers.set([]);
+    this.groupMemberTotal.set(0);
+    this.groupMemberQuery = '';
+    this.groupMemberPage = 1;
+    this.newGroupMember = '';
+    void this.loadGroupMembers();
+  }
+
+  protected closeGroupMembers(): void {
+    this.selectedGroup.set(null);
+    this.groupMembers.set([]);
+    this.groupMemberTotal.set(0);
+    this.groupMemberQuery = '';
+    this.groupMemberPage = 1;
+    this.newGroupMember = '';
+  }
+
+  private async loadGroupMembers(): Promise<void> {
+    const group = this.selectedGroup();
+    if (!group) return;
+    try {
+      const res = await this.api.listWorkgroupGroupMembers(this.id, group.id, {
+        search: this.groupMemberQuery || undefined,
+        limit: this.pageSize,
+        offset: (this.groupMemberPage - 1) * this.pageSize,
+      });
+      this.groupMembers.set(res.members ?? []);
+      this.groupMemberTotal.set(res.total);
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    }
+  }
+
+  protected searchGroupMembers(value: string): void {
+    this.groupMemberQuery = value;
+    this.groupMemberPage = 1;
+    void this.loadGroupMembers();
+  }
+
+  protected goGroupMemberPage(page: number): void {
+    this.groupMemberPage = page;
+    void this.loadGroupMembers();
+  }
+
+  protected groupMemberCandidates(): string[] {
+    const taken = new Set(this.groupMembers().map((address) => address.toLowerCase()));
+    return this.users().filter((address) => !taken.has(address.toLowerCase()));
+  }
+
+  protected async addGroupMember(): Promise<void> {
+    const group = this.selectedGroup();
+    const address = this.newGroupMember.trim();
+    if (!group || !address || group.everyone) return;
+    this.busy.set(true);
+    try {
+      await this.api.addWorkgroupGroupMember(this.id, group.id, { address });
+      this.newGroupMember = '';
+      await this.loadGroupMembers();
+      await this.loadGroups();
+      await this.loadAllGroups();
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  protected async removeGroupMember(address: string): Promise<void> {
+    const group = this.selectedGroup();
+    if (!group || group.everyone) return;
+    this.busy.set(true);
+    try {
+      await this.api.removeWorkgroupGroupMember(this.id, group.id, address);
+      await this.loadGroupMembers();
+      await this.loadGroups();
+      await this.loadAllGroups();
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
+    }
   }
 
   protected async createGroup(): Promise<void> {
