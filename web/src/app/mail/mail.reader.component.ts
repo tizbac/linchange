@@ -249,6 +249,21 @@ export type MailSelection =
       font-weight: 500;
       color: #334155;
     }
+    :host-context([data-theme="dark"]) .mail-btn {
+      border-color: #334155;
+      color: #cbd5e1;
+    }
+    :host-context([data-theme="dark"]) .mail-btn:hover { background: #334155; }
+    :host-context([data-theme="dark"]) .mail-btn-danger {
+      border-color: #9f1239;
+      color: #fb7185;
+    }
+    :host-context([data-theme="dark"]) .mail-btn-danger:hover { background: #4c0519; }
+    :host-context([data-theme="dark"]) .mail-select {
+      border-color: #334155;
+      background: #1e293b;
+      color: #cbd5e1;
+    }
     .mail-btn app-mail-icon { margin-top: 0; }
   `,
   ],

@@ -36,6 +36,15 @@ test('the theme switches, persists, and accepts an admin-uploaded theme', async 
   const headerBg = await page.locator('header').first().evaluate((el) => getComputedStyle(el).backgroundColor);
   expect(headerBg).toContain('30, 41, 59');
 
+  // Webmail's small action buttons have component-scoped styles, so the
+  // global dark remaps do not reach them on their own. They must still switch
+  // to a light text colour rather than staying slate-700 on a dark toolbar.
+  await page.goto('/mail');
+  const refresh = page.getByTitle('Refresh');
+  await expect(refresh).toBeVisible({ timeout: 15000 });
+  const refreshColor = await refresh.evaluate((el) => getComputedStyle(el).color);
+  expect(refreshColor).toBe('rgb(203, 213, 225)');
+
   // The choice is stored on the account, not only in this tab.
   await page.reload();
   await expect(html).toHaveAttribute('data-theme', 'dark', { timeout: 15000 });
