@@ -146,11 +146,11 @@ func New(opts Options) *EAS {
 
 // Handler returns the HTTP handler for the ActiveSync endpoint.
 //
-// The server mounts it at /eas, and the URL Autodiscover hands a client is
-// /eas, so a command is answered at the mount point itself. A client that
-// appends a path segment of its own is answered the same way: the command is
-// the body, not the URL, and a 404 for a URL the body does not depend on is
-// how a server tells a phone its account is broken when it is not.
+// The server mounts it at the canonical /Microsoft-Server-ActiveSync and at
+// the shorter /eas alias, so a command is answered at the mount point itself.
+// A client that appends a path segment of its own is answered the same way:
+// the command is the body, not the URL, and a 404 for a URL the body does not
+// depend on is how a server tells a phone its account is broken when it is not.
 func (e *EAS) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {

@@ -114,7 +114,8 @@ address-book service to install: everything ships in the same server.
 - **Autodiscover** at `/autodiscover/autodiscover.xml`.
 - **EWS** at `/ews/exchange.asmx` for mail, calendar and directory name
   resolution.
-- **Exchange ActiveSync** at `/eas` for mobile mail and calendar clients.
+- **Exchange ActiveSync** at `/Microsoft-Server-ActiveSync`, with `/eas` as a
+  short alias, for Outlook and mobile mail and calendar clients.
 - **MAPI/HTTP** at `/mapi` with the mailbox (`emsmdb`) and address-book
   (`nspi`) endpoints, so Outlook can use native mail and contact folders.
 

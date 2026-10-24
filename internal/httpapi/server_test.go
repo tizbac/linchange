@@ -540,3 +540,15 @@ func TestResetEndpoints(t *testing.T) {
 		t.Fatalf("reset complete with a bad token = %d %v, want 400", code, body)
 	}
 }
+
+// The canonical ActiveSync path is what a client tries when it has no
+// Autodiscover answer. It must reach the same handler as /eas.
+func TestActiveSyncCanonicalPathAnswers(t *testing.T) {
+	db := testMigratedDB(t)
+	srv := newServer(t, db)
+
+	code, body := do(t, srv, http.MethodOptions, "/Microsoft-Server-ActiveSync", nil, nil)
+	if code != http.StatusOK {
+		t.Fatalf("OPTIONS /Microsoft-Server-ActiveSync = %d %v, want 200", code, body)
+	}
+}

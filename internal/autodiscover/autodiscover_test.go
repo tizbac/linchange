@@ -1,6 +1,10 @@
 package autodiscover
 
 import (
+	"encoding/xml"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/linchange/linchange/config"
@@ -169,5 +173,59 @@ func TestExchangeURLOmitsStandardPorts(t *testing.T) {
 		if p.Type == "EXCH" && p.ASUrl != "https://mail.example.com/ews/exchange.asmx" {
 			t.Errorf("EWS URL = %q, want no explicit port", p.ASUrl)
 		}
+	}
+}
+
+// ActiveSync clients ask for the MobileSync schema; a POX response that only
+// describes EWS is not an answer they can use. The response must name the
+// canonical ActiveSync path, which is also where the server mounts the EAS
+// handler.
+func TestMobileSyncResponseNamesTheActiveSyncEndpoint(t *testing.T) {
+	cfg := config.New()
+	cfg.Server.Hostname = "mail.example.com"
+	cfg.Exchange.Enabled = true
+	cfg.Exchange.EAS.Enabled = true
+	cfg.Listener.HTTPS.Addr = ":443"
+	a := &Autodiscover{cfg: cfg}
+
+	rr := httptest.NewRecorder()
+	a.writeMobileSync(rr, "alice@example.com", "alice", "https://schemas.microsoft.com/exchange/autodiscover/mobilesync/responseschema/2006")
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"https://schemas.microsoft.com/exchange/autodiscover/mobilesync/responseschema/2006",
+		"<Type>MobileSync</Type>",
+		"<Url>https://mail.example.com/Microsoft-Server-ActiveSync</Url>",
+		"<EMailAddress>alice@example.com</EMailAddress>",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("MobileSync response does not contain %q:\n%s", want, body)
+		}
+	}
+}
+
+// The request's AcceptableResponseSchema is what selects the MobileSync
+// response. Reading the element under the wrong name leaves RequestType empty
+// and sends the client a POX response it cannot use.
+func TestMobileSyncRequestIsRecognizedBySchema(t *testing.T) {
+	const request = `<?xml version="1.0" encoding="utf-8"?>
+<Autodiscover xmlns="https://schemas.microsoft.com/exchange/autodiscover/mobilesync/requestschema/2006">
+  <Request>
+    <EMailAddress>alice@example.com</EMailAddress>
+    <AcceptableResponseSchema>https://schemas.microsoft.com/exchange/autodiscover/mobilesync/responseschema/2006</AcceptableResponseSchema>
+  </Request>
+</Autodiscover>`
+	var req POXRequest
+	if err := xml.Unmarshal([]byte(request), &req); err != nil {
+		t.Fatalf("decoding the request: %v", err)
+	}
+	if req.Address() != "alice@example.com" {
+		t.Errorf("address = %q, want alice@example.com", req.Address())
+	}
+	if !strings.Contains(strings.ToLower(req.RequestType), "mobilesync") {
+		t.Errorf("RequestType = %q, want a MobileSync schema", req.RequestType)
 	}
 }

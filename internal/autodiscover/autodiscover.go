@@ -32,6 +32,26 @@ type Autodiscover struct {
 	db  *sqlx.DB
 }
 
+const (
+	// activeSyncPath is the canonical Exchange ActiveSync endpoint. Outlook
+	// and mobile clients fall back to it when Autodiscover does not answer,
+	// and the URL handed to a client must be the same path the server mounts.
+	activeSyncPath                = "/Microsoft-Server-ActiveSync"
+	mobileSyncResponseSchema      = "schemas.microsoft.com/exchange/autodiscover/mobilesync/responseschema/2006"
+	mobileSyncResponseSchemaHTTPS = "https://" + mobileSyncResponseSchema
+	mobileSyncResponseSchemaHTTP  = "http://" + mobileSyncResponseSchema
+)
+
+// mobileSyncNamespace uses the scheme the client asked for. Older ActiveSync
+// clients name the http namespace in AcceptableResponseSchema and compare it
+// literally; the current one uses https.
+func mobileSyncNamespace(requestType string) string {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(requestType)), "http://") {
+		return mobileSyncResponseSchemaHTTP
+	}
+	return mobileSyncResponseSchemaHTTPS
+}
+
 // New creates a new Autodiscover service.
 func New(cfg *config.Config, db *sqlx.DB) *Autodiscover {
 	return &Autodiscover{cfg: cfg, db: db}
@@ -90,9 +110,53 @@ func (a *Autodiscover) handlePOX(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ActiveSync clients ask for the MobileSync schema, not the Outlook one.
+	// They do not understand an EXCH/EXPR response: the missing MobileSync
+	// server entry is what Outlook reports as "the server cannot be found".
+	if strings.Contains(strings.ToLower(req.RequestType), "mobilesync") {
+		if !a.cfg.Exchange.Enabled || !a.cfg.Exchange.EAS.Enabled {
+			a.writeError(w, "ActiveSync is not enabled", http.StatusNotFound)
+			return
+		}
+		a.writeMobileSync(w, email, localPart, req.RequestType)
+		return
+	}
+
 	// Build response
 	resp := a.buildResponse(localPart, domain, req.RequestType)
 
+	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
+	_ = xml.NewEncoder(w).Encode(resp)
+}
+
+// writeMobileSync answers an Exchange ActiveSync Autodiscover request.
+//
+// The MobileSync schema is deliberately smaller than the Outlook schema: it
+// carries one server entry whose type is "MobileSync" and whose URL is the
+// ActiveSync endpoint. Outlook and mobile clients look for that entry; an
+// Autodiscover response that only describes EWS is a successful lookup with no
+// ActiveSync server in it.
+func (a *Autodiscover) writeMobileSync(w http.ResponseWriter, email, localPart, requestType string) {
+	url := a.exchangeURL(a.cfg.Server.Hostname, activeSyncPath)
+	resp := &mobileSyncResponse{
+		XMLNS: mobileSyncNamespace(requestType),
+		Response: mobileSyncBody{
+			Culture: "en:us",
+			User: mobileSyncUser{
+				DisplayName:  localPart,
+				EMailAddress: email,
+			},
+			Action: mobileSyncAction{
+				Settings: mobileSyncSettings{
+					Server: mobileSyncServer{
+						Type: "MobileSync",
+						URL:  url,
+						Name: url,
+					},
+				},
+			},
+		},
+	}
 	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
 	_ = xml.NewEncoder(w).Encode(resp)
 }
@@ -345,4 +409,37 @@ type Protocol struct {
 type Error struct {
 	Code    int    `xml:"ErrorCode,omitempty"`
 	Message string `xml:"ErrorMessage,omitempty"`
+}
+
+// The MobileSync response is a separate schema from the Outlook POX response.
+// Its namespace and element names are what an ActiveSync client parses.
+type mobileSyncResponse struct {
+	XMLName  xml.Name       `xml:"Autodiscover"`
+	XMLNS    string         `xml:"xmlns,attr"`
+	Response mobileSyncBody `xml:"Response"`
+}
+
+type mobileSyncBody struct {
+	Culture string           `xml:"Culture,omitempty"`
+	User    mobileSyncUser   `xml:"User"`
+	Action  mobileSyncAction `xml:"Action"`
+}
+
+type mobileSyncUser struct {
+	DisplayName  string `xml:"DisplayName,omitempty"`
+	EMailAddress string `xml:"EMailAddress,omitempty"`
+}
+
+type mobileSyncAction struct {
+	Settings mobileSyncSettings `xml:"Settings"`
+}
+
+type mobileSyncSettings struct {
+	Server mobileSyncServer `xml:"Server"`
+}
+
+type mobileSyncServer struct {
+	Type string `xml:"Type"`
+	URL  string `xml:"Url"`
+	Name string `xml:"Name"`
 }

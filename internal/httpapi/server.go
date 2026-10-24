@@ -609,8 +609,11 @@ func (s *Server) Handler() http.Handler {
 	// EWS (Exchange Web Services)
 	r.Mount("/ews", s.ews.Handler())
 
-	// EAS (Exchange ActiveSync)
+	// EAS (Exchange ActiveSync). The canonical Microsoft path is what Outlook
+	// and mobile clients try when Autodiscover is unavailable; /eas remains the
+	// shorter path used by the documentation and by previous releases.
 	r.Mount("/eas", s.eas.Handler())
+	r.Mount("/Microsoft-Server-ActiveSync", s.eas.Handler())
 
 	// MAPI/HTTP (Outlook native). The mount is the prefix both endpoints
 	// share: /mapi/emsmdb carries the ROPs a mailbox client sends and

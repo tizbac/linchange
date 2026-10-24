@@ -120,7 +120,8 @@ chat, riunioni o rubriche da installare: tutto è nello stesso server.
 - **Autodiscover** su `/autodiscover/autodiscover.xml`.
 - **EWS** su `/ews/exchange.asmx` per posta, calendario e risoluzione dei nomi
   nella directory.
-- **Exchange ActiveSync** su `/eas` per client mobili di posta e calendario.
+- **Exchange ActiveSync** su `/Microsoft-Server-ActiveSync`, con `/eas` come
+  alias breve, per Outlook e client mobili di posta e calendario.
 - **MAPI/HTTP** su `/mapi` con gli endpoint della casella (`emsmdb`) e della
   rubrica (`nspi`), così Outlook può usare cartelle di posta e contatti native.
 
