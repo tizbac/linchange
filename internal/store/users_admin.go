@@ -316,6 +316,22 @@ func (u *Users) SetQuota(ctx context.Context, q Querier, address string, quota *
 	return nil
 }
 
+// SetDailySendLimit changes a user's daily outbound message limit. Nil means
+// unlimited, which is what an emptied field in the edit screen asks for.
+func (u *Users) SetDailySendLimit(ctx context.Context, q Querier, address string, limit *int) error {
+	res, err := q.ExecContext(ctx,
+		`UPDATE users SET daily_send_limit = $2, updated_at = now()
+		 WHERE address = $1 AND deleted_at IS NULL`,
+		address, limit)
+	if err != nil {
+		return fmt.Errorf("store: setting daily send limit: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // Delete removes a principal by soft-deleting it. The row, its mail and its
 // folders all remain: a hard delete would cascade through mailboxes to the
 // messages they hold, which is not what "remove this account" means. Nothing

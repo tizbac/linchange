@@ -303,11 +303,22 @@ func (s *Service) SetUserEnabled(ctx context.Context, actor policy.Principal, ad
 // measurement of mail that already exists, and a new limit says nothing about
 // how much mail exists.
 func (s *Service) SetUserQuota(ctx context.Context, actor policy.Principal, address string, quota *int64) error {
+	return s.SetUserLimits(ctx, actor, address, quota, nil, false)
+}
+
+// SetUserLimits changes quota and, when setDaily is true, the daily send limit.
+// The boolean distinguishes "leave the limit alone" from "clear it": both
+// arrive as a nil daily pointer, but the edit screen means the latter when the
+// field is emptied.
+func (s *Service) SetUserLimits(ctx context.Context, actor policy.Principal, address string, quota *int64, daily *int, setDaily bool) error {
 	if err := requireAdmin(actor); err != nil {
 		return err
 	}
 	if quota != nil && *quota < 0 {
 		return fmt.Errorf("%w: a quota cannot be negative", ErrInvalid)
+	}
+	if daily != nil && *daily < 0 {
+		return fmt.Errorf("%w: a daily send limit cannot be negative", ErrInvalid)
 	}
 	return store.InTx(ctx, s.db, func(q *sqlx.Tx) error {
 		before, err := s.users.Get(ctx, q, address)
@@ -317,9 +328,19 @@ func (s *Service) SetUserQuota(ctx context.Context, actor policy.Principal, addr
 		if err := s.users.SetQuota(ctx, q, address, quota); err != nil {
 			return mapStore(err)
 		}
+		if setDaily {
+			if err := s.users.SetDailySendLimit(ctx, q, address, daily); err != nil {
+				return mapStore(err)
+			}
+		}
+		detail := map[string]any{"before": before.QuotaBytes, "after": quota}
+		if setDaily {
+			detail["daily_before"] = before.DailySendLimit
+			detail["daily_after"] = daily
+		}
 		return s.record(ctx, q, actor, change{
 			action: ActionUserQuota, targetType: "user", targetID: address, target: address,
-			detail: map[string]any{"before": before.QuotaBytes, "after": quota},
+			detail: detail,
 		})
 	})
 }

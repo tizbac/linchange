@@ -558,14 +558,16 @@ func (s *Server) setUserEnabled(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) setUserQuota(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		QuotaBytes *int64 `json:"quota_bytes"`
+		QuotaBytes     *int64      `json:"quota_bytes"`
+		DailySendLimit optionalInt `json:"daily_send_limit"`
 	}
 	if err := decodeAdmin(w, r, &in); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
 		return
 	}
-	if err := s.admin.SetUserQuota(r.Context(), Principal(r.Context()),
-		pathParam(r, "address"), in.QuotaBytes); err != nil {
+	if err := s.admin.SetUserLimits(r.Context(), Principal(r.Context()),
+		pathParam(r, "address"), in.QuotaBytes,
+		in.DailySendLimit.or(nil), in.DailySendLimit.set); err != nil {
 		adminErrors(w, s, err)
 		return
 	}
@@ -1514,6 +1516,33 @@ func (o *optionalInt64) UnmarshalJSON(data []byte) error {
 // or keeps the current value when the client did not mention the field, and
 // takes what it said otherwise, null included.
 func (o optionalInt64) or(current *int64) *int64 {
+	if !o.set {
+		return current
+	}
+	return o.v
+}
+
+// optionalInt is optionalInt64 for a field the database stores as an int.
+type optionalInt struct {
+	set bool
+	v   *int
+}
+
+func (o *optionalInt) UnmarshalJSON(data []byte) error {
+	o.set = true
+	if string(data) == "null" {
+		o.v = nil
+		return nil
+	}
+	var v int
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	o.v = &v
+	return nil
+}
+
+func (o optionalInt) or(current *int) *int {
 	if !o.set {
 		return current
 	}

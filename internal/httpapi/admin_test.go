@@ -1234,3 +1234,49 @@ func membersOf(body map[string]any) []string {
 	}
 	return out
 }
+
+// Saving the mailbox edit screen sends quota and daily send limit together.
+// The endpoint used to reject the second field as unknown, which surfaced as
+// "malformed request" after the rest of the form had already been saved.
+func TestSetUserQuotaAcceptsDailySendLimit(t *testing.T) {
+	srv, db := newAdminServer(t)
+	_, headers := seedAdmin(t, srv, db)
+	seedUser(t, db, "bob@example.com", "local", true, true)
+
+	url := "/api/v1/admin/users/bob@example.com/quota"
+	code, body := do(t, srv, http.MethodPut, url, map[string]any{
+		"quota_bytes": 1048576, "daily_send_limit": 25,
+	}, headers)
+	if code != http.StatusNoContent {
+		t.Fatalf("setting limits = %d %v, want 204", code, body)
+	}
+	var quota int64
+	var daily int
+	if err := db.Get(&quota, `SELECT quota_bytes FROM users WHERE address = 'bob@example.com'`); err != nil {
+		t.Fatalf("reading quota: %v", err)
+	}
+	if quota != 1048576 {
+		t.Errorf("quota = %d, want 1048576", quota)
+	}
+	if err := db.Get(&daily, `SELECT daily_send_limit FROM users WHERE address = 'bob@example.com'`); err != nil {
+		t.Fatalf("reading daily limit: %v", err)
+	}
+	if daily != 25 {
+		t.Errorf("daily send limit = %d, want 25", daily)
+	}
+
+	// An explicit null means unlimited, not "leave the old value".
+	code, body = do(t, srv, http.MethodPut, url, map[string]any{
+		"quota_bytes": 1048576, "daily_send_limit": nil,
+	}, headers)
+	if code != http.StatusNoContent {
+		t.Fatalf("clearing the daily limit = %d %v, want 204", code, body)
+	}
+	var cleared *int
+	if err := db.Get(&cleared, `SELECT daily_send_limit FROM users WHERE address = 'bob@example.com'`); err != nil {
+		t.Fatalf("reading the cleared daily limit: %v", err)
+	}
+	if cleared != nil {
+		t.Errorf("daily send limit = %v, want NULL", *cleared)
+	}
+}
