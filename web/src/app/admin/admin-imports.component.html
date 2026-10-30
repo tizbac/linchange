@@ -10,6 +10,7 @@
         <admin-button variant="primary" (pressed)="creating.set(!creating())">
           {{ creating() ? 'Cancel' : 'New import' }}
         </admin-button>
+        <admin-button (pressed)="openPst()">PST import</admin-button>
         <admin-button (pressed)="reload()">Refresh</admin-button>
       </admin-page-header>
 

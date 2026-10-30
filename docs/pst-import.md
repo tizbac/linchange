@@ -62,7 +62,38 @@ command again continues where it stopped.
 
 ## Browser import
 
-The TypeScript reader exposes the same model (`PstReader`, `buildMessage`,
-`buildVCard`, `buildICalendar`) and reads the file through `File.slice`, so the
-archive never leaves the machine in one piece. Upload batches are capped at
-64 MiB, matching the server-side transaction batch.
+Open **Import mail** and choose **PST/OST file**. The archive is read in the tab
+through `File.slice`, so a multi-gigabyte PST is never uploaded whole and the
+file does not have to leave the user's machine. The steps are:
+
+1. choose the file; the page lists the archive's folders with their message,
+   appointment and contact counts;
+2. tick the folders to import and name the destination folder — each source
+   folder keeps its name underneath;
+3. choose the calendar and address book, or turn either off;
+4. start the import.
+
+The converted items are uploaded in batches of at most 64 MiB, and each batch
+is one database transaction. While the import runs the page warns that it must
+stay open and asks for confirmation before navigating away. Closing it anyway
+is safe: committed batches stay, and choosing the same file again skips the
+items already imported.
+
+Administrators use **Administration → Imports → PST import**, which is the same
+panel with a target-mailbox field. Because the admin screen cannot browse
+another user's calendars, appointments and contacts go to that mailbox's
+default calendar and personal address book.
+
+### Endpoints
+
+- `POST /api/v1/mail/pst-import` (and `/api/v1/admin/pst-import`) records the
+  archive's SHA-256 and the chosen targets, returning a session id.
+- `POST /api/v1/mail/pst-import/{id}/batch` stores one batch in one
+  transaction. Items carry their key (`m:123`, `e:456`, `c:789`), their
+  converted content (MIME, iCalendar or vCard) and the indexed fields.
+- `POST /api/v1/mail/pst-import/{id}/finish` closes the session.
+- `GET /api/v1/mail/pst-import` lists the caller's sessions.
+
+The server checks that the caller owns the session and that the calendar and
+address book belong to the target mailbox, so a crafted batch cannot write into
+somebody else's calendar.

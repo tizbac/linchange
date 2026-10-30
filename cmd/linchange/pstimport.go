@@ -339,6 +339,7 @@ Flags:
 	importer := pstimport.New(db, blobs)
 	plan := pstimport.Plan{
 		Owner:           *owner,
+		StartedBy:       "cli",
 		SourcePath:      *pstPath,
 		Folders:         mappings,
 		IncludeCalendar: includeCalendar,

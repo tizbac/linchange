@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import { AdminApi } from '../core/admin/admin-api';
 import { User } from '../core/admin/admin.models';
 import { ImportJob } from '../core/mail/mail.models';
@@ -46,6 +47,7 @@ import { errorMessage } from '../core/http-error';
 })
 export class AdminImportsComponent implements OnInit, OnDestroy {
   private readonly api = inject(AdminApi);
+  private readonly router = inject(Router);
 
   protected readonly inputClass = inputClass;
   protected readonly head = tableHeadClass;
@@ -95,6 +97,10 @@ export class AdminImportsComponent implements OnInit, OnDestroy {
   protected goPage(page: number): void {
     this.page = page;
     void this.reload();
+  }
+
+  protected openPst(): void {
+    void this.router.navigate(['/admin/imports/pst']);
   }
 
   protected async reload(): Promise<void> {

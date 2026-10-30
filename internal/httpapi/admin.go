@@ -196,6 +196,7 @@ func mountAdminRoutes(r chi.Router, s *Server) {
 	})
 
 	s.mountAdminImportRoutes(r)
+	s.mountAdminPSTImportRoutes(r)
 
 	r.Route("/contact-groups", func(r chi.Router) {
 		r.Get("/", s.listContactGroups)

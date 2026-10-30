@@ -48,6 +48,7 @@ import (
 	"github.com/linchange/linchange/internal/imapimport"
 	"github.com/linchange/linchange/internal/mapihttp"
 	"github.com/linchange/linchange/internal/meetings"
+	"github.com/linchange/linchange/internal/pstimport"
 	"github.com/linchange/linchange/internal/sfu"
 	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/webmail"
@@ -123,6 +124,10 @@ type Server struct {
 	// did not build one (tests that never touch it); the routes are then
 	// simply not mounted.
 	imports *imapimport.Service
+	// pstImports writes browser-parsed PST batches. It shares the database
+	// and blob store with the rest of the server and is nil when no blob store
+	// was supplied, in which case its routes are not mounted.
+	pstImports *pstimport.Importer
 	// meetings creates meetings: the invitation emails with their reply
 	// links, the answers, and the native chat room behind the chat panel.
 	meetings *meetings.Service
@@ -473,6 +478,13 @@ func New(opts Options) (*Server, error) {
 		Logger:    log,
 	})
 
+	// pstImports is built only with a blob store: its message path stores
+	// bodies there, and a server without one cannot accept an import.
+	var pstImporter *pstimport.Importer
+	if opts.Blobs != nil {
+		pstImporter = pstimport.New(opts.DB, opts.Blobs)
+	}
+
 	return &Server{
 		db:                opts.DB,
 		log:               log,
@@ -499,6 +511,7 @@ func New(opts Options) (*Server, error) {
 		staticDir:         opts.StaticDir,
 		publicURL:         strings.TrimSuffix(cfg.MeetingsPublicURL(), "/"),
 		imports:           opts.Imports,
+		pstImports:        pstImporter,
 		meetings:          meetingsService,
 		chat:              chatService,
 		chatHub:           chatHub,

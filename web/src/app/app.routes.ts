@@ -58,8 +58,25 @@ export const routes: Routes = [
       },
       {
         path: 'import',
-        loadComponent: () => import('./settings/import.component').then((m) => m.ImportComponent),
-        title: $localize`:@@title.import:Import`,
+        children: [
+          {
+            path: '',
+            loadComponent: () =>
+              import('./settings/import-chooser.component').then((m) => m.ImportChooserComponent),
+            title: $localize`:@@title.import:Import`,
+          },
+          {
+            path: 'imap',
+            loadComponent: () => import('./settings/import.component').then((m) => m.ImportComponent),
+            title: $localize`:@@title.importImap:Import from IMAP`,
+          },
+          {
+            path: 'pst',
+            loadComponent: () =>
+              import('./settings/pst-import.component').then((m) => m.PstImportComponent),
+            title: $localize`:@@title.importPst:Import from PST`,
+          },
+        ],
       },
     ],
   },
@@ -191,6 +208,12 @@ export const routes: Routes = [
         path: 'audit',
         loadComponent: () => import('./admin/admin-audit.component').then((m) => m.AdminAuditComponent),
         title: $localize`:@@title.adminAudit:Audit log`,
+      },
+      {
+        path: 'imports/pst',
+        loadComponent: () =>
+          import('./admin/admin-pst-import.component').then((m) => m.AdminPstImportComponent),
+        title: $localize`:@@title.adminPstImports:PST import`,
       },
       {
         path: 'imports',

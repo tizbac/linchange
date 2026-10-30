@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
 import { DatePipe } from '@angular/common';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { MailApi } from '../core/mail/mail-api';
 import { errorMessage } from '../core/http-error';
@@ -16,17 +16,31 @@ import { ImportJob } from '../core/mail/mail.models';
 @Component({
   selector: 'app-import',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [DatePipe, FormsModule, MailIcon],
+  imports: [DatePipe, FormsModule, MailIcon, RouterLink],
   template: `
     <main class="mx-auto max-w-3xl px-6 py-8">
-      <div class="flex items-center justify-between gap-3">
-        <h1 class="text-lg font-semibold text-slate-900">Import mail</h1>
-        <button
-          class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-          (click)="back()"
-        >
-          Back to mail
-        </button>
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <h1 class="text-lg font-semibold text-slate-900">Remote IMAP import</h1>
+        <div class="flex gap-2">
+          <a
+            routerLink="/mail/import/pst"
+            class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+          >
+            PST/OST
+          </a>
+          <a
+            routerLink="/mail/import"
+            class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+          >
+            All import options
+          </a>
+          <button
+            class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+            (click)="back()"
+          >
+            Back to mail
+          </button>
+        </div>
       </div>
 
       <p class="mt-2 text-sm text-slate-600">
