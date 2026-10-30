@@ -28,7 +28,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/teambition/rrule-go v1.8.2
 	golang.org/x/crypto v0.58.0
-	golang.org/x/net v0.60.0
+	golang.org/x/net v0.62.0
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
