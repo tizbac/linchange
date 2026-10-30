@@ -119,6 +119,11 @@ OUTPUT_DIR="$(cd "${OUTPUT_DIR}" && pwd)"
 
 echo "Building ${PROJECT_NAME}_${VERSION}_${ARCH}.deb using Docker"
 
+# Docker tags allow only [A-Za-z0-9_.-], while a Debian version derived from
+# git describe contains '+' (0.0.1+g21-gaefe0ca). Keep the Debian version as
+# is and use a sanitised tag for the image.
+BUILD_TAG="${VERSION//+/_}"
+
 # Build Docker image
 echo "Building Docker build image..."
 docker build \
@@ -127,7 +132,7 @@ docker build \
     --build-arg VERSION="${VERSION}" \
     --build-arg ARCH="${ARCH}" \
     -f "${SCRIPT_DIR}/Dockerfile.build" \
-    -t "${PROJECT_NAME}-builder:${VERSION}-packager" \
+    -t "${PROJECT_NAME}-builder:${BUILD_TAG}-packager" \
     "${SCRIPT_DIR}"
 
 # Run container to build package
@@ -137,7 +142,7 @@ echo "Running build container..."
 docker run --rm \
     --user "$(id -u):$(id -g)" \
     -v "${OUTPUT_DIR}:/output" \
-    "${PROJECT_NAME}-builder:${VERSION}-packager" \
+    "${PROJECT_NAME}-builder:${BUILD_TAG}-packager" \
     cp /package.deb "/output/${PROJECT_NAME}_${VERSION}_${ARCH}.deb"
 
 [ -f "${OUTPUT_DEB}" ] || die "the container did not produce ${OUTPUT_DEB}"
