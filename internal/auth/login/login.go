@@ -743,6 +743,12 @@ func (a *Authenticator) grant(
 	if err != nil {
 		return out, err
 	}
+	// The credential the client receives is the signed JWT; record its digest
+	// so the refresh path can verify that the token presented is the one this
+	// session was last given. Without this, rotation cannot detect reuse.
+	if err := a.sessions.SetRefreshToken(ctx, q, created.Session.ID, refresh.Token); err != nil {
+		return out, err
+	}
 
 	// Acting as somebody else is the most sensitive thing this system does, and
 	// it is written here, in the transaction that created the session, so that a

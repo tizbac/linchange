@@ -47,7 +47,18 @@ func TestChallengeVerifiesOnlyItsOwnAnswerBeforeExpiry(t *testing.T) {
 	if !m.Verify(challenge.Token, code) {
 		t.Error("the right answer was refused")
 	}
-	if !m.Verify(challenge.Token, strings.ToLower(code)) {
+	// A solved challenge is single-use: replaying the same token must not
+	// authorize a second action.
+	if m.Verify(challenge.Token, strings.ToLower(code)) {
+		t.Error("a replayed challenge was accepted")
+	}
+	// Case insensitivity is checked on a fresh challenge, since the first one
+	// is spent above.
+	second, err := m.Issue()
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if !m.Verify(second.Token, strings.ToLower(codeFromToken(t, m, second.Token))) {
 		t.Error("case should not matter")
 	}
 	if m.Verify(challenge.Token, code+"X") {

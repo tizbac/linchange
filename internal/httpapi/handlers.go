@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/linchange/linchange/internal/auth/login"
@@ -141,7 +142,10 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusUnauthorized, "an active sign-in is required")
 		return
 	}
-	session, err := s.sessions.Load(r.Context(), s.db, sessionID)
+	// LoadForRefresh checks the presented token against the digest on file and
+	// revokes the session when they differ. The token is signed, but that only
+	// proves it was issued once; it does not prove it is still the current one.
+	session, err := s.sessions.LoadForRefresh(r.Context(), s.db, sessionID, in.RefreshToken)
 	if err != nil {
 		s.writeError(w, http.StatusUnauthorized, "an active sign-in is required")
 		return
@@ -158,6 +162,14 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	refresh, err := s.tokens.IssueRefresh(principal, sessionID, session.Impersonating)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "could not issue a new token")
+		return
+	}
+	// Rotating means the token just used cannot mint another pair. Storing the
+	// new digest is what makes a leaked refresh token useful for at most one
+	// refresh, after which the legitimate client's next refresh revokes the
+	// session and the theft becomes visible.
+	if err := s.sessions.SetRefreshToken(r.Context(), s.db, sessionID, refresh.Token); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "could not rotate the sign-in")
 		return
 	}
 
@@ -322,6 +334,14 @@ func (s *Server) handleResetRequest(w http.ResponseWriter, r *http.Request) {
 	// captcha answer is exactly the kind of thing a script can vary cheaply.
 	if !s.captcha.Verify(in.CaptchaToken, in.CaptchaAnswer) {
 		s.writeError(w, http.StatusBadRequest, "the verification code was not correct")
+		return
+	}
+	// A solved captcha is single-use, but a human can still submit the form
+	// repeatedly. Throttle both the source and the account so the reset form
+	// cannot be turned into an email amplifier.
+	address := strings.ToLower(strings.TrimSpace(in.Login))
+	if !s.resetIPLimits.Allow(clientIP(r).String()) || !s.resetAddressLimits.Allow(address) {
+		s.writeError(w, http.StatusTooManyRequests, "too many reset requests, please try again later")
 		return
 	}
 

@@ -384,6 +384,28 @@ func (s *Sessions) Rotate(ctx context.Context, q Querier, id string) (string, er
 	return refresh, nil
 }
 
+// SetRefreshToken records the digest of the refresh credential actually issued
+// to a client.
+//
+// The refresh credential is a signed JWT, not the opaque token Create draws
+// internally, so the row has to hold the digest of the JWT that was handed out.
+// LoadForRefresh then compares the presented JWT against that digest, which is
+// what makes rotation and reuse detection work.
+func (s *Sessions) SetRefreshToken(ctx context.Context, q Querier, id, refreshToken string) error {
+	if id == "" || refreshToken == "" {
+		return ErrNotFound
+	}
+	const update = `UPDATE sessions SET refresh_token_hash = $2 WHERE id = $1 AND revoked_at IS NULL`
+	res, err := q.ExecContext(ctx, update, id, secret.Hash(refreshToken))
+	if err != nil {
+		return fmt.Errorf("store: storing refresh token: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrSessionRevoked
+	}
+	return nil
+}
+
 // Revoke ends a single session. Revoking an already-revoked session succeeds,
 // since logging out twice is not an error worth surfacing to a user.
 func (s *Sessions) Revoke(ctx context.Context, q Querier, id string) error {

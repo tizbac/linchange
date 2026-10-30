@@ -23,6 +23,7 @@ import (
 	"html"
 	"math/big"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -51,6 +52,13 @@ type Manager struct {
 	aead cipher.AEAD
 	ttl  time.Duration
 	now  func() time.Time
+
+	// used records the challenges that have already been answered, so a solved
+	// captcha cannot authorize a second request. A stateless token would
+	// otherwise be replayable for its whole lifetime, turning one solve into
+	// unlimited password-reset submissions.
+	mu   sync.Mutex
+	used map[string]time.Time
 }
 
 // New builds a manager with a fresh random key. A restart invalidates
@@ -81,7 +89,7 @@ func NewWithKey(key []byte, ttl time.Duration) (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("captcha: building the sealed box: %w", err)
 	}
-	return &Manager{aead: aead, ttl: ttl, now: time.Now}, nil
+	return &Manager{aead: aead, ttl: ttl, now: time.Now, used: make(map[string]time.Time)}, nil
 }
 
 // Issue draws a code, seals it into a token and renders the image.
@@ -90,6 +98,7 @@ func (m *Manager) Issue() (Challenge, error) {
 	if err != nil {
 		return Challenge{}, err
 	}
+	m.pruneUsed()
 	expiresAt := m.now().Add(m.ttl)
 
 	plain := make([]byte, 1+8+codeLen)
@@ -129,7 +138,40 @@ func (m *Manager) Verify(token, answer string) bool {
 	}
 	want := string(plain[9:])
 	got := normalise(answer)
-	return subtle.ConstantTimeCompare([]byte(want), []byte(got)) == 1
+	if subtle.ConstantTimeCompare([]byte(want), []byte(got)) != 1 {
+		return false
+	}
+
+	// A correct answer burns the challenge before it can be used again. The
+	// token itself is the key: it already contains a random nonce, so two
+	// challenges cannot collide.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pruneUsedLocked()
+	key := string(raw)
+	if _, seen := m.used[key]; seen {
+		return false
+	}
+	m.used[key] = expiresAt
+	return true
+}
+
+// pruneUsed drops expired entries so a burst of challenges cannot grow the
+// consumed set without bound. The map is small (one entry per recent solve) and
+// is only touched under m.mu.
+func (m *Manager) pruneUsed() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pruneUsedLocked()
+}
+
+func (m *Manager) pruneUsedLocked() {
+	now := m.now()
+	for key, expiresAt := range m.used {
+		if !expiresAt.After(now) {
+			delete(m.used, key)
+		}
+	}
 }
 
 func normalise(answer string) string {
