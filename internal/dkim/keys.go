@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -45,6 +46,9 @@ func (k *Keys) KeyDir() string {
 // GetOrCreate returns the RSA key pair for domain, generating one if none
 // exists on disk. The public key is returned in DNS TXT format for publishing.
 func (k *Keys) GetOrCreate(domain string) (*rsa.PrivateKey, string, error) {
+	if !safeDomainName(domain) {
+		return nil, "", fmt.Errorf("dkim: %q is not a valid domain name", domain)
+	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
@@ -64,6 +68,9 @@ func (k *Keys) GetOrCreate(domain string) (*rsa.PrivateKey, string, error) {
 
 // Get returns a cached key pair for domain, or nil if not cached.
 func (k *Keys) Get(domain string) (*rsa.PrivateKey, string, bool) {
+	if !safeDomainName(domain) {
+		return nil, "", false
+	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
@@ -137,6 +144,27 @@ func (k *Keys) load(keyFile string) (*keyPair, error) {
 		privateKey: privKey,
 		publicKey:  pubKey,
 	}, nil
+}
+
+// safeDomainName is the last line of defence before a domain becomes a file
+// name. The store validates domains too; this exists because a key is the one
+// place where a domain reaches the filesystem and a future caller could forget
+// the validation.
+func safeDomainName(domain string) bool {
+	if domain == "" || len(domain) > 253 {
+		return false
+	}
+	if strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") || strings.Contains(domain, "..") {
+		return false
+	}
+	for _, r := range domain {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '.':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // keyFile returns the path to the private key file for domain.

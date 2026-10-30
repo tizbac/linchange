@@ -149,12 +149,25 @@ func (h *Hub) AcceptScoped(w http.ResponseWriter, r *http.Request, member, conve
 }
 
 func (h *Hub) accept(w http.ResponseWriter, r *http.Request, member, conversationUID string) {
+	// The HTTP server's ReadTimeout/WriteTimeout are deadlines for a normal
+	// request, not for a call that may last an hour. Clear them before the
+	// upgrade; the connection is then owned by the WebSocket, whose own read
+	// and write paths set per-operation deadlines.
+	rc := http.NewResponseController(w)
+	_ = rc.SetReadDeadline(time.Time{})
+	_ = rc.SetWriteDeadline(time.Time{})
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		// The identity is a bearer token, not an ambient cookie, so a
-		// cross-origin request carries no authority a same-origin one lacks.
-		// Origin checking would only turn a working reverse proxy into an
-		// outage.
-		InsecureSkipVerify: true,
+		// Same-origin by default. The credential is a bearer token rather than
+		// an ambient cookie, but accepting a cross-origin upgrade would still
+		// let a hostile page use a token it managed to obtain and would turn
+		// any future cookie-based change into cross-site WebSocket hijacking.
+		// A reverse proxy that rewrites Host is expected to rewrite Origin too.
+		OriginPatterns: []string{},
+		// The browser cannot set an Authorization header on a WebSocket, so
+		// the access token travels as a subprotocol instead of in the URL.
+		// Only the protocol name is echoed; the token is read by the caller
+		// before the upgrade and never appears in a request line or access log.
+		Subprotocols: []string{"linchange"},
 	})
 	if err != nil {
 		h.log.Warn("chat: websocket upgrade failed", "error", err)

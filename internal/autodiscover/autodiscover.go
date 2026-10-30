@@ -1,7 +1,6 @@
 package autodiscover
 
 import (
-	"context"
 	"encoding/xml"
 	"fmt"
 	"net/http"
@@ -11,7 +10,6 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"github.com/linchange/linchange/config"
-	"github.com/linchange/linchange/internal/store"
 )
 
 // Autodiscover implements the Microsoft Autodiscover service (MS-OXDISCO)
@@ -72,12 +70,19 @@ func (a *Autodiscover) Handler() http.Handler {
 	return r
 }
 
+// maxAutodiscoverBody bounds a POX request. The document is a handful of
+// elements naming an address and a schema; anything larger is an attempt to
+// make the XML decoder spend memory on an unauthenticated request.
+const maxAutodiscoverBody = 1 << 20
+
 // handlePOX processes a POX Autodiscover request.
 func (a *Autodiscover) handlePOX(w http.ResponseWriter, r *http.Request) {
 	var req POXRequest
 	var err error
 
 	if r.Method == http.MethodPost {
+		r.Body = http.MaxBytesReader(w, r.Body, maxAutodiscoverBody)
+		defer r.Body.Close()
 		err = xml.NewDecoder(r.Body).Decode(&req)
 	} else {
 		// GET request - parse query parameters
@@ -98,15 +103,14 @@ func (a *Autodiscover) handlePOX(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate domain is hosted here
+	// Validate the address is well formed, but do not confirm whether the
+	// domain is hosted here. Answering "not hosted" for an unknown domain and
+	// a full document for a known one turns this public endpoint into a
+	// hosted-domain oracle. The settings are the same for every domain; a
+	// client whose account does not exist is refused when it authenticates.
 	localPart, domain, ok := strings.Cut(email, "@")
 	if !ok || domain == "" {
 		a.writeError(w, "Invalid email address", http.StatusBadRequest)
-		return
-	}
-
-	if !a.isHostedDomain(r.Context(), domain) {
-		a.writeError(w, "Domain not hosted", http.StatusNotFound)
 		return
 	}
 
@@ -164,15 +168,6 @@ func (a *Autodiscover) writeMobileSync(w http.ResponseWriter, email, localPart, 
 // handleLegacyRedirect redirects legacy Autodiscover URLs.
 func (a *Autodiscover) handleLegacyRedirect(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/autodiscover/autodiscover.xml", http.StatusMovedPermanently)
-}
-
-// isHostedDomain checks if a domain is hosted by this server.
-func (a *Autodiscover) isHostedDomain(ctx context.Context, domain string) bool {
-	dom, err := store.NewDomains().Get(ctx, a.db, domain)
-	if err != nil {
-		return false
-	}
-	return dom.Status == store.DomainStatusActive
 }
 
 // buildResponse constructs the Autodiscover response XML.

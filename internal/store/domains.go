@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -55,6 +56,42 @@ type Domain struct {
 	WorkgroupID *int64
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+// ValidateDomainName reports whether name can be a hosted domain.
+//
+// A domain name is used as a routing key and, for DKIM, as a file name. It is
+// not a free-form label: allowing "/", "\" or ".." lets a crafted name escape
+// the DKIM key directory, and whitespace or control characters make addresses
+// ambiguous everywhere else. Single-label names such as "localhost" are
+// accepted because the demo and test deployments use them.
+func ValidateDomainName(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("domain name is empty")
+	}
+	if len(name) > 253 {
+		return errors.New("domain name is too long")
+	}
+	if strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".") || strings.Contains(name, "..") {
+		return fmt.Errorf("domain name %q has an empty label", name)
+	}
+	for _, label := range strings.Split(name, ".") {
+		if label == "" || len(label) > 63 {
+			return fmt.Errorf("domain name %q has an invalid label", name)
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return fmt.Errorf("domain name %q has a label starting or ending with '-'", name)
+		}
+		for _, r := range label {
+			switch {
+			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-':
+			default:
+				return fmt.Errorf("domain name %q contains %q", name, r)
+			}
+		}
+	}
+	return nil
 }
 
 // CreateDomainRequest is what an administrator supplies to add a domain. Nil
@@ -137,8 +174,8 @@ func NewDomains() *Domains { return &Domains{} }
 // Create adds a domain. A name that already exists is reported as ErrConflict
 // so the caller can distinguish "taken" from a real failure.
 func (d *Domains) Create(ctx context.Context, q Querier, req CreateDomainRequest) error {
-	if req.Name == "" {
-		return errors.New("store: domain name is empty")
+	if err := ValidateDomainName(req.Name); err != nil {
+		return err
 	}
 	status := req.Status
 	if status == "" {

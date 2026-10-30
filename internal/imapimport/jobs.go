@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -58,7 +59,45 @@ type CreateJobParams struct {
 }
 
 const defaultTLSPort = 993
-const defaultPort    = 143
+const defaultPort = 143
+
+// validateRemoteHost refuses the destinations that turn an import into an SSRF
+// primitive against the host or the cloud metadata service.
+//
+// Link-local addresses are always refused: 169.254.169.254 is the standard
+// cloud metadata endpoint and is never a migration target. Loopback and
+// RFC 1918 addresses are refused unless allowPrivate is set, which is the
+// operator's explicit statement that the source really is on the local
+// network (the common migration case).
+func validateRemoteHost(ctx context.Context, host string, allowPrivate bool) error {
+	check := func(ip net.IP) error {
+		if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+			ip.IsUnspecified() || ip.IsMulticast() {
+			return fmt.Errorf("%w: %q is not a routable import target", ErrInvalid, host)
+		}
+		if !allowPrivate && (ip.IsLoopback() || ip.IsPrivate()) {
+			return fmt.Errorf("%w: %q is a private address; enable mail.import.allow_private_hosts to migrate from it", ErrInvalid, host)
+		}
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return check(ip)
+	}
+	addrs, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil || len(addrs) == 0 {
+		// An unresolvable name is not evidence of an SSRF attempt; the dial
+		// will fail with its own error. Refusing here would also make the
+		// validation depend on the server's ability to resolve names at the
+		// moment a job is created.
+		return nil
+	}
+	for _, ip := range addrs {
+		if err := check(ip); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func (s *Service) CreateJob(ctx context.Context, params CreateJobParams) (Job, error) {
 	params.Owner = strings.TrimSpace(params.Owner)
@@ -70,6 +109,9 @@ func (s *Service) CreateJob(ctx context.Context, params CreateJobParams) (Job, e
 	}
 	if params.RemoteHost == "" {
 		return Job{}, fmt.Errorf("%w: remote host is required", ErrInvalid)
+	}
+	if err := validateRemoteHost(ctx, params.RemoteHost, s.allowPrivateHosts); err != nil {
+		return Job{}, err
 	}
 	if params.RemoteUsername == "" {
 		return Job{}, fmt.Errorf("%w: remote username is required", ErrInvalid)
@@ -290,11 +332,11 @@ func (s *Service) requeueJob(ctx context.Context, id int64) {
 }
 
 type progress struct {
-	seen     int64
-	imported int64
-	skipped  int64
-	bytes    int64
-	folders  int
+	seen        int64
+	imported    int64
+	skipped     int64
+	bytes       int64
+	folders     int
 	foldersDone int
 }
 

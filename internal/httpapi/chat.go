@@ -32,6 +32,7 @@ func (s *Server) mountChat(r chi.Router) {
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
+			r.Use(s.requirePasswordChanged)
 			r.Get("/conversations", s.handleListConversations)
 			r.Post("/conversations", s.handleCreateConversation)
 			r.Get("/conversations/{uid}/messages", s.handleChatHistory)
@@ -49,14 +50,26 @@ func (s *Server) mountChat(r chi.Router) {
 
 // handleChatSocket upgrades an authenticated request to the chat socket.
 //
-// The token arrives in the query string because the browser's WebSocket API
-// offers no way to send a header. It carries the same weight as a bearer token
-// anywhere else: it is parsed as an access token and checked against a live
-// session before the upgrade, so a revoked sign-in cannot open a socket.
+// The browser's WebSocket API offers no way to send an Authorization header,
+// so the access token arrives as the second value of
+// Sec-WebSocket-Protocol: "linchange, <token>". The query-string spelling is
+// still accepted for older clients, but it is not what the web client uses:
+// a token in a URL ends up in proxy logs and browser diagnostics. The token is
+// parsed as an access token and checked against a live session before the
+// upgrade, so a revoked sign-in cannot open a socket.
 func (s *Server) handleChatSocket(w http.ResponseWriter, r *http.Request) {
 	raw := r.URL.Query().Get("access_token")
 	if raw == "" {
 		raw = r.URL.Query().Get("token")
+	}
+	if raw == "" {
+		for _, part := range strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",") {
+			part = strings.TrimSpace(part)
+			if part != "" && !strings.EqualFold(part, "linchange") {
+				raw = part
+				break
+			}
+		}
 	}
 	if raw == "" {
 		s.writeError(w, http.StatusUnauthorized, "authentication required")
@@ -69,6 +82,10 @@ func (s *Server) handleChatSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := s.sessions.Load(r.Context(), s.db, sessionID); err != nil {
 		s.writeError(w, http.StatusUnauthorized, "this sign-in is no longer active")
+		return
+	}
+	if principal.MustChangePassword {
+		s.writeError(w, http.StatusForbidden, "change your password before using chat")
 		return
 	}
 	s.chatHub.Accept(w, r, principal.Address)

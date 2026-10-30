@@ -153,6 +153,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 	// registering it here means its Stop runs first and any in-flight job
 	// finishes writing before the connection is released.
 	imports := imapimport.New(db, blobs, log, cfg.Auth.EncryptionKey)
+	imports.SetAllowPrivateHosts(cfg.Mail.Import.AllowPrivateHosts)
 	a.imports = imports
 	a.OnShutdown(func(context.Context) error {
 		imports.Stop()
@@ -392,6 +393,9 @@ func New(ctx context.Context, opts Options) (*App, error) {
 			Addr:              ":80",
 			Handler:           a.ACMEManager.HTTPHandler(nil),
 			ReadHeaderTimeout: 15 * time.Second,
+			ReadTimeout:       5 * time.Minute,
+			WriteTimeout:      5 * time.Minute,
+			IdleTimeout:       2 * time.Minute,
 		}
 		a.closers = append(a.closers, a.ACMEHTTPListen.Shutdown)
 	}
@@ -403,7 +407,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 			// both are in play the challenge handler sits in front and the
 			// redirect is its fallback; without ACME the redirect is the
 			// whole handler chain.
-			handler = httpsRedirectHandler()
+			handler = httpsRedirectHandler(cfg.Server.Hostname)
 			if a.ACMEManager != nil {
 				handler = a.ACMEManager.HTTPHandler(handler)
 			}
@@ -414,6 +418,9 @@ func New(ctx context.Context, opts Options) (*App, error) {
 			Addr:              addr,
 			Handler:           handler,
 			ReadHeaderTimeout: 15 * time.Second,
+			ReadTimeout:       5 * time.Minute,
+			WriteTimeout:      5 * time.Minute,
+			IdleTimeout:       2 * time.Minute,
 		}
 		a.closers = append(a.closers, a.HTTPListen.Shutdown)
 	}
@@ -440,6 +447,9 @@ func New(ctx context.Context, opts Options) (*App, error) {
 			Addr:              addr,
 			Handler:           apiHandler,
 			ReadHeaderTimeout: 15 * time.Second,
+			ReadTimeout:       5 * time.Minute,
+			WriteTimeout:      5 * time.Minute,
+			IdleTimeout:       2 * time.Minute,
 			TLSConfig:         tlsConfig,
 		}
 		a.closers = append(a.closers, a.HTTPSListen.Shutdown)
@@ -628,12 +638,16 @@ func isPort80(addr string) bool {
 }
 
 // httpsRedirectHandler answers every request with a permanent redirect to the
-// same URL on HTTPS, keeping the original host and request path. It sits
-// behind the ACME challenge handler (if any), which serves HTTP-01
-// challenges and passes everything else here.
-func httpsRedirectHandler() http.Handler {
+// same path on HTTPS. The host comes from configuration, not from r.Host: a
+// request with a forged Host header would otherwise turn this into an open
+// redirect. The ACME challenge handler (if any) sits in front of it.
+func httpsRedirectHandler(host string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		target := "https://" + r.Host + r.URL.RequestURI()
+		if host == "" {
+			http.Error(w, "the server hostname is not configured", http.StatusInternalServerError)
+			return
+		}
+		target := "https://" + host + r.URL.RequestURI()
 		http.Redirect(w, r, target, http.StatusMovedPermanently)
 	})
 }

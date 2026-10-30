@@ -2,11 +2,11 @@ package imapimport
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
-	"crypto/tls"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,6 +30,9 @@ type Service struct {
 	mailbox  *imapd.MailboxRepo
 	messages *imapd.MessageRepo
 	users    *store.Users
+	// allowPrivateHosts permits loopback and RFC 1918 import sources. Off by
+	// default; see SetAllowPrivateHosts.
+	allowPrivateHosts bool
 
 	quit    chan struct{}
 	done    chan struct{}
@@ -55,6 +58,10 @@ func New(db *sqlx.DB, blobs *blobstore.Store, log *slog.Logger, encryptionKey st
 		cancels:  make(map[int64]context.CancelFunc),
 	}
 }
+
+// SetAllowPrivateHosts permits imports from loopback and RFC 1918 addresses.
+// It is set once during construction from configuration and defaults to false.
+func (s *Service) SetAllowPrivateHosts(allow bool) { s.allowPrivateHosts = allow }
 
 func (s *Service) Start(ctx context.Context) {
 	s.wg.Add(1)
@@ -122,9 +129,9 @@ func sleepOrStop(ctx context.Context, quit chan struct{}, d time.Duration) bool 
 }
 
 const (
-	maxSyncRetries    = 5
-	retryBaseDelay    = 5 * time.Second
-	retryMaxDelay     = 2 * time.Minute
+	maxSyncRetries = 5
+	retryBaseDelay = 5 * time.Second
+	retryMaxDelay  = 2 * time.Minute
 )
 
 // runJob executes a claimed job. When the IMAP connection drops mid-sync it
@@ -218,6 +225,12 @@ type RemoteParams struct {
 }
 
 func (s *Service) ListRemoteFolders(ctx context.Context, params RemoteParams) ([]string, error) {
+	if strings.TrimSpace(params.Host) == "" {
+		return nil, fmt.Errorf("%w: remote host is required", ErrInvalid)
+	}
+	if err := validateRemoteHost(ctx, params.Host, s.allowPrivateHosts); err != nil {
+		return nil, err
+	}
 	client, err := s.dial(ctx, params)
 	if err != nil {
 		return nil, err

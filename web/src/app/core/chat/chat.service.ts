@@ -280,9 +280,14 @@ export class ChatService {
     const url = this.access
       ? `${scheme}://${window.location.host}${API}/meeting-invites/${encodeURIComponent(this.access.guestUid)}/ws?` +
         new URLSearchParams({ to: this.access.guestTo, token: this.access.guestToken }).toString()
-      : `${scheme}://${window.location.host}${API}/chat/ws?access_token=${encodeURIComponent(token)}`;
+      : `${scheme}://${window.location.host}${API}/chat/ws`;
 
-    const socket = new WebSocket(url);
+    // The browser cannot set an Authorization header on a WebSocket, so the
+    // access token is the second subprotocol. Putting it in the URL would leak
+    // it into proxy logs and browser diagnostics.
+    const socket = this.access
+      ? new WebSocket(url)
+      : new WebSocket(url, ['linchange', token]);
     this.socket = socket;
 
     return new Promise<void>((resolve, reject) => {
