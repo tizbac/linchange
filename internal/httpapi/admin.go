@@ -2536,6 +2536,10 @@ func (s *Server) listWorkgroupAddressBooks(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) createWorkgroupAddressBook(w http.ResponseWriter, r *http.Request) {
+	if err := s.admin.CanAdmin(Principal(r.Context())); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
 	id, ok := pathID(r, "id")
 	if !ok {
 		s.writeError(w, http.StatusBadRequest, "invalid workgroup id")

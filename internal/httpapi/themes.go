@@ -185,8 +185,8 @@ func (s *Server) handleThemeAsset(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer rc.Close()
-		data, err := io.ReadAll(rc)
-		if err != nil {
+		data, err := io.ReadAll(io.LimitReader(rc, maxThemeAssetBytes+1))
+		if err != nil || len(data) > maxThemeAssetBytes {
 			s.writeError(w, http.StatusNotFound, "no such file")
 			return
 		}
@@ -221,6 +221,16 @@ func (s *Server) readThemeZip(t store.Theme) ([]byte, error) {
 // not an application bundle.
 const maxThemeBytes = 10 << 20
 
+// The compressed size is not the cost of serving a theme: deflate can expand a
+// small upload enormously. The uncompressed limits are checked from the ZIP
+// directory at upload time and enforced again while reading, because the
+// directory is attacker-controlled and may understate an entry's real size.
+const (
+	maxThemeEntries           = 512
+	maxThemeUncompressedBytes = 64 << 20
+	maxThemeAssetBytes        = 8 << 20
+)
+
 // themeAdminView is a custom theme as the administration page lists it.
 type themeAdminView struct {
 	UID       string `json:"uid"`
@@ -243,6 +253,10 @@ func viewTheme(t store.Theme) themeAdminView {
 }
 
 func (s *Server) listThemes(w http.ResponseWriter, r *http.Request) {
+	if err := s.admin.CanAdmin(Principal(r.Context())); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
 	opts, err := adminListOptionsFrom(r)
 	if err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
@@ -393,6 +407,10 @@ change it, then delete the old one.
 }
 
 func (s *Server) uploadTheme(w http.ResponseWriter, r *http.Request) {
+	if err := s.admin.CanAdmin(Principal(r.Context())); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
 	if s.blobs == nil {
 		s.writeError(w, http.StatusInternalServerError, "the blob store is not configured")
 		return
@@ -457,6 +475,17 @@ func themeZipPrefix(data []byte) (string, error) {
 	if err != nil {
 		return "", errors.New("the file is not a valid ZIP")
 	}
+	if len(zr.File) > maxThemeEntries {
+		return "", errors.New("the ZIP has too many files")
+	}
+	var uncompressed uint64
+	for _, entry := range zr.File {
+		if entry.UncompressedSize64 > maxThemeUncompressedBytes ||
+			uncompressed+entry.UncompressedSize64 > maxThemeUncompressedBytes {
+			return "", errors.New("the ZIP expands to more than a theme may hold")
+		}
+		uncompressed += entry.UncompressedSize64
+	}
 	hasRoot := false
 	top := ""
 	for _, entry := range zr.File {
@@ -496,6 +525,10 @@ func themeZipPrefix(data []byte) (string, error) {
 }
 
 func (s *Server) deleteTheme(w http.ResponseWriter, r *http.Request) {
+	if err := s.admin.CanAdmin(Principal(r.Context())); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
 	if err := s.themes.Delete(r.Context(), s.db, chi.URLParam(r, "uid")); err != nil {
 		s.writeError(w, http.StatusNotFound, "no such theme")
 		return
