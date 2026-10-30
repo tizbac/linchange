@@ -95,6 +95,33 @@ func (r *MessageRepo) Insert(ctx context.Context, db *sqlx.DB, mailboxID int64,
 	flags []string, meta mail.Metadata,
 ) (MessageResult, error) {
 
+	var result MessageResult
+	err := store.InTx(ctx, db, func(tx *sqlx.Tx) error {
+		var err error
+		result, err = r.insertTx(ctx, tx, mailboxID, blobSHA256, size, internalDate, flags, meta)
+		return err
+	})
+	if err != nil {
+		return MessageResult{}, err
+	}
+	return result, nil
+}
+
+// InsertTx adds a message inside a transaction the caller already owns. Import
+// jobs use it so that a whole batch commits or rolls back as one unit, rather
+// than leaving a half-imported batch behind when the connection drops.
+func (r *MessageRepo) InsertTx(ctx context.Context, tx *sqlx.Tx, mailboxID int64,
+	blobSHA256 []byte, size int64, internalDate time.Time,
+	flags []string, meta mail.Metadata,
+) (MessageResult, error) {
+	return r.insertTx(ctx, tx, mailboxID, blobSHA256, size, internalDate, flags, meta)
+}
+
+func (r *MessageRepo) insertTx(ctx context.Context, tx *sqlx.Tx, mailboxID int64,
+	blobSHA256 []byte, size int64, internalDate time.Time,
+	flags []string, meta mail.Metadata,
+) (MessageResult, error) {
+
 	// A nil slice would be sent as SQL NULL, and the column is NOT NULL. A
 	// message with no flags is an empty set, not an absent value.
 	if flags == nil {
@@ -103,48 +130,44 @@ func (r *MessageRepo) Insert(ctx context.Context, db *sqlx.DB, mailboxID int64,
 
 	var result MessageResult
 
-	err := store.InTx(ctx, db, func(tx *sqlx.Tx) error {
-		threadKey, err := adoptThread(ctx, tx, mailboxID, meta, internalDate)
-		if err != nil {
-			return err
-		}
-
-		const reserveUID = `
-			UPDATE mailboxes SET uidnext = uidnext + 1, updated_at = now()
-			WHERE id = $1
-			RETURNING uidnext - 1`
-		if err := tx.GetContext(ctx, &result.UID, reserveUID, mailboxID); err != nil {
-			return fmt.Errorf("store: reserve uid: %w", err)
-		}
-
-		const insertMessage = `
-			INSERT INTO messages (mailbox_id, uid, blob_sha256, size, internal_date,
-			                      flags, subject, from_address, from_name, snippet,
-			                      message_id, thread_key, thread_subject, has_attachments,
-			                      item_class)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, ''),
-			        $12, $13, $14, $15)
-			RETURNING id`
-		var id int64
-		err = tx.GetContext(ctx, &id, insertMessage,
-			mailboxID, result.UID, blobSHA256, size, internalDate, flags,
-			meta.Subject, meta.FromAddress, meta.FromName, meta.Snippet,
-			meta.MessageID, threadKey, meta.ThreadSubject, meta.HasAttachments,
-			itemClassOf(meta))
-		if err != nil {
-			return fmt.Errorf("store: insert message: %w", err)
-		}
-		result.ID = id
-
-		if err := insertAddresses(ctx, tx, id, meta); err != nil {
-			return err
-		}
-		return insertReferences(ctx, tx, id, meta.References)
-	})
+	threadKey, err := adoptThread(ctx, tx, mailboxID, meta, internalDate)
 	if err != nil {
 		return MessageResult{}, err
 	}
 
+	const reserveUID = `
+		UPDATE mailboxes SET uidnext = uidnext + 1, updated_at = now()
+		WHERE id = $1
+		RETURNING uidnext - 1`
+	if err := tx.GetContext(ctx, &result.UID, reserveUID, mailboxID); err != nil {
+		return MessageResult{}, fmt.Errorf("store: reserve uid: %w", err)
+	}
+
+	const insertMessage = `
+		INSERT INTO messages (mailbox_id, uid, blob_sha256, size, internal_date,
+		                      flags, subject, from_address, from_name, snippet,
+		                      message_id, thread_key, thread_subject, has_attachments,
+		                      item_class)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, ''),
+		        $12, $13, $14, $15)
+		RETURNING id`
+	var id int64
+	err = tx.GetContext(ctx, &id, insertMessage,
+		mailboxID, result.UID, blobSHA256, size, internalDate, flags,
+		meta.Subject, meta.FromAddress, meta.FromName, meta.Snippet,
+		meta.MessageID, threadKey, meta.ThreadSubject, meta.HasAttachments,
+		itemClassOf(meta))
+	if err != nil {
+		return MessageResult{}, fmt.Errorf("store: insert message: %w", err)
+	}
+	result.ID = id
+
+	if err := insertAddresses(ctx, tx, id, meta); err != nil {
+		return MessageResult{}, err
+	}
+	if err := insertReferences(ctx, tx, id, meta.References); err != nil {
+		return MessageResult{}, err
+	}
 	return result, nil
 }
 

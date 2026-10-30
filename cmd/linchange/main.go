@@ -47,6 +47,12 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "pst-import":
+			if err := runPSTImport(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "linchange pst-import: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		}
 	}
 	if err := run(os.Args[1:]); err != nil {
@@ -67,6 +73,7 @@ Usage:
   linchange --config <path.yaml>
   linchange setup --config <path.yaml>
   linchange create-admin --config <path.yaml> --email <address>
+  linchange pst-import --config <path.yaml> --file <archive.pst> --owner <address>
 
 Flags:
 `, version)

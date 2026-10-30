@@ -41,6 +41,9 @@ address-book service to install: everything ships in the same server.
   greylisting, per-source rate limiting, spam scoring with Junk/Reject
   thresholds and unknown-recipient rejection.
 - **Remote IMAP import** for migrating an existing mailbox.
+- **PST/OST import** from the web client or with `linchange pst-import`, with
+  folder-by-folder destination selection, 64 MiB transaction batches and
+  duplicate-free re-runs. See [docs/pst-import.md](docs/pst-import.md).
 - **Server-side rules**: conditions on sender, recipients, subject, body,
   headers, attachments, size and sender domain; actions to move, mark, forward
   or discard.
