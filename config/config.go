@@ -316,6 +316,7 @@ type Mail struct {
 	Inbound    Inbound    `yaml:"inbound"`
 	Outbound   Outbound   `yaml:"outbound"`
 	DKIM       DKIM       `yaml:"dkim"`
+	Import     Import     `yaml:"import"`
 	// DefaultQuotaBytes is applied to new mailboxes that do not inherit a
 	// domain-specific value.
 	DefaultQuotaBytes int64 `yaml:"default_quota_bytes"`
@@ -328,6 +329,15 @@ type Mail struct {
 	// DkimPrivateKeyEncryptionKey encrypts DKIM private keys at rest. It is
 	// required whenever outbound signing is enabled.
 	DkimPrivateKeyEncryptionKey string `yaml:"dkim_private_key_encryption_key"`
+}
+
+// Import configures remote-IMAP mailbox migration.
+type Import struct {
+	// AllowPrivateHosts lets an import connect to loopback or RFC 1918
+	// addresses. It is off by default because the import form otherwise turns
+	// an authenticated account into a network probe; a deployment migrating
+	// from a server on its own LAN can enable it deliberately.
+	AllowPrivateHosts bool `yaml:"allow_private_hosts"`
 }
 
 // Submission configures the authenticated submission listeners.

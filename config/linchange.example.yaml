@@ -185,6 +185,11 @@ ldap:
   # cache_ttl: 5m
 
 mail:
+  import:
+    # Remote-IMAP migration is refused for loopback and private addresses
+    # unless this is enabled. Turn it on only when the source server is on the
+    # same private network; otherwise the form is a network probe.
+    allow_private_hosts: false
   submission:
     # Refuse AUTH on a connection that has not been upgraded with STARTTLS.
     require_tls: true

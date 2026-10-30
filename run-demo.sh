@@ -20,10 +20,12 @@ NC='\033[0m' # No Color
 
 # Demo credentials
 DEMO_ADMIN_EMAIL="admin@localhost"
-DEMO_ADMIN_PASSWORD="DemoAdmin123!"
+DEMO_ADMIN_PASSWORD="$(openssl rand -hex 12)"
 DEMO_DOMAIN="localhost"
 DEMO_JWT_SECRET="demo-jwt-secret-change-in-production-$(openssl rand -hex 16)"
-DEMO_DB_PASSWORD="linchange"
+DEMO_DB_PASSWORD="$(openssl rand -hex 16)"
+DEMO_AUTH_KEY="$(openssl rand -base64 32)"
+DEMO_DKIM_KEY="$(openssl rand -base64 32)"
 
 # Published host ports. Every one of them is the standard port with a 5 in
 # front, so the demo never binds a privileged port and never collides with a
@@ -100,7 +102,7 @@ server:
     - 192.168.0.0/16
 
 database:
-  url: postgres://linchange:linchange@postgres:5432/linchange?sslmode=disable
+  url: postgres://linchange:\${DB_PASSWORD}@postgres:5432/linchange?sslmode=disable
   max_open: 25
   max_idle: 5
   max_lifetime: 30m
@@ -146,7 +148,7 @@ auth:
       salt_len: 16
     min_password_length: 12
   jwt:
-    secret: demo-jwt-secret-change-in-production
+    secret: \${JWT_SECRET}
     issuer: linchange-demo
     access_ttl: 15m
     refresh_ttl: 720h
@@ -155,7 +157,7 @@ auth:
     issuer: linchange-demo
     window: 1
     recovery_codes: 10
-  encryption_key: demo-encryption-key-32-bytes-long!!
+  encryption_key: \${AUTH_ENCRYPTION_KEY}
   reset_password:
     enabled: true
     token_ttl: 30m
@@ -216,7 +218,7 @@ mail:
     selector_prefix: s
     key_bits: 2048
     sign_all: false
-  dkim_private_key_encryption_key: demo-dkim-encryption-key-32-bytes!!
+  dkim_private_key_encryption_key: \${DKIM_ENCRYPTION_KEY}
   default_quota_bytes: 10737418240
   max_quota_bytes: 107374182400
 
@@ -255,8 +257,10 @@ echo -e "${GREEN}Config written.${NC}"
 # Create .env file for docker-compose
 ENV_FILE=".env.demo"
 cat > "$ENV_FILE" <<EOENV
-POSTGRES_PASSWORD=linchange
-JWT_SECRET=demo-jwt-secret-change-in-production
+POSTGRES_PASSWORD=${DEMO_DB_PASSWORD}
+JWT_SECRET=${DEMO_JWT_SECRET}
+AUTH_ENCRYPTION_KEY=${DEMO_AUTH_KEY}
+DKIM_ENCRYPTION_KEY=${DEMO_DKIM_KEY}
 LDAP_BIND_PASSWORD=
 # Host-side ports. docker-compose.yml reads these, so the container keeps the
 # standard ports while the host publishes the 5-prefixed ones.
@@ -335,20 +339,15 @@ fi
 echo -e "${YELLOW}Creating localhost domain...${NC}"
 compose exec -T postgres psql -U linchange -d linchange -c "INSERT INTO domains (name, status, is_local, description, default_quota_bytes) VALUES ('localhost', 'active', true, 'Demo domain', 10737418240) ON CONFLICT (name) DO NOTHING;" 2>&1
 
-# Create the demo admin user via database
+# Create the demo admin user. The password is generated per run (it is printed
+# above and at the end) and hashed by the server's own argon2id path, so a demo
+# never ships a known credential.
 echo -e "${YELLOW}Creating admin user...${NC}"
-compose exec -T postgres psql -U linchange -d linchange -c "
-INSERT INTO users (address, source, display_name, enabled, mailbox_enabled, is_domain_admin, quota_bytes, daily_send_limit, timezone, language, must_change_password, address_local, created_at, updated_at)
-VALUES ('admin@localhost', 'local', 'Demo Admin', true, true, true, 10737418240, 500, 'UTC', 'en', false, 'admin@localhost', now(), now())
-ON CONFLICT (address) DO UPDATE SET display_name = EXCLUDED.display_name, enabled = EXCLUDED.enabled, mailbox_enabled = EXCLUDED.mailbox_enabled, is_domain_admin = EXCLUDED.is_domain_admin;
-" 2>&1
-
-# Set admin password (using argon2id hash for "DemoAdmin123!")
-compose exec -T postgres psql -U linchange -d linchange -c "
-INSERT INTO credentials (address, password_hash)
-VALUES ('admin@localhost', '\$argon2id\$v=19\$m=65536,t=3,p=4\$AAECAwQFBgcICQoLDA0ODw\$ROkAE0vGKswRptWqEJY6KAbzwHHSnT8fIKSs2VrJfIU')
-ON CONFLICT (address) DO UPDATE SET password_hash = EXCLUDED.password_hash;
-" 2>&1
+compose exec -T linchange-demo /app/linchange create-admin \
+    --config /app/config/linchange.demo.yaml \
+    --email "$DEMO_ADMIN_EMAIL" \
+    --name "Demo Admin" \
+    --password "$DEMO_ADMIN_PASSWORD" 2>&1
 
 # Test autodiscover
 echo -e "${YELLOW}Testing autodiscover...${NC}"

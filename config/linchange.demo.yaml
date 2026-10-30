@@ -11,7 +11,7 @@ server:
     - 192.168.0.0/16
 
 database:
-  url: postgres://linchange:linchange@postgres:5432/linchange?sslmode=disable
+  url: postgres://linchange:${DB_PASSWORD}@postgres:5432/linchange?sslmode=disable
   max_open: 25
   max_idle: 5
   max_lifetime: 30m
@@ -57,7 +57,7 @@ auth:
       salt_len: 16
     min_password_length: 12
   jwt:
-    secret: demo-jwt-secret-change-in-production
+    secret: ${JWT_SECRET}
     issuer: linchange-demo
     access_ttl: 15m
     refresh_ttl: 720h
@@ -66,7 +66,7 @@ auth:
     issuer: linchange-demo
     window: 1
     recovery_codes: 10
-  encryption_key: demo-encryption-key-32-bytes-long!!
+  encryption_key: ${AUTH_ENCRYPTION_KEY}
   reset_password:
     enabled: true
     token_ttl: 30m
@@ -131,7 +131,7 @@ mail:
     selector_prefix: s
     key_bits: 2048
     sign_all: false
-  dkim_private_key_encryption_key: demo-dkim-encryption-key-32-bytes!!
+  dkim_private_key_encryption_key: ${DKIM_ENCRYPTION_KEY}
   default_quota_bytes: 10737418240
   max_quota_bytes: 107374182400
 
@@ -170,7 +170,7 @@ webrtc:
     relay_max_port: 49352
     external_ip: 127.0.0.1
     host: localhost
-    secret: demo-turn-secret
+    secret: ""
     credential_ttl: 1h
 
 logging:
