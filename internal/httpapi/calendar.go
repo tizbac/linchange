@@ -28,6 +28,7 @@ var ErrInvalid = errors.New("invalid request")
 func (s *Server) mountCalendar(r chi.Router) {
 	r.Route("/calendars", func(r chi.Router) {
 		r.Use(s.requireAuth)
+		r.Use(s.requirePasswordChanged)
 		r.Get("/", s.handleListCalendars)
 		r.Post("/", s.handleCreateCalendar)
 		r.Get("/{id}", s.handleGetCalendar)

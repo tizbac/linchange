@@ -150,6 +150,12 @@ type Server struct {
 	// change has to satisfy, shared with login and reset.
 	argon2            config.Argon2Params
 	minPasswordLength int
+	// resetIPLimits and resetAddressLimits throttle the unauthenticated reset
+	// form. The captcha is single-use, but one solved challenge must not open
+	// an unlimited stream of reset emails from the same source or to the same
+	// account.
+	resetIPLimits      *rateLimiter
+	resetAddressLimits *rateLimiter
 }
 
 // Options are the inputs to New.
@@ -486,41 +492,43 @@ func New(opts Options) (*Server, error) {
 	}
 
 	return &Server{
-		db:                opts.DB,
-		log:               log,
-		auth:              auth,
-		reset:             r,
-		captcha:           captchaManager,
-		admin:             adm,
-		tokens:            tokens,
-		sessions:          store.NewSessions(),
-		mail:              mailService,
-		calendar:          calService,
-		caldav:            caldavServer,
-		autodiscover:      autodiscoverService,
-		ews:               ewsService,
-		eas:               easService,
-		mapihttp:          mapihttpService,
-		aliases:           store.NewAliases(),
-		shared:            store.NewSharedMailboxes(),
-		grants:            store.NewSharedMailboxGrants(),
-		workgroups:        store.NewWorkgroups(),
-		themes:            store.NewThemes(),
-		defaultTheme:      defaultTheme(cfg.Web.Theme),
-		blobs:             opts.Blobs,
-		staticDir:         opts.StaticDir,
-		publicURL:         strings.TrimSuffix(cfg.MeetingsPublicURL(), "/"),
-		imports:           opts.Imports,
-		pstImports:        pstImporter,
-		meetings:          meetingsService,
-		chat:              chatService,
-		chatHub:           chatHub,
-		webrtc:            opts.WebRTC,
-		contacts:          contactsService,
-		carddav:           carddavServer,
-		totpVerifier:      verifier,
-		argon2:            cfg.Auth.Local.Argon2,
-		minPasswordLength: cfg.Auth.Local.MinPasswordLength,
+		db:                 opts.DB,
+		log:                log,
+		auth:               auth,
+		reset:              r,
+		captcha:            captchaManager,
+		admin:              adm,
+		tokens:             tokens,
+		sessions:           store.NewSessions(),
+		mail:               mailService,
+		calendar:           calService,
+		caldav:             caldavServer,
+		autodiscover:       autodiscoverService,
+		ews:                ewsService,
+		eas:                easService,
+		mapihttp:           mapihttpService,
+		aliases:            store.NewAliases(),
+		shared:             store.NewSharedMailboxes(),
+		grants:             store.NewSharedMailboxGrants(),
+		workgroups:         store.NewWorkgroups(),
+		themes:             store.NewThemes(),
+		defaultTheme:       defaultTheme(cfg.Web.Theme),
+		blobs:              opts.Blobs,
+		staticDir:          opts.StaticDir,
+		publicURL:          strings.TrimSuffix(cfg.MeetingsPublicURL(), "/"),
+		imports:            opts.Imports,
+		pstImports:         pstImporter,
+		meetings:           meetingsService,
+		chat:               chatService,
+		chatHub:            chatHub,
+		webrtc:             opts.WebRTC,
+		contacts:           contactsService,
+		carddav:            carddavServer,
+		totpVerifier:       verifier,
+		argon2:             cfg.Auth.Local.Argon2,
+		minPasswordLength:  cfg.Auth.Local.MinPasswordLength,
+		resetIPLimits:      newRateLimiter(10, 15*time.Minute),
+		resetAddressLimits: newRateLimiter(5, 15*time.Minute),
 	}, nil
 }
 
@@ -528,6 +536,7 @@ func New(opts Options) (*Server, error) {
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
+	r.Use(s.securityHeaders)
 	// No IP middleware runs by default, so the client IP is the direct peer.
 	// Behind a reverse proxy, add middleware.ClientIPFromXFF(trusted CIDRs)
 	// here: clientIP then prefers the value it publishes over RemoteAddr.
@@ -675,10 +684,11 @@ func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 	// preferred locale.
 	if locale == "" {
 		if rel != "" {
-			rootFile := filepath.Join(root, filepath.FromSlash(rel))
-			if info, err := os.Stat(rootFile); err == nil && !info.IsDir() {
-				s.serveFile(w, r, rootFile)
-				return
+			if rootFile, ok := webPath(root, rel); ok {
+				if info, err := os.Stat(rootFile); err == nil && !info.IsDir() {
+					s.serveFile(w, r, rootFile)
+					return
+				}
 			}
 		}
 		target := "/" + preferredLanguage(r) + "/"
@@ -694,19 +704,43 @@ func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 
 	base := filepath.Join(root, locale)
 	shell := filepath.Join(base, "index.html")
-	full := filepath.Join(base, filepath.FromSlash(rel))
-	if rel != "" && !strings.HasPrefix(full, base+string(filepath.Separator)) {
-		s.writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-
 	target := shell
 	if rel != "" {
+		full, ok := webPath(base, rel)
+		if !ok {
+			s.writeError(w, http.StatusNotFound, "not found")
+			return
+		}
 		if info, err := os.Stat(full); err == nil && !info.IsDir() {
 			target = full
 		}
 	}
 	s.serveFile(w, r, target)
+}
+
+// webPath joins a URL-relative path onto a web root and reports whether the
+// result stays inside that root.
+//
+// The request path is attacker-controlled and is not normalised by net/http or
+// by chi, so it may contain "..", encoded separators or a leading slash. The
+// only safe operation is to clean it and then prove containment with
+// filepath.Rel; a prefix check on the joined string is not enough because
+// "/root/web-evil" has "/root/web" as a prefix.
+func webPath(root, rel string) (string, bool) {
+	if strings.ContainsRune(rel, '\x00') {
+		return "", false
+	}
+	clean := filepath.Clean("/" + filepath.FromSlash(rel))
+	clean = strings.TrimPrefix(clean, string(filepath.Separator))
+	full := filepath.Join(root, clean)
+	inside, err := filepath.Rel(root, full)
+	if err != nil {
+		return "", false
+	}
+	if inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return full, true
 }
 
 // serveFile writes one file from the web root, or a 404 when it is missing.
@@ -773,6 +807,51 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), principalKey, principal)
 		ctx = context.WithValue(ctx, sessionIDKey, sessionID)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// requirePasswordChanged refuses the data APIs while an account is under a
+// forced password change.
+//
+// Login deliberately issues a session for such an account so the profile page
+// can set a new password, and the token carries the flag. The web client
+// redirects to that page, but a client calling the API directly must be refused
+// too; otherwise the temporary password keeps full mailbox access. The profile,
+// auth, theme and administration routes stay reachable, which is where the
+// change is made and where the policy explicitly allows an administrator in.
+func (s *Server) requirePasswordChanged(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if Principal(r.Context()).MustChangePassword {
+			s.writeError(w, http.StatusForbidden, "change your password before using this account")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// securityHeaders adds the browser protections that apply to every response.
+//
+// The SPA stores bearer tokens in localStorage, so an injected script is
+// immediately a credential theft; the CSP is deliberately restrictive. The
+// inline style allowance is required by Angular component styles and the rich
+// text editor, while scripts come only from this origin. Attachment and theme
+// handlers overwrite the CSP with their own sandbox policy.
+func (s *Server) securityHeaders(next http.Handler) http.Handler {
+	const csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+		"img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; " +
+		"connect-src 'self' ws: wss:; frame-src 'self' data: blob:; worker-src 'self' blob:; " +
+		"frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", csp)
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		if r.TLS != nil {
+			h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

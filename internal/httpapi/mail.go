@@ -38,6 +38,7 @@ const maxMailBody = 32 << 20
 func (s *Server) mountMail(r chi.Router) {
 	r.Route("/mail", func(r chi.Router) {
 		r.Use(s.requireAuth)
+		r.Use(s.requirePasswordChanged)
 		r.Use(s.sharedMailbox)
 		r.Get("/folders", s.handleListFolders)
 		r.Post("/folders", s.handleCreateFolder)

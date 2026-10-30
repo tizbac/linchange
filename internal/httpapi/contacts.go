@@ -22,6 +22,7 @@ import (
 func (s *Server) mountContacts(r chi.Router) {
 	r.Route("/address-books", func(r chi.Router) {
 		r.Use(s.requireAuth)
+		r.Use(s.requirePasswordChanged)
 		r.Get("/", s.handleListAddressBooks)
 		r.Post("/", s.handleCreateAddressBook)
 		// Static routes before the id parameter, so "offers" is not mistaken

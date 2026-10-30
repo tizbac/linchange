@@ -22,6 +22,7 @@ import (
 func (s *Server) mountOrganization(r chi.Router) {
 	r.Route("/organization", func(r chi.Router) {
 		r.Use(s.requireAuth)
+		r.Use(s.requirePasswordChanged)
 		r.Get("/", s.handleMyOrganization)
 		r.Get("/people", s.handleOrganizationPeople)
 		// The groups are here, next to the people, for the same reason the

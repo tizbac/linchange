@@ -41,6 +41,7 @@ func (s *Server) mountMeetings(r chi.Router) {
 
 	r.Route("/meetings", func(r chi.Router) {
 		r.Use(s.requireAuth)
+		r.Use(s.requirePasswordChanged)
 		r.Get("/", s.handleListMeetings)
 		r.Post("/", s.handleCreateMeeting)
 		r.Get("/{uid}", s.handleGetMeeting)
