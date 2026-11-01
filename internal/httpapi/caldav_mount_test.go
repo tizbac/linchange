@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/linchange/linchange/internal/httpapi"
 )
 
 // CalDAV is not part of the REST surface. A calendar client is handed
@@ -45,5 +47,30 @@ func TestCalDAVWellKnownResolves(t *testing.T) {
 	}
 	if got := rr.Header().Get("Location"); got != "/caldav/" {
 		t.Errorf("redirect target = %q, want /caldav/", got)
+	}
+}
+
+// With the web app installed, the SPA's GET catch-all must not take a CalDAV
+// GET before the DAV handler. A GET is what a client uses for a liveness check
+// and to fetch one calendar object; a redirect to the web app's locale shell is
+// not a DAV answer, and a client reports the calendar as gone.
+func TestCalDAVGETIsNotStolenByTheWebApp(t *testing.T) {
+	db := testMigratedDB(t)
+	blobs := testBlobs(t)
+	srv, err := httpapi.New(httpapi.Options{
+		DB: db, Config: testConfig(), Blobs: blobs, StaticDir: t.TempDir(),
+		Captcha: testCaptcha(t),
+	})
+	if err != nil {
+		t.Fatalf("building the server: %v", err)
+	}
+
+	for _, path := range []string{"/caldav", "/caldav/", "/.well-known/caldav"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, req)
+		if rr.Code == http.StatusFound && strings.HasPrefix(rr.Header().Get("Location"), "/en/caldav") {
+			t.Errorf("GET %s was answered by the web app: %d -> %s", path, rr.Code, rr.Header().Get("Location"))
+		}
 	}
 }

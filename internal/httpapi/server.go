@@ -635,7 +635,16 @@ func (s *Server) Handler() http.Handler {
 	// /.well-known/caldav or /caldav and follows it, so the endpoint has to sit
 	// where those point. Mounting it under /api/v1 worked only for a caller who
 	// already knew the path, which no calendar client does.
-	r.Mount("/", s.caldav.Handler())
+	caldavHandler := s.caldav.Handler()
+	r.Mount("/", caldavHandler)
+	// The mounted handler sits at the root, and the SPA's GET catch-all below
+	// would otherwise take every GET to a calendar or an object resource before
+	// it. Those GETs are how a client checks that a calendar is alive and how a
+	// client fetches one object, so they are registered explicitly ahead of it.
+	// (PROPFIND, REPORT and the write methods are not shadowed by a GET route.)
+	for _, path := range []string{"/caldav", "/caldav/", "/caldav/*", "/.well-known/caldav"} {
+		r.Get(path, caldavHandler.ServeHTTP)
+	}
 
 	// Autodiscover (outside /api/v1 for Outlook compatibility)
 	r.Mount("/autodiscover", s.autodiscover.Handler())
