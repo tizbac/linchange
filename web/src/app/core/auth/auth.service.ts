@@ -183,7 +183,7 @@ export class AuthService {
       };
       return true;
     }
-    this.adopt(res, login);
+    await this.adopt(res, login);
     return false;
   }
 
@@ -194,7 +194,7 @@ export class AuthService {
       challenge_id: c.id,
       code,
     });
-    this.adopt(res, c.user);
+    await this.adopt(res, c.user);
   }
 
   // refreshOnce renews the session once; concurrent 401s share a single call so
@@ -249,7 +249,11 @@ export class AuthService {
   // adopt takes the tokens and then asks who the session is. The address typed
   // on the form is not trusted for this: the server canonicalises it, and only
   // the server knows whether the session is impersonating.
-  private adopt(res: LoginResponse, user: string): void {
+  //
+  // The lookup is awaited, not fired and forgotten: the admin guard decides from
+  // `me`, so a deep link to /admin/domains on a fresh page load would otherwise
+  // read "not an administrator" and bounce a domain admin to the dashboard.
+  private async adopt(res: LoginResponse, user: string): Promise<void> {
     if (!res.access_token || !res.refresh_token) {
       throw new Error('the server did not issue tokens');
     }
@@ -262,11 +266,11 @@ export class AuthService {
     this.storage.setItem(K_REFRESH, state.refreshToken);
     this.storage.setItem(K_USER, state.user);
     this._state.set(state);
-    void this.loadMe();
+    await this.loadMe();
   }
 
   private restore(rt: string): Promise<void> {
-    return this.post<LoginResponse>('/auth/refresh', { refresh_token: rt }).then((res) => {
+    return this.post<LoginResponse>('/auth/refresh', { refresh_token: rt }).then(async (res) => {
       const user = this.storage.getItem(K_USER) ?? '';
       this.storage.setItem(K_REFRESH, res.refresh_token ?? '');
       this._state.set({
@@ -275,7 +279,7 @@ export class AuthService {
         accessToken: res.access_token ?? '',
         refreshToken: res.refresh_token ?? '',
       });
-      void this.loadMe();
+      await this.loadMe();
     });
   }
 
