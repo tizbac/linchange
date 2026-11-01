@@ -41,6 +41,13 @@ chat, riunioni o rubriche da installare: tutto è nello stesso server.
 - **Autenticazione e filtraggio in ingresso**: verifica SPF, DKIM e DMARC,
   greylisting, rate limiting per sorgente, punteggio spam con soglie Junk/Reject
   e rifiuto dei destinatari sconosciuti.
+- **Fiducia in ingresso per dominio**: si possono indicare gli indirizzi o le
+  reti da cui un servizio anti-spam esterno consegna la posta (la posta da
+  qualsiasi altra sorgente viene rifiutata al RCPT, e quella di un relay
+  dichiarato non è ricontrollata contro SPF, DKIM, DMARC o greylisting) e
+  trasformare il verdetto scritto nel header del messaggio, per esempio
+  `X-Spam: YES`, in junk, rifiuto o scarto tramite regole per header del
+  dominio.
 - **Importazione IMAP remota** per migrare una casella esistente.
 - **Regole lato server**: condizioni su mittente, destinatari, oggetto, corpo,
   header, allegati, dimensione e dominio del mittente; azioni per spostare,

@@ -61,6 +61,14 @@ func (s *Service) UpdateDomain(ctx context.Context, actor policy.Principal, name
 		// is the one way to change it.
 		carry := req
 		carry.Status = before.Status
+		// The allowed sources are stored in the form the inbound listener
+		// matches against, and an unparseable entry is refused here rather than
+		// accepted and then silently shutting the domain to the world.
+		networks, err := store.NormalizeAntispamNetworks(req.AntispamNetworks)
+		if err != nil {
+			return errors.Join(ErrInvalid, err)
+		}
+		carry.AntispamNetworks = networks
 		if err := s.domains.Update(ctx, q, name, carry); err != nil {
 			return mapStore(err)
 		}
@@ -70,7 +78,14 @@ func (s *Service) UpdateDomain(ctx context.Context, actor policy.Principal, name
 		}
 		return s.record(ctx, q, actor, change{
 			action: ActionDomainUpdate, targetType: "domain", targetID: name,
-			detail: map[string]any{"before": before.Status, "after": updated.Status},
+			detail: map[string]any{
+				"before": before.Status,
+				"after":  updated.Status,
+				// The list is written out in full, not as a flag: who is
+				// allowed to deliver mail to a domain is the kind of change
+				// an operator wants to read back after an incident.
+				"antispam_networks": updated.AntispamNetworks,
+			},
 		})
 	})
 	if err != nil {
@@ -121,6 +136,181 @@ func (s *Service) GetDomain(ctx context.Context, actor policy.Principal, name st
 	}
 	d, err := s.domains.Get(ctx, s.db, name)
 	return d, mapStore(err)
+}
+
+// --- per-domain inbound anti-spam rules ---
+
+// maxHeaderRuleHeader bounds the header name a rule may test. A header name is
+// a token in the protocol, and anything longer than this is a typo rather than
+// a header an anti-spam service writes.
+const maxHeaderRuleHeader = 100
+
+// maxHeaderRuleValue bounds the text a rule compares against. Anti-spam
+// verdicts are short; a value this long is a paste of a whole header, which
+// belongs in a per-user mail rule, not a domain rule.
+const maxHeaderRuleValue = 500
+
+// validateHeaderRule checks a normalized request before it reaches the schema,
+// so the answer names the field that is wrong instead of reporting a constraint
+// violation from the database.
+func validateHeaderRule(req store.DomainHeaderRuleRequest) error {
+	if req.Header == "" {
+		return errors.Join(ErrInvalid, errors.New("the header name is required"))
+	}
+	if len(req.Header) > maxHeaderRuleHeader {
+		return errors.Join(ErrInvalid, fmt.Errorf("the header name is %d characters, over the %d limit",
+			len(req.Header), maxHeaderRuleHeader))
+	}
+	if !store.ValidHeaderMatch(req.Match) {
+		return errors.Join(ErrInvalid, fmt.Errorf("unknown match %q", req.Match))
+	}
+	if !store.ValidHeaderAction(req.Action) {
+		return errors.Join(ErrInvalid, fmt.Errorf("unknown action %q", req.Action))
+	}
+	if len(req.Value) > maxHeaderRuleValue {
+		return errors.Join(ErrInvalid, fmt.Errorf("the value is %d characters, over the %d limit",
+			len(req.Value), maxHeaderRuleValue))
+	}
+	if req.Match != store.HeaderMatchExists && req.Value == "" {
+		return errors.Join(ErrInvalid, fmt.Errorf("the match %q needs a value", req.Match))
+	}
+	return nil
+}
+
+// ListDomainHeaderRules returns a domain's header rules, enabled and disabled,
+// in the order the inbound listener runs them.
+func (s *Service) ListDomainHeaderRules(ctx context.Context, actor policy.Principal, name string) ([]store.DomainHeaderRule, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
+	if _, err := s.domains.Get(ctx, s.db, name); err != nil {
+		return nil, mapStore(err)
+	}
+	return s.headerRules.List(ctx, s.db, name)
+}
+
+// AddDomainHeaderRule adds one header rule to a domain.
+func (s *Service) AddDomainHeaderRule(ctx context.Context, actor policy.Principal, name string, req store.DomainHeaderRuleRequest) (store.DomainHeaderRule, error) {
+	if err := requireAdmin(actor); err != nil {
+		return store.DomainHeaderRule{}, err
+	}
+	req = req.Normalize()
+	if err := validateHeaderRule(req); err != nil {
+		return store.DomainHeaderRule{}, err
+	}
+
+	var rule store.DomainHeaderRule
+	err := store.InTx(ctx, s.db, func(q *sqlx.Tx) error {
+		if _, err := s.domains.Get(ctx, q, name); err != nil {
+			return mapStore(err)
+		}
+		created, err := s.headerRules.Create(ctx, q, name, req)
+		if err != nil {
+			return mapStore(err)
+		}
+		rule = created
+		return s.record(ctx, q, actor, change{
+			action: ActionHeaderRuleCreate, targetType: "domain", targetID: name,
+			detail: map[string]any{
+				"header": created.Header,
+				"value":  created.Value,
+				"match":  created.Match,
+				"action": created.Action,
+			},
+		})
+	})
+	if err != nil {
+		return store.DomainHeaderRule{}, err
+	}
+	return rule, nil
+}
+
+// UpdateDomainHeaderRule changes one rule of one domain.
+//
+// The rule is scoped to the domain in the URL: the ids of two domains' rules
+// are not related, and an unscoped update would let a page that knows one id
+// change another domain's mail.
+func (s *Service) UpdateDomainHeaderRule(ctx context.Context, actor policy.Principal, name string, id int64, up store.DomainHeaderRuleUpdate) (store.DomainHeaderRule, error) {
+	if err := requireAdmin(actor); err != nil {
+		return store.DomainHeaderRule{}, err
+	}
+	err := store.InTx(ctx, s.db, func(q *sqlx.Tx) error {
+		current, err := s.headerRules.GetForDomain(ctx, q, name, id)
+		if err != nil {
+			return mapStore(err)
+		}
+		next := store.DomainHeaderRuleRequest{
+			Header:        current.Header,
+			Value:         current.Value,
+			Match:         current.Match,
+			Action:        current.Action,
+			CaseSensitive: current.CaseSensitive,
+		}
+		enabled := current.Enabled
+		if up.Header != nil {
+			next.Header = *up.Header
+		}
+		if up.Value != nil {
+			next.Value = *up.Value
+		}
+		if up.Match != nil {
+			next.Match = *up.Match
+		}
+		if up.Action != nil {
+			next.Action = *up.Action
+		}
+		if up.CaseSensitive != nil {
+			next.CaseSensitive = *up.CaseSensitive
+		}
+		if up.Enabled != nil {
+			enabled = *up.Enabled
+		}
+		next = next.Normalize()
+		if err := validateHeaderRule(next); err != nil {
+			return err
+		}
+		if err := s.headerRules.Update(ctx, q, name, id, store.DomainHeaderRuleUpdate{
+			Header:        &next.Header,
+			Value:         &next.Value,
+			Match:         &next.Match,
+			Action:        &next.Action,
+			CaseSensitive: &next.CaseSensitive,
+			Enabled:       &enabled,
+		}); err != nil {
+			return mapStore(err)
+		}
+		return s.record(ctx, q, actor, change{
+			action: ActionHeaderRuleUpdate, targetType: "domain", targetID: name,
+			detail: map[string]any{
+				"rule_id": id,
+				"header":  next.Header,
+				"value":   next.Value,
+				"match":   next.Match,
+				"action":  next.Action,
+				"enabled": next.Enabled,
+			},
+		})
+	})
+	if err != nil {
+		return store.DomainHeaderRule{}, err
+	}
+	return s.headerRules.GetForDomain(ctx, s.db, name, id)
+}
+
+// DeleteDomainHeaderRule removes one rule of one domain.
+func (s *Service) DeleteDomainHeaderRule(ctx context.Context, actor policy.Principal, name string, id int64) error {
+	if err := requireAdmin(actor); err != nil {
+		return err
+	}
+	return store.InTx(ctx, s.db, func(q *sqlx.Tx) error {
+		if err := s.headerRules.Delete(ctx, q, name, id); err != nil {
+			return mapStore(err)
+		}
+		return s.record(ctx, q, actor, change{
+			action: ActionHeaderRuleDelete, targetType: "domain", targetID: name,
+			detail: map[string]any{"rule_id": id},
+		})
+	})
 }
 
 // --- aliases ---

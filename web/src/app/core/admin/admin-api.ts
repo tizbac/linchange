@@ -7,6 +7,7 @@ import {
   AuditEntry,
   ContactGroup,
   Domain,
+  DomainHeaderRule,
   ImpersonationGrant,
   OrgCalendar,
   OutboxMessageView,
@@ -106,6 +107,7 @@ export class AdminApi {
     is_local?: boolean;
     description?: string;
     default_quota_bytes?: number;
+    antispam_networks?: string[];
   }): Promise<Domain> {
     return this.post('/domains', body);
   }
@@ -116,6 +118,46 @@ export class AdminApi {
 
   setDomainStatus(name: string, status: Domain['status']): Promise<unknown> {
     return this.request('put', `/domains/${encodeURIComponent(name)}/status`, { status });
+  }
+
+  // A domain's header rules are the verdict of an external anti-spam service
+  // written into the message, so they are named by the administrator rather
+  // than hardcoded per service.
+  listDomainHeaderRules(name: string): Promise<{ rules: DomainHeaderRule[]; total: number }> {
+    return this.get(`/domains/${encodeURIComponent(name)}/header-rules`);
+  }
+
+  createDomainHeaderRule(
+    name: string,
+    body: {
+      header: string;
+      value?: string;
+      match?: string;
+      action?: string;
+      case_sensitive?: boolean;
+      enabled?: boolean;
+    },
+  ): Promise<DomainHeaderRule> {
+    return this.post(`/domains/${encodeURIComponent(name)}/header-rules`, body);
+  }
+
+  updateDomainHeaderRule(
+    name: string,
+    id: number,
+    body: {
+      header?: string;
+      value?: string;
+      match?: string;
+      action?: string;
+      case_sensitive?: boolean;
+      enabled?: boolean;
+    },
+  ): Promise<DomainHeaderRule> {
+    return this.patch(`/domains/${encodeURIComponent(name)}/header-rules/${id}`, body);
+  }
+
+  deleteDomainHeaderRule(name: string, id: number): Promise<unknown> {
+    return this.request('delete', `/domains/${encodeURIComponent(name)}/header-rules/${id}`, null);
   }
 
   // --- users ---

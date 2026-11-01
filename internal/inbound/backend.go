@@ -42,20 +42,22 @@ var errUnknownRecipient = errors.New("inbound: unknown recipient")
 // messages into INBOX or Junk by spam score, running each owner's rules on the
 // way in.
 type Backend struct {
-	db        *sqlx.DB
-	cfg       config.Config
-	log       *slog.Logger
-	blobs     *blobstore.Store
-	dns       Resolver
-	greylist  *Greylist
-	rates     *Rates
-	users     *store.Users
-	aliases   *store.Aliases
-	quotas    *store.Quotas
-	mailboxes *imapd.MailboxRepo
-	messages  *imapd.MessageRepo
-	rules     *store.MailRules
-	outbox    *delivery.OutboxRepository
+	db          *sqlx.DB
+	cfg         config.Config
+	log         *slog.Logger
+	blobs       *blobstore.Store
+	dns         Resolver
+	greylist    *Greylist
+	rates       *Rates
+	users       *store.Users
+	aliases     *store.Aliases
+	quotas      *store.Quotas
+	mailboxes   *imapd.MailboxRepo
+	messages    *imapd.MessageRepo
+	rules       *store.MailRules
+	domains     *store.Domains
+	headerRules *store.DomainHeaderRules
+	outbox      *delivery.OutboxRepository
 
 	// Scheduling applies an iTIP message to the owner's calendar once the
 	// message is stored: the REPLY an external mail client sends when its
@@ -81,20 +83,22 @@ type Backend struct {
 // NewBackend builds the inbound backend.
 func NewBackend(db *sqlx.DB, cfg config.Config, log *slog.Logger, blobs *blobstore.Store) *Backend {
 	return &Backend{
-		db:        db,
-		cfg:       cfg,
-		log:       log,
-		blobs:     blobs,
-		dns:       NewResolver(),
-		greylist:  NewGreylist(cfg.Mail.Inbound.Greylisting),
-		rates:     NewRates(),
-		users:     store.NewUsers(),
-		aliases:   store.NewAliases(),
-		quotas:    store.NewQuotas(),
-		mailboxes: imapd.NewMailboxRepo(),
-		messages:  imapd.NewMessageRepo(),
-		rules:     store.NewMailRules(),
-		outbox:    delivery.NewOutboxRepository(db),
+		db:          db,
+		cfg:         cfg,
+		log:         log,
+		blobs:       blobs,
+		dns:         NewResolver(),
+		greylist:    NewGreylist(cfg.Mail.Inbound.Greylisting),
+		rates:       NewRates(),
+		users:       store.NewUsers(),
+		aliases:     store.NewAliases(),
+		quotas:      store.NewQuotas(),
+		mailboxes:   imapd.NewMailboxRepo(),
+		messages:    imapd.NewMessageRepo(),
+		rules:       store.NewMailRules(),
+		domains:     store.NewDomains(),
+		headerRules: store.NewDomainHeaderRules(),
+		outbox:      delivery.NewOutboxRepository(db),
 	}
 }
 
@@ -177,8 +181,21 @@ type session struct {
 	envFrom   string
 	envDomain string
 	// owners are the mailboxes this transaction delivers to, one per RCPT TO.
-	owners  []string
-	signals Signals
+	owners []string
+	// policies holds the settings of the domain each owner lives in, read once
+	// at RCPT time and reused when the message is delivered. A connection can
+	// address several domains, so the answer is per owner rather than per
+	// connection.
+	policies map[string]domainPolicy
+	// trusted is set when every owner this message is addressed to lists the
+	// connecting address as an anti-spam relay. Those domains' mail has already
+	// been through a filter that checked SPF, DKIM and DMARC, and checking them
+	// again here would second-guess a verdict the domain chose to trust.
+	trusted bool
+	// greyChecked keeps greylisting from being applied once per RCPT TO of the
+	// same transaction.
+	greyChecked bool
+	signals     Signals
 }
 
 // NewSession is called when a client connects and issues EHLO/HELO.
@@ -206,69 +223,32 @@ func (s *session) Auth(mech string) (sasl.Server, error) {
 	return nil, smtp.ErrAuthUnsupported
 }
 
-// Mail records the envelope sender and runs the connection-level checks.
+// Mail records the envelope sender.
+//
+// The checks that used to run here - SPF, reverse DNS, greylisting - moved to
+// Rcpt and Data, because they now depend on the domain being addressed: an
+// address that is a domain's anti-spam relay has already authenticated the
+// message on the sender's behalf, and that is only knowable once a recipient is
+// named.
 func (s *session) Mail(from string, opts *smtp.MailOptions) error {
-	ctx := s.context()
 	s.envFrom = strings.TrimSpace(from)
 	if s.envFrom == "<>" {
 		s.envFrom = ""
 	}
 	if s.envFrom != "" {
 		s.envDomain = domainOf(s.envFrom)
-		res, err := CheckSPF(ctx, s.ip, s.envDomain, s.backend.dns)
-		if err != nil {
-			s.backend.log.Warn("SPF evaluation failed", "error", err)
-			res = SPFTempError
-		}
-		s.signals.SPF = res
-	}
-
-	// Only the content-level signals can reject a message, because the DKIM and
-	// DMARC verdicts need the body. The connection signals collected here are
-	// scored together in Data.
-	if s.backend.cfg.Mail.Inbound.Spam.Enabled {
-		if name := s.conn.Hostname(); name != "" {
-			if a, err := netip.ParseAddr(name); err == nil && (a.Is4() || a.Is6()) {
-				s.signals.HELOIsIP = true
-			}
-		}
-		if ptr, err := s.backend.dns.PTR(ctx, s.ip); err != nil || ptr == "" {
-			s.signals.PTRPresent = false
-		} else {
-			s.signals.PTRPresent = true
-		}
-		if n, err := s.backend.rates.WindowCount(ctx, s.backend.db, "inbound", s.ip.String(), RateWindow); err != nil {
-			s.backend.log.Warn("rate count failed", "error", err)
-		} else {
-			s.signals.RateCount = n
-		}
-	}
-
-	// A message arriving from this machine's own loopback interface is the
-	// submission path handing local mail back for local delivery, not a
-	// stranger's first attempt: greylisting exists to make strangers retry,
-	// and would only delay a user's own mail to their own server by the full
-	// deferral window.
-	if !s.ip.IsLoopback() {
-		action, err := s.backend.greylist.Check(ctx, s.backend.db, s.ip, s.envFrom, time.Now().UTC())
-		if err != nil {
-			s.backend.log.Warn("greylist check failed; accepting", "error", err)
-		}
-		if action == GreyDefer {
-			return &smtp.SMTPError{
-				Code:         450,
-				EnhancedCode: smtp.EnhancedCode{4, 7, 0},
-				Message:      "greylisted, please retry later",
-			}
-		}
 	}
 	return nil
 }
 
-// Rcpt records a resolved recipient for this transaction.
+// Rcpt records a resolved recipient for this transaction, and answers the two
+// questions that can only be asked once a recipient is known: may this source
+// deliver to this domain at all, and is it a relay whose verdict the domain
+// trusts?
 func (s *session) Rcpt(to string, opts *smtp.RcptOptions) error {
+	ctx := s.context()
 	to = strings.ToLower(strings.TrimSpace(to))
-	owner, err := s.backend.resolveRecipient(s.context(), to)
+	owner, err := s.backend.resolveRecipient(ctx, to)
 	if err != nil {
 		if errors.Is(err, errUnknownRecipient) {
 			if s.backend.cfg.Mail.Inbound.RejectUnknownRecipients {
@@ -286,7 +266,63 @@ func (s *session) Rcpt(to string, opts *smtp.RcptOptions) error {
 			Message:      "unable to look up recipient",
 		}
 	}
+
+	policy, err := s.backend.domainPolicy(ctx, domainOf(owner))
+	if err != nil {
+		// A domain whose settings cannot be read is delivered to as it always
+		// was. Refusing mail because the database is momentarily unreachable
+		// would turn a hiccup into lost messages.
+		s.backend.log.Warn("domain settings could not be read; delivering normally",
+			"domain", domainOf(owner), "error", err)
+		policy = domainPolicy{name: domainOf(owner)}
+	}
+
+	// Mail from this machine's own loopback interface is the submission path
+	// handing local mail back for local delivery. It is not a stranger, and
+	// restricting a domain to an external filter cannot be expected to
+	// restrict the server's own users.
+	accepted := policy.restricted() && policy.trusts(s.ip)
+	if policy.restricted() && !accepted && !s.ip.IsLoopback() {
+		s.backend.log.Warn("inbound connection refused by the domain's allowed sources",
+			"domain", policy.name, "ip", s.ip.String(), "from", s.envFrom)
+		return &smtp.SMTPError{
+			Code:         550,
+			EnhancedCode: smtp.EnhancedCode{5, 7, 1},
+			Message: fmt.Sprintf("mail for %s is accepted only from its configured anti-spam relays",
+				policy.name),
+		}
+	}
+
+	if s.policies == nil {
+		s.policies = map[string]domainPolicy{}
+	}
+	s.policies[owner] = policy
+	if len(s.owners) == 0 {
+		s.trusted = accepted
+	} else {
+		s.trusted = s.trusted && accepted
+	}
 	s.owners = append(s.owners, owner)
+
+	// Greylisting is the connection-level check left, and it runs once per
+	// transaction rather than once per recipient. A relay the domain named is
+	// not a stranger to be made to retry: its own filter already judged the
+	// message, and deferring it here would only delay mail the domain chose to
+	// trust.
+	if !s.trusted && !s.greyChecked && !s.ip.IsLoopback() {
+		s.greyChecked = true
+		action, err := s.backend.greylist.Check(ctx, s.backend.db, s.ip, s.envFrom, time.Now().UTC())
+		if err != nil {
+			s.backend.log.Warn("greylist check failed; accepting", "error", err)
+		}
+		if action == GreyDefer {
+			return &smtp.SMTPError{
+				Code:         450,
+				EnhancedCode: smtp.EnhancedCode{4, 7, 0},
+				Message:      "greylisted, please retry later",
+			}
+		}
+	}
 	return nil
 }
 
@@ -327,7 +363,23 @@ func (s *session) Data(r io.Reader) error {
 
 	spam := s.backend.cfg.Mail.Inbound.Spam
 	junk := false
-	if spam.Enabled {
+	// A connection every recipient's domain named as its anti-spam relay has
+	// already had SPF, DKIM, DMARC and reverse DNS checked by that relay. Running
+	// them again here would score the relay's own address rather than the
+	// original sender, and a domain that chose to trust a filter would then be
+	// second-guessed by the very mail it asked that filter to judge.
+	if spam.Enabled && !s.trusted {
+		s.fillConnectionSignals(ctx)
+
+		if s.envFrom != "" {
+			res, err := CheckSPF(ctx, s.ip, s.envDomain, s.backend.dns)
+			if err != nil {
+				s.backend.log.Warn("SPF evaluation failed", "error", err)
+				res = SPFTempError
+			}
+			s.signals.SPF = res
+		}
+
 		verifs := DKIMVerify(ctx, data, s.backend.dns)
 		s.signals.HasDKIM = len(verifs) > 0
 		s.signals.DKIMValid = DKIMValid(verifs)
@@ -369,16 +421,24 @@ func (s *session) Data(r io.Reader) error {
 	}
 	facts := webmail.NewMatchContext(parsed, int64(len(data)))
 
+	// The domain's own header rules run before anything is filed: a rule whose
+	// action is to reject has to answer the sender before a copy is stored, and
+	// a rule that says junk has to be settled before the message is flagged.
+	decisions, err := s.applyHeaderRules(ctx, facts)
+	if err != nil {
+		return err
+	}
+
 	var flags []string
 	if junk {
 		flags = []string{"\\Junk"}
 	}
 
-	if err := s.deliver(ctx, digest, size, flags, meta, internalDate, facts, parsed); err != nil {
+	if err := s.deliver(ctx, digest, size, flags, meta, internalDate, facts, parsed, decisions); err != nil {
 		return err
 	}
 
-	if spam.Enabled {
+	if spam.Enabled && !s.trusted {
 		if err := s.backend.rates.Increment(ctx, s.backend.db, "inbound", s.ip.String(), RateWindow); err != nil {
 			s.backend.log.Warn("rate increment failed", "error", err)
 		}
@@ -388,8 +448,32 @@ func (s *session) Data(r io.Reader) error {
 		"to", len(s.owners),
 		"bytes", size,
 		"junk", junk,
+		"trusted_relay", s.trusted,
 	)
 	return nil
+}
+
+// fillConnectionSignals collects the signals that describe the connection
+// rather than the message: whether the HELO named an IP, whether the source has
+// a reverse record, and how many messages it has sent in the current window.
+// They are read when the message is scored, which is now after the recipients
+// are known, because a relay the domain trusts is not scored at all.
+func (s *session) fillConnectionSignals(ctx context.Context) {
+	if name := s.conn.Hostname(); name != "" {
+		if a, err := netip.ParseAddr(name); err == nil && (a.Is4() || a.Is6()) {
+			s.signals.HELOIsIP = true
+		}
+	}
+	if ptr, err := s.backend.dns.PTR(ctx, s.ip); err != nil || ptr == "" {
+		s.signals.PTRPresent = false
+	} else {
+		s.signals.PTRPresent = true
+	}
+	if n, err := s.backend.rates.WindowCount(ctx, s.backend.db, "inbound", s.ip.String(), RateWindow); err != nil {
+		s.backend.log.Warn("rate count failed", "error", err)
+	} else {
+		s.signals.RateCount = n
+	}
 }
 
 // deliver stores the message for every recipient, applying each owner's rules
@@ -410,7 +494,7 @@ func (s *session) Data(r io.Reader) error {
 // every delivery of every message would buy nothing.
 func (s *session) deliver(ctx context.Context, digest blobstore.Digest, size int64,
 	flags []string, meta mail.Metadata, internalDate time.Time, facts webmail.MatchContext,
-	parsed *mail.Parsed,
+	parsed *mail.Parsed, decisions map[string]domainDecision,
 ) error {
 	owners := make([]string, 0, len(s.owners))
 	seen := map[string]bool{}
@@ -421,6 +505,17 @@ func (s *session) deliver(ctx context.Context, digest blobstore.Digest, size int
 		}
 	}
 	for _, owner := range owners {
+		// A domain rule that discards runs before the owner's own rules: the
+		// administrator's "our filter says this is spam, keep nothing" is a
+		// policy over the mailbox, not a preference inside it, and a user rule
+		// that forwards everything would otherwise quietly re-deliver it.
+		decision := decisions[owner]
+		if decision.discard {
+			s.backend.log.Info("inbound message discarded by a domain header rule",
+				"owner", owner, "headers", decision.matched)
+			continue
+		}
+
 		outcome, ok := s.backend.ownerOutcome(ctx, owner, facts)
 
 		// A discarded message is not stored for this owner, but a forward asked
@@ -433,6 +528,11 @@ func (s *session) deliver(ctx context.Context, digest blobstore.Digest, size int
 				s.backend.queueForward(ctx, owner, digest, size, outcome.Forward)
 			}
 			continue
+		}
+
+		ownerFlags := flags
+		if decision.junk {
+			ownerFlags = mergeFlags(flags, []string{`\Junk`})
 		}
 
 		dest := "INBOX"
@@ -466,7 +566,7 @@ func (s *session) deliver(ctx context.Context, digest blobstore.Digest, size int
 			}
 		}
 		if _, err := s.backend.messages.Insert(ctx, s.backend.db, mbID, digest[:], size,
-			internalDate, mergeFlags(flags, outcome.Flags), meta); err != nil {
+			internalDate, mergeFlags(ownerFlags, outcome.Flags), meta); err != nil {
 			// The sender gets a temporary failure and will retry, but the
 			// operator needs to know why: without this the only symptom is a
 			// mailbox that never fills up.
@@ -487,14 +587,14 @@ func (s *session) deliver(ctx context.Context, digest blobstore.Digest, size int
 		}
 		// An automatic reply goes out after the message is stored, and only
 		// once the store has claimed the correspondent for this period.
-		s.backend.applyOutOfOffice(ctx, owner, meta, parsed, flags)
+		s.backend.applyOutOfOffice(ctx, owner, meta, parsed, ownerFlags)
 		// The scheduling answer is given after the recipient's copy exists,
 		// so an answer the calendar layer refuses is still mail the recipient
 		// can read and answer again from their client.
 		s.backend.applyScheduling(ctx, owner, parsed)
 		// A message that is not junk is also the best answer available to
 		// "who is this?" for a card the recipient already has with no name.
-		if s.backend.UpdateContactName != nil && !containsFlag(flags, `\Junk`) {
+		if s.backend.UpdateContactName != nil && !containsFlag(ownerFlags, `\Junk`) {
 			s.backend.UpdateContactName(ctx, owner, meta.FromAddress, meta.FromName)
 		}
 		if ok {
@@ -608,6 +708,9 @@ func (s *session) Reset() {
 	s.envFrom = ""
 	s.envDomain = ""
 	s.owners = nil
+	s.policies = nil
+	s.trusted = false
+	s.greyChecked = false
 	s.signals = Signals{}
 }
 

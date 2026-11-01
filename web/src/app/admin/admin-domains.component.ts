@@ -1,7 +1,12 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { AdminApi } from '../core/admin/admin-api';
-import { Domain, formatBytes } from '../core/admin/admin.models';
+import {
+  Domain,
+  HeaderAction,
+  HeaderMatch,
+  formatBytes,
+} from '../core/admin/admin.models';
 import { errorMessage } from '../core/http-error';
 import {
   AdminButton,
@@ -57,7 +62,13 @@ export class AdminDomainsComponent implements OnInit {
   protected page = 1;
   protected readonly pageSize = 20;
 
-  protected draft = { name: '', description: '', quotaMiB: null as number | null, isLocal: true };
+  protected draft = {
+    name: '',
+    description: '',
+    quotaMiB: null as number | null,
+    isLocal: true,
+    antispamNetworks: '',
+  };
 
   // Editing state
   protected editing = signal<string | null>(null);
@@ -68,7 +79,17 @@ export class AdminDomainsComponent implements OnInit {
     isLocal: true,
     dailySendLimit: null as number | null,
     dkimSelector: '',
+    // Comma- or space-separated addresses and networks, as an operator types
+    // them. The server parses and stores them in canonical form.
+    antispamNetworks: '',
+    rules: [] as RuleDraft[],
   };
+  // Rules removed from the draft while editing. They are only deleted when the
+  // form is saved, so cancelling leaves them in place.
+  protected removedRules: number[] = [];
+
+  protected readonly matches: HeaderMatch[] = ['contains', 'is', 'starts_with', 'ends_with', 'exists'];
+  protected readonly actions: HeaderAction[] = ['junk', 'reject', 'discard'];
 
   ngOnInit(): void {
     this.reload();
@@ -123,10 +144,17 @@ export class AdminDomainsComponent implements OnInit {
         name: this.draft.name.trim(),
         is_local: this.draft.isLocal,
         description: this.draft.description.trim(),
+        antispam_networks: parseNetworks(this.draft.antispamNetworks),
         ...(quota === undefined ? {} : { default_quota_bytes: quota }),
       });
       this.ok.set(`${this.draft.name.trim()} was created.`);
-      this.draft = { name: '', description: '', quotaMiB: null, isLocal: true };
+      this.draft = {
+        name: '',
+        description: '',
+        quotaMiB: null,
+        isLocal: true,
+        antispamNetworks: '',
+      };
       this.creating.set(false);
       await this.reload();
     } catch (err) {
@@ -169,7 +197,7 @@ export class AdminDomainsComponent implements OnInit {
     }
   }
 
-  protected openEdit(d: Domain): void {
+  protected async openEdit(d: Domain): Promise<void> {
     this.editDraft = {
       name: d.name,
       description: d.description ?? '',
@@ -177,14 +205,60 @@ export class AdminDomainsComponent implements OnInit {
       isLocal: d.is_local,
       dailySendLimit: d.daily_send_limit ?? null,
       dkimSelector: d.dkim_selector ?? '',
+      antispamNetworks: (d.antispam_networks ?? []).join(', '),
+      rules: [],
     };
-    this.editing.set(d.name);
+    this.removedRules = [];
     this.error.set('');
     this.ok.set('');
+
+    // The header rules are a separate collection, so the edit panel has to read
+    // them before it can show them. Reading them first also matters for change
+    // detection: the panel is OnPush, and opening it renders once, so rules
+    // loaded afterwards would never appear. A failure here is reported rather
+    // than silently showing an empty list, which would look like the domain has
+    // no rules when the server is simply unreachable.
+    try {
+      const res = await this.api.listDomainHeaderRules(d.name);
+      this.editDraft.rules = (res.rules ?? []).map((rule) => ({
+        id: rule.id,
+        header: rule.header,
+        value: rule.value,
+        match: rule.match,
+        action: rule.action,
+        caseSensitive: rule.case_sensitive,
+        enabled: rule.enabled,
+      }));
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    }
+
+    this.editing.set(d.name);
+  }
+
+  protected addRule(): void {
+    this.editDraft.rules.push({
+      id: 0,
+      header: '',
+      value: '',
+      match: 'contains',
+      action: 'junk',
+      caseSensitive: false,
+      enabled: true,
+    });
+  }
+
+  protected removeRule(index: number): void {
+    const rule = this.editDraft.rules[index];
+    if (rule && rule.id > 0) {
+      this.removedRules.push(rule.id);
+    }
+    this.editDraft.rules.splice(index, 1);
   }
 
   protected cancelEdit(): void {
     this.editing.set(null);
+    this.removedRules = [];
     this.error.set('');
     this.ok.set('');
   }
@@ -207,7 +281,34 @@ export class AdminDomainsComponent implements OnInit {
         default_quota_bytes: quota,
         daily_send_limit: this.editDraft.dailySendLimit ?? undefined,
         dkim_selector: this.editDraft.dkimSelector.trim() || undefined,
+        antispam_networks: parseNetworks(this.editDraft.antispamNetworks),
       });
+
+      // The rules are saved one by one, in the order they appear in the panel,
+      // because the delivery path reads them in that order. A row the operator
+      // added and left blank is a rule that was never meant to be stored.
+      for (const rule of this.editDraft.rules) {
+        const header = rule.header.trim();
+        if (!header) continue;
+        const body = {
+          header,
+          value: rule.value.trim(),
+          match: rule.match,
+          action: rule.action,
+          case_sensitive: rule.caseSensitive,
+          enabled: rule.enabled,
+        };
+        if (rule.id > 0) {
+          await this.api.updateDomainHeaderRule(name, rule.id, body);
+        } else {
+          await this.api.createDomainHeaderRule(name, body);
+        }
+      }
+      for (const id of this.removedRules) {
+        await this.api.deleteDomainHeaderRule(name, id);
+      }
+      this.removedRules = [];
+
       this.ok.set(`${name} was updated.`);
       this.editing.set(null);
       await this.reload();
@@ -217,4 +318,23 @@ export class AdminDomainsComponent implements OnInit {
       this.busy.set(false);
     }
   }
+}
+
+// RuleDraft is the editing shape of a header rule. A rule with id 0 has not
+// been stored yet; it is a row the operator is writing.
+interface RuleDraft {
+  id: number;
+  header: string;
+  value: string;
+  match: HeaderMatch;
+  action: HeaderAction;
+  caseSensitive: boolean;
+  enabled: boolean;
+}
+
+// parseNetworks turns the free-text list an operator types into the array the
+// server stores. Separators are commas, spaces and newlines, because nobody
+// types a JSON array into a settings field.
+function parseNetworks(raw: string): string[] {
+  return raw.split(/[\s,]+/).filter((entry) => entry.length > 0);
 }

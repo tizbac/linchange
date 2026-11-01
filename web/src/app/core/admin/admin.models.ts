@@ -14,6 +14,28 @@ export interface Domain {
   dkim_selector?: string | null;
   contact_group_id?: number | null;
   workgroup_id?: number | null;
+  // The addresses or networks a domain accepts inbound mail from. An empty
+  // list means any source may deliver.
+  antispam_networks?: string[];
+}
+
+// How a header rule compares its value with the header, and what it does when
+// the comparison matches. Both vocabularies are the server's, spelled the same
+// way so a rule the UI offers is a rule the delivery path can run.
+export type HeaderMatch = 'contains' | 'is' | 'starts_with' | 'ends_with' | 'exists';
+export type HeaderAction = 'junk' | 'reject' | 'discard';
+
+export interface DomainHeaderRule {
+  id: number;
+  domain: string;
+  header: string;
+  value: string;
+  match: HeaderMatch;
+  action: HeaderAction;
+  case_sensitive: boolean;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export type UserSource = 'local' | 'ldap' | 'shared' | 'domain_admin';

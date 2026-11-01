@@ -744,9 +744,15 @@ func TestInboundGreylistsFirstContact(t *testing.T) {
 	}
 
 	c := dialSMTPAs(t, f.addr, src)
-	code, msg := c.cmd("MAIL FROM:<sender@example.com>")
+	if code, msg := c.cmd("MAIL FROM:<sender@example.com>"); code != 250 {
+		t.Fatalf("first MAIL FROM = %d %s, want 250", code, msg)
+	}
+	// The deferral is answered at RCPT TO, not at MAIL FROM: greylisting is only
+	// worth applying once the server knows which domain the mail is for, since a
+	// source a domain named as its anti-spam relay is not a stranger to defer.
+	code, msg := c.cmd("RCPT TO:<alice@example.com>")
 	if code != 450 {
-		t.Fatalf("first MAIL FROM = %d %s, want 450", code, msg)
+		t.Fatalf("first RCPT TO = %d %s, want 450", code, msg)
 	}
 
 	// Pretend the sender came back after the delay.

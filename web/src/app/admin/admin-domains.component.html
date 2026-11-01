@@ -44,6 +44,17 @@
                 placeholder="unlimited"
               />
             </admin-field>
+            <admin-field
+              label="External anti-spam IPs / networks"
+              hint="Addresses or CIDR networks allowed to deliver mail here, separated by commas: 203.0.113.5, 192.0.2.0/24. Leave empty to accept mail from any source."
+            >
+              <input
+                class="{{ inputClass }}"
+                name="networks"
+                [(ngModel)]="draft.antispamNetworks"
+                placeholder="203.0.113.5, 192.0.2.0/24"
+              />
+            </admin-field>
             <label class="flex items-center gap-2 self-end pb-1.5 text-sm text-slate-700">
               <input type="checkbox" name="local" [(ngModel)]="draft.isLocal" />
               Delivered locally rather than by a relay
@@ -95,7 +106,14 @@
                       {{ d.status }}
                     </span>
                   </td>
-                  <td class="{{ cell }}">{{ d.is_local ? 'local' : 'relay' }}</td>
+                  <td class="{{ cell }}">
+                    {{ d.is_local ? 'local' : 'relay' }}
+                    @if (d.antispam_networks && d.antispam_networks.length > 0) {
+                      <span class="block text-xs text-slate-500">
+                        only from {{ d.antispam_networks.length }} anti-spam source{{ d.antispam_networks.length === 1 ? '' : 's' }}
+                      </span>
+                    }
+                  </td>
                   <td class="{{ cell }}">{{ bytes(d.default_quota_bytes) }}</td>
                   <td class="{{ cell }}">
                     {{ d.daily_send_limit === null || d.daily_send_limit === undefined
@@ -160,6 +178,94 @@
                             <input type="checkbox" name="editLocal" [(ngModel)]="editDraft.isLocal" />
                             Delivered locally rather than by a relay
                           </label>
+
+                          <div class="sm:col-span-2 grid gap-3">
+                            <admin-field
+                              label="External anti-spam IPs / networks"
+                              hint="Addresses or CIDR networks allowed to deliver mail to this domain, separated by commas: 203.0.113.5, 192.0.2.0/24. Mail from anywhere else is refused at RCPT time. Leave empty to accept mail from any source, as before."
+                            >
+                              <input
+                                class="{{ inputClass }}"
+                                name="editNetworks"
+                                [(ngModel)]="editDraft.antispamNetworks"
+                                placeholder="203.0.113.5, 192.0.2.0/24"
+                              />
+                            </admin-field>
+                            <p class="text-xs text-slate-500">
+                              Mail from one of these addresses is taken as already checked by the
+                              anti-spam service: SPF, DKIM, DMARC, reverse DNS and greylisting are
+                              not applied to it.
+                            </p>
+
+                            <div class="rounded-lg border border-slate-200 bg-white p-3">
+                              <h3 class="text-sm font-semibold text-slate-900">Header rules</h3>
+                              <p class="mt-1 text-xs text-slate-500">
+                                What to do with a message whose header matches, for example a
+                                filter's verdict written as <code>X-Spam: YES</code>. Rules run in
+                                the order shown.
+                              </p>
+
+                              @if (editDraft.rules.length === 0) {
+                                <p class="mt-2 text-xs text-slate-500">No header rules for this domain.</p>
+                              } @else {
+                                <div class="mt-3 grid gap-2">
+                                  @for (rule of editDraft.rules; track $index) {
+                                    <!-- The row is addressed by an index in data-testid:
+                                         an ngModel control's name is consumed by the form
+                                         directive and never reaches the DOM, so a browser
+                                         cannot select a rule by its name. -->
+                                    <div
+                                      class="grid gap-2 sm:grid-cols-2 lg:grid-cols-6 items-center rounded-lg bg-slate-50 p-3"
+                                      [attr.data-testid]="'header-rule-' + $index"
+                                    >
+                                      <input
+                                        class="{{ inputClass }}"
+                                        name="ruleHeader{{ $index }}"
+                                        [(ngModel)]="rule.header"
+                                        placeholder="Header, e.g. X-Spam"
+                                      />
+                                      @if (rule.match === 'exists') {
+                                        <span class="text-xs text-slate-500">matches if the header is present</span>
+                                      } @else {
+                                        <input
+                                          class="{{ inputClass }}"
+                                          name="ruleValue{{ $index }}"
+                                          [(ngModel)]="rule.value"
+                                          placeholder="Value, e.g. YES"
+                                        />
+                                      }
+                                      <select class="{{ inputClass }}" name="ruleMatch{{ $index }}" [(ngModel)]="rule.match">
+                                        @for (match of matches; track match) {
+                                          <option value="{{ match }}">{{ match }}</option>
+                                        }
+                                      </select>
+                                      <select class="{{ inputClass }}" name="ruleAction{{ $index }}" [(ngModel)]="rule.action">
+                                        @for (action of actions; track action) {
+                                          <option value="{{ action }}">{{ action }}</option>
+                                        }
+                                      </select>
+                                      <label class="flex items-center gap-2 text-xs text-slate-600">
+                                        <input type="checkbox" name="ruleCase{{ $index }}" [(ngModel)]="rule.caseSensitive" />
+                                        Case sensitive
+                                      </label>
+                                      <div class="flex items-center gap-2">
+                                        <label class="flex items-center gap-2 text-xs text-slate-600">
+                                          <input type="checkbox" name="ruleEnabled{{ $index }}" [(ngModel)]="rule.enabled" />
+                                          On
+                                        </label>
+                                        <admin-button variant="danger" (pressed)="removeRule($index)">Remove</admin-button>
+                                      </div>
+                                    </div>
+                                  }
+                                </div>
+                              }
+
+                              <admin-button class="mt-3" variant="secondary" (pressed)="addRule()">
+                                + Add header rule
+                              </admin-button>
+                            </div>
+                          </div>
+
                           <div class="sm:col-span-2 flex items-center gap-3">
                             <admin-button variant="primary" type="submit" [disabled]="busy()">
                               Save changes

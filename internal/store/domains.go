@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 	"time"
 )
@@ -54,8 +55,63 @@ type Domain struct {
 	// WorkgroupID is the organization (workgroup) this domain belongs to.
 	// All users in this domain are implicitly members of the workgroup.
 	WorkgroupID *int64
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// AntispamNetworks are the source addresses a domain accepts inbound mail
+	// from: an external filter, or nothing at all. An empty list means every
+	// source may deliver, which is the default and the historical behaviour.
+	// The values are stored in the canonical address/prefix form the inbound
+	// listener matches against.
+	AntispamNetworks []string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+// ParseAntispamNetwork reads one allowed source for a domain, written as an
+// address ("203.0.113.5") or a network ("203.0.113.0/24", "2001:db8::/32").
+// A bare address becomes the shortest prefix naming exactly it, so the
+// delivery path has a single type to test against.
+func ParseAntispamNetwork(raw string) (netip.Prefix, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return netip.Prefix{}, errors.New("network is empty")
+	}
+	if strings.Contains(raw, "/") {
+		prefix, err := netip.ParsePrefix(raw)
+		if err != nil {
+			return netip.Prefix{}, fmt.Errorf("%q is not a valid network: %w", raw, err)
+		}
+		return prefix, nil
+	}
+	addr, err := netip.ParseAddr(raw)
+	if err != nil {
+		return netip.Prefix{}, fmt.Errorf("%q is not a valid address or network", raw)
+	}
+	return netip.PrefixFrom(addr, addr.BitLen()), nil
+}
+
+// NormalizeAntispamNetworks validates a list of sources and returns it in the
+// canonical form the database stores, dropping blank entries and duplicates.
+// It is the boundary every caller crosses before writing the column, so a
+// typo is refused with a message naming the offending entry rather than
+// accepted and silently shutting the domain to the world.
+func NormalizeAntispamNetworks(raw []string) ([]string, error) {
+	out := make([]string, 0, len(raw))
+	seen := make(map[string]bool, len(raw))
+	for _, item := range raw {
+		if strings.TrimSpace(item) == "" {
+			continue
+		}
+		prefix, err := ParseAntispamNetwork(item)
+		if err != nil {
+			return nil, err
+		}
+		canonical := prefix.String()
+		if seen[canonical] {
+			continue
+		}
+		seen[canonical] = true
+		out = append(out, canonical)
+	}
+	return out, nil
 }
 
 // ValidateDomainName reports whether name can be a hosted domain.
@@ -107,6 +163,7 @@ type CreateDomainRequest struct {
 	DKIMSelector      *string
 	ContactGroupID    *int64
 	WorkgroupID       *int64
+	AntispamNetworks  []string
 }
 
 // UpdateDomainRequest carries the mutable fields of a domain. Unlike the
@@ -121,6 +178,7 @@ type UpdateDomainRequest struct {
 	DKIMSelector      *string
 	ContactGroupID    *int64
 	WorkgroupID       *int64
+	AntispamNetworks  []string
 }
 
 // domainRow is the table as scanned. Nullable columns are read through
@@ -135,8 +193,12 @@ type domainRow struct {
 	DKIMSelector      *string        `db:"dkim_selector"`
 	ContactGroupID    *int64         `db:"contact_group_id"`
 	WorkgroupID       *int64         `db:"workgroup_id"`
-	CreatedAt         time.Time      `db:"created_at"`
-	UpdatedAt         time.Time      `db:"updated_at"`
+	// pgx returns a NULL array as a SQL NULL, which scans into a nil slice;
+	// the column is NOT NULL with an empty-array default, so nil only means
+	// "no restriction".
+	AntispamNetworks []string  `db:"antispam_networks"`
+	CreatedAt        time.Time `db:"created_at"`
+	UpdatedAt        time.Time `db:"updated_at"`
 }
 
 func (r domainRow) domain() Domain {
@@ -154,6 +216,7 @@ func (r domainRow) domain() Domain {
 		DKIMSelector:      r.DKIMSelector,
 		ContactGroupID:    r.ContactGroupID,
 		WorkgroupID:       r.WorkgroupID,
+		AntispamNetworks:  r.AntispamNetworks,
 		CreatedAt:         r.CreatedAt,
 		UpdatedAt:         r.UpdatedAt,
 	}
@@ -162,7 +225,7 @@ func (r domainRow) domain() Domain {
 const domainSelect = `
 	SELECT name, status, is_local, description, default_quota_bytes,
 	       daily_send_limit, dkim_selector, contact_group_id, workgroup_id,
-	       created_at, updated_at
+	       antispam_networks, created_at, updated_at
 	FROM domains`
 
 // Domains reads and writes the domains table.
@@ -186,13 +249,23 @@ func (d *Domains) Create(ctx context.Context, q Querier, req CreateDomainRequest
 		quota = *req.DefaultQuotaBytes
 	}
 
+	// The list is stored in the canonical form the inbound listener matches
+	// against, so two ways of writing the same network cannot drift apart, and
+	// an entry nobody can parse is refused at the write instead of silently
+	// allowing everything later.
+	networks, err := NormalizeAntispamNetworks(req.AntispamNetworks)
+	if err != nil {
+		return err
+	}
+
 	const query = `
 		INSERT INTO domains (name, status, is_local, description,
-		                      default_quota_bytes, daily_send_limit, dkim_selector, contact_group_id, workgroup_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+		                      default_quota_bytes, daily_send_limit, dkim_selector, contact_group_id, workgroup_id, antispam_networks)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 	if _, err := q.ExecContext(ctx, query,
 		req.Name, status, req.IsLocal, req.Description,
-		quota, req.DailySendLimit, req.DKIMSelector, req.ContactGroupID, req.WorkgroupID); err != nil {
+		quota, req.DailySendLimit, req.DKIMSelector, req.ContactGroupID, req.WorkgroupID,
+		networks); err != nil {
 		if IsConflict(err) {
 			return ErrConflict
 		}
@@ -241,11 +314,17 @@ func (d *Domains) Update(ctx context.Context, q Querier, name string, req Update
 		UPDATE domains SET
 			status = $2, is_local = $3, description = $4,
 			default_quota_bytes = $5, daily_send_limit = $6, dkim_selector = $7,
-			contact_group_id = $8, workgroup_id = $9, updated_at = now()
+			contact_group_id = $8, workgroup_id = $9, antispam_networks = $10,
+			updated_at = now()
 		WHERE name = $1`
+	networks, err := NormalizeAntispamNetworks(req.AntispamNetworks)
+	if err != nil {
+		return err
+	}
 	res, err := q.ExecContext(ctx, query,
 		name, req.Status, req.IsLocal, req.Description,
-		req.DefaultQuotaBytes, req.DailySendLimit, req.DKIMSelector, req.ContactGroupID, req.WorkgroupID)
+		req.DefaultQuotaBytes, req.DailySendLimit, req.DKIMSelector, req.ContactGroupID,
+		req.WorkgroupID, networks)
 	if err != nil {
 		return fmt.Errorf("store: updating domain: %w", err)
 	}

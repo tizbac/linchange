@@ -148,6 +148,18 @@ func mountAdminRoutes(r chi.Router, s *Server) {
 			r.Get("/", s.getDomain)
 			r.Patch("/", s.updateDomain)
 			r.Put("/status", s.setDomainStatus)
+			// The header rules of a domain are its own collection rather than
+			// part of the domain PATCH: they are added, edited and removed one
+			// at a time from the settings page, and each one is audited on its
+			// own.
+			r.Route("/header-rules", func(r chi.Router) {
+				r.Get("/", s.listDomainHeaderRules)
+				r.Post("/", s.createDomainHeaderRule)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Patch("/", s.updateDomainHeaderRule)
+					r.Delete("/", s.deleteDomainHeaderRule)
+				})
+			})
 		})
 	})
 
@@ -316,17 +328,23 @@ func (s *Server) listDomains(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createDomain(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name              string  `json:"name"`
-		IsLocal           bool    `json:"is_local"`
-		Description       string  `json:"description"`
-		DefaultQuotaBytes *int64  `json:"default_quota_bytes"`
-		DailySendLimit    *int    `json:"daily_send_limit"`
-		DKIMSelector      *string `json:"dkim_selector"`
-		ContactGroupID    *int64  `json:"contact_group_id"`
-		WorkgroupID       *int64  `json:"workgroup_id"`
+		Name              string   `json:"name"`
+		IsLocal           bool     `json:"is_local"`
+		Description       string   `json:"description"`
+		DefaultQuotaBytes *int64   `json:"default_quota_bytes"`
+		DailySendLimit    *int     `json:"daily_send_limit"`
+		DKIMSelector      *string  `json:"dkim_selector"`
+		ContactGroupID    *int64   `json:"contact_group_id"`
+		WorkgroupID       *int64   `json:"workgroup_id"`
+		AntispamNetworks  []string `json:"antispam_networks"`
 	}
 	if err := decodeAdmin(w, r, &in); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	networks, err := store.NormalizeAntispamNetworks(in.AntispamNetworks)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	domain, err := s.admin.CreateDomain(r.Context(), Principal(r.Context()), store.CreateDomainRequest{
@@ -338,6 +356,7 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request) {
 		DKIMSelector:      in.DKIMSelector,
 		ContactGroupID:    in.ContactGroupID,
 		WorkgroupID:       in.WorkgroupID,
+		AntispamNetworks:  networks,
 	})
 	if err != nil {
 		adminErrors(w, s, err)
@@ -357,12 +376,14 @@ func (s *Server) getDomain(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateDomain(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Description       *string       `json:"description"`
-		DefaultQuotaBytes *int64        `json:"default_quota_bytes"`
-		DailySendLimit    *int          `json:"daily_send_limit"`
-		DKIMSelector      *string       `json:"dkim_selector"`
-		ContactGroupID    optionalInt64 `json:"contact_group_id"`
-		WorkgroupID       optionalInt64 `json:"workgroup_id"`
+		Description       *string         `json:"description"`
+		IsLocal           *bool           `json:"is_local"`
+		DefaultQuotaBytes *int64          `json:"default_quota_bytes"`
+		DailySendLimit    *int            `json:"daily_send_limit"`
+		DKIMSelector      *string         `json:"dkim_selector"`
+		ContactGroupID    optionalInt64   `json:"contact_group_id"`
+		WorkgroupID       optionalInt64   `json:"workgroup_id"`
+		AntispamNetworks  optionalStrings `json:"antispam_networks"`
 	}
 	if err := decodeAdmin(w, r, &in); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
@@ -379,9 +400,16 @@ func (s *Server) updateDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Delivery mode is carried over when the request does not mention it, so
+	// editing a quota does not quietly turn a local domain into a relayed one.
+	isLocal := current.IsLocal
+	if in.IsLocal != nil {
+		isLocal = *in.IsLocal
+	}
+
 	domain, err := s.admin.UpdateDomain(r.Context(), Principal(r.Context()), name,
 		store.UpdateDomainRequest{
-			IsLocal:           current.IsLocal,
+			IsLocal:           isLocal,
 			Description:       stringOr(in.Description, current.Description),
 			DefaultQuotaBytes: int64Or(in.DefaultQuotaBytes, current.DefaultQuotaBytes),
 			DailySendLimit:    in.DailySendLimit,
@@ -392,6 +420,10 @@ func (s *Server) updateDomain(w http.ResponseWriter, r *http.Request) {
 			// from its organization, and taking a domain out of one must work.
 			ContactGroupID: in.ContactGroupID.or(current.ContactGroupID),
 			WorkgroupID:    in.WorkgroupID.or(current.WorkgroupID),
+			// "No restriction" is a real setting, not the absence of one: a
+			// request that does not mention the field keeps the list the domain
+			// already has, and one that says null empties it.
+			AntispamNetworks: in.AntispamNetworks.or(current.AntispamNetworks),
 		})
 	if err != nil {
 		adminErrors(w, s, err)
@@ -414,6 +446,107 @@ func (s *Server) setDomainStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- per-domain inbound anti-spam rules ---
+
+func (s *Server) listDomainHeaderRules(w http.ResponseWriter, r *http.Request) {
+	rules, err := s.admin.ListDomainHeaderRules(r.Context(), Principal(r.Context()), pathParam(r, "name"))
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	out := make([]headerRuleView, 0, len(rules))
+	for _, rule := range rules {
+		out = append(out, viewHeaderRule(rule))
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"rules": out, "total": len(out)})
+}
+
+func (s *Server) createDomainHeaderRule(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Header        string `json:"header"`
+		Value         string `json:"value"`
+		Match         string `json:"match"`
+		Action        string `json:"action"`
+		CaseSensitive bool   `json:"case_sensitive"`
+		Enabled       *bool  `json:"enabled"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	rule, err := s.admin.AddDomainHeaderRule(r.Context(), Principal(r.Context()), pathParam(r, "name"),
+		store.DomainHeaderRuleRequest{
+			Header:        in.Header,
+			Value:         in.Value,
+			Match:         in.Match,
+			Action:        in.Action,
+			CaseSensitive: in.CaseSensitive,
+			Enabled:       in.Enabled,
+		})
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusCreated, viewHeaderRule(rule))
+}
+
+func (s *Server) updateDomainHeaderRule(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Header        *string `json:"header"`
+		Value         *string `json:"value"`
+		Match         *string `json:"match"`
+		Action        *string `json:"action"`
+		CaseSensitive *bool   `json:"case_sensitive"`
+		Enabled       *bool   `json:"enabled"`
+	}
+	if err := decodeAdmin(w, r, &in); err != nil {
+		s.writeError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	id, err := s.ruleID(w, r)
+	if err != nil {
+		return
+	}
+	rule, err := s.admin.UpdateDomainHeaderRule(r.Context(), Principal(r.Context()), pathParam(r, "name"), id,
+		store.DomainHeaderRuleUpdate{
+			Header:        in.Header,
+			Value:         in.Value,
+			Match:         in.Match,
+			Action:        in.Action,
+			CaseSensitive: in.CaseSensitive,
+			Enabled:       in.Enabled,
+		})
+	if err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, viewHeaderRule(rule))
+}
+
+func (s *Server) deleteDomainHeaderRule(w http.ResponseWriter, r *http.Request) {
+	id, err := s.ruleID(w, r)
+	if err != nil {
+		return
+	}
+	if err := s.admin.DeleteDomainHeaderRule(r.Context(), Principal(r.Context()), pathParam(r, "name"), id); err != nil {
+		adminErrors(w, s, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ruleID reads the rule id from the path. A non-numeric id is a bad request
+// rather than a lookup that finds nothing, so the caller learns what went wrong
+// instead of being told the rule does not exist.
+func (s *Server) ruleID(w http.ResponseWriter, r *http.Request) (int64, error) {
+	id, err := strconv.ParseInt(pathParam(r, "id"), 10, 64)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "rule id must be a number")
+		return 0, err
+	}
+	return id, nil
 }
 
 // --- users ---
@@ -1550,6 +1683,36 @@ func (o optionalInt) or(current *int) *int {
 	return o.v
 }
 
+// optionalStrings is the list counterpart of optionalInt64: a PATCH that does
+// not mention a field leaves it alone, and one that says null clears it. A
+// plain *[]string cannot tell those two apart, and for a domain's allowed
+// sources "no restriction" and "not sent" are different requests.
+type optionalStrings struct {
+	set bool
+	v   []string
+}
+
+func (o *optionalStrings) UnmarshalJSON(data []byte) error {
+	o.set = true
+	if string(data) == "null" {
+		o.v = nil
+		return nil
+	}
+	var v []string
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	o.v = v
+	return nil
+}
+
+func (o optionalStrings) or(current []string) []string {
+	if !o.set {
+		return current
+	}
+	return o.v
+}
+
 func addrOrNil(address string) *string {
 	if address == "" {
 		return nil
@@ -1583,6 +1746,9 @@ type domainView struct {
 	DKIMSelector      *string `json:"dkim_selector,omitempty"`
 	ContactGroupID    *int64  `json:"contact_group_id,omitempty"`
 	WorkgroupID       *int64  `json:"workgroup_id,omitempty"`
+	// Always written, even when empty: an empty list is the setting "any
+	// source may deliver", and a missing field would be ambiguous with it.
+	AntispamNetworks []string `json:"antispam_networks"`
 }
 
 func viewDomain(d store.Domain) domainView {
@@ -1596,6 +1762,35 @@ func viewDomain(d store.Domain) domainView {
 		DKIMSelector:      d.DKIMSelector,
 		ContactGroupID:    d.ContactGroupID,
 		WorkgroupID:       d.WorkgroupID,
+		AntispamNetworks:  d.AntispamNetworks,
+	}
+}
+
+type headerRuleView struct {
+	ID            int64  `json:"id"`
+	Domain        string `json:"domain"`
+	Header        string `json:"header"`
+	Value         string `json:"value"`
+	Match         string `json:"match"`
+	Action        string `json:"action"`
+	CaseSensitive bool   `json:"case_sensitive"`
+	Enabled       bool   `json:"enabled"`
+	CreatedAt     string `json:"created_at"`
+	UpdatedAt     string `json:"updated_at"`
+}
+
+func viewHeaderRule(r store.DomainHeaderRule) headerRuleView {
+	return headerRuleView{
+		ID:            r.ID,
+		Domain:        r.Domain,
+		Header:        r.Header,
+		Value:         r.Value,
+		Match:         r.Match,
+		Action:        r.Action,
+		CaseSensitive: r.CaseSensitive,
+		Enabled:       r.Enabled,
+		CreatedAt:     r.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:     r.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 }
 

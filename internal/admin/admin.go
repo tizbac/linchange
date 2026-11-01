@@ -40,6 +40,13 @@ const (
 	ActionDomainCreate = "domain.create"
 	ActionDomainUpdate = "domain.update"
 	ActionDomainDelete = "domain.delete"
+	// The per-domain anti-spam rules are their own actions: which header
+	// marks mail as junk, and which addresses may deliver at all, is a change
+	// worth finding on its own after an incident.
+	ActionDomainNetworks   = "domain.networks"
+	ActionHeaderRuleCreate = "domain.header_rule.create"
+	ActionHeaderRuleUpdate = "domain.header_rule.update"
+	ActionHeaderRuleDelete = "domain.header_rule.delete"
 
 	ActionUserCreate        = "user.create"
 	ActionUserUpdate        = "user.update"
@@ -118,17 +125,18 @@ var ErrInvalid = errors.New("admin: invalid request")
 type Service struct {
 	db *sqlx.DB
 
-	domains    *store.Domains
-	users      *store.Users
-	aliases    *store.Aliases
-	shared     *store.SharedMailboxes
-	grants     *store.SharedMailboxGrants
-	workgroups *store.Workgroups
-	quotas     *store.Quotas
-	imperson   *store.ImpersonationGrants
-	audit      *store.AuditLog
-	credentia  *store.Credentials
-	sessions   *store.Sessions
+	domains     *store.Domains
+	users       *store.Users
+	aliases     *store.Aliases
+	shared      *store.SharedMailboxes
+	grants      *store.SharedMailboxGrants
+	workgroups  *store.Workgroups
+	quotas      *store.Quotas
+	imperson    *store.ImpersonationGrants
+	audit       *store.AuditLog
+	credentia   *store.Credentials
+	sessions    *store.Sessions
+	headerRules *store.DomainHeaderRules
 
 	argon2            config.Argon2Params
 	minPasswordLength int
@@ -161,6 +169,7 @@ func New(opts Options) (*Service, error) {
 		audit:             store.NewAuditLog(),
 		credentia:         store.NewCredentials(),
 		sessions:          store.NewSessions(),
+		headerRules:       store.NewDomainHeaderRules(),
 		argon2:            opts.Argon2,
 		minPasswordLength: opts.MinPasswordLength,
 		policy:            opts.Policy,

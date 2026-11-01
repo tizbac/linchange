@@ -40,6 +40,11 @@ address-book service to install: everything ships in the same server.
 - **Inbound authentication and filtering**: SPF, DKIM and DMARC verification,
   greylisting, per-source rate limiting, spam scoring with Junk/Reject
   thresholds and unknown-recipient rejection.
+- **Per-domain inbound trust**: name the addresses or networks an external
+  anti-spam service delivers from (mail from anywhere else is refused at RCPT
+  time, and mail from a named relay is not re-checked against SPF, DKIM, DMARC
+  or greylisting), and turn that service's verdict header — `X-Spam: YES`,
+  for instance — into junk, rejection or discard with per-domain header rules.
 - **Remote IMAP import** for migrating an existing mailbox.
 - **PST/OST import** from the web client or with `linchange pst-import`, with
   folder-by-folder destination selection, 64 MiB transaction batches and
@@ -294,7 +299,7 @@ sequenceDiagram
     autonumber
     participant MTA as Remote MTA
     participant SMTP as linchange SMTP :25
-    participant Check as SPF / DKIM / DMARC<br/>greylisting / score
+    participant Check as relay allow-list<br/>SPF / DKIM / DMARC<br/>greylisting / score
     participant DB as PostgreSQL
     participant Blob as Blobstore
     participant User as IMAP / webmail / EWS
