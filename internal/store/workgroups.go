@@ -29,6 +29,10 @@ type Workgroup struct {
 	DisplayName string `db:"display_name"`
 	Description string `db:"description"`
 	OpenBooking bool   `db:"open_booking"`
+	// LegacyMailAuth lets the account password sign in to the mail protocols
+	// for this organization's people. Off by default: clients use application
+	// passwords, which can be revoked without exposing the account password.
+	LegacyMailAuth bool `db:"legacy_mail_auth"`
 	// LogoUID is the public handle of the organization's logo image, empty
 	// when it has none. LogoSHA256 and LogoMIME describe the blob it names.
 	LogoUID    string `db:"logo_uid"`
@@ -83,13 +87,16 @@ type CreateWorkgroupRequest struct {
 	// OpenBooking defaults to true when nil, matching the schema: a new group
 	// can be booked straight away rather than needing an explicit opt-in.
 	OpenBooking *bool
+	// LegacyMailAuth lets the account password sign in to the mail protocols
+	// for this organization. Off by default; tests and migrations may set it.
+	LegacyMailAuth *bool
 	// Members are added in the same transaction as the workgroup, so a group is
 	// never briefly visible with nobody in it.
 	Members []WorkgroupMember
 }
 
 const workgroupColumns = `
-	id, name, domain, display_name, description, open_booking,
+	id, name, domain, display_name, description, open_booking, legacy_mail_auth,
 	COALESCE(logo_uid, '') AS logo_uid,
 	COALESCE(logo_mime, '') AS logo_mime,
 	logo_sha256, COALESCE(theme, '') AS theme, created_at, updated_at`
@@ -103,14 +110,18 @@ func (w *Workgroups) Create(ctx context.Context, q Querier, req CreateWorkgroupR
 	if req.OpenBooking != nil {
 		openBooking = *req.OpenBooking
 	}
+	legacyMailAuth := false
+	if req.LegacyMailAuth != nil {
+		legacyMailAuth = *req.LegacyMailAuth
+	}
 
 	var out Workgroup
 	err := InQuerierTx(ctx, q, func(tx *sqlx.Tx) error {
 		err := tx.GetContext(ctx, &out, `
-			INSERT INTO workgroups (name, domain, display_name, description, open_booking)
-			VALUES ($1, $2, $3, $4, $5)
+			INSERT INTO workgroups (name, domain, display_name, description, open_booking, legacy_mail_auth)
+			VALUES ($1, $2, $3, $4, $5, $6)
 			RETURNING `+workgroupColumns,
-			req.Name, req.Domain, req.DisplayName, req.Description, openBooking)
+			req.Name, req.Domain, req.DisplayName, req.Description, openBooking, legacyMailAuth)
 		if err != nil {
 			if IsConflict(err) {
 				return ErrConflict
@@ -217,6 +228,17 @@ func (w *Workgroups) ForAddress(ctx context.Context, q Querier, address string) 
 	return w.ForMember(ctx, q, address)
 }
 
+// LegacyMailAuthForAddress reports whether the account password may sign in
+// to the mail protocols for this address. An address in no organization has
+// no organization switch; the caller decides what applies then.
+func (w *Workgroups) LegacyMailAuthForAddress(ctx context.Context, q Querier, address string) (bool, error) {
+	wg, err := w.ForAddress(ctx, q, address)
+	if err != nil {
+		return false, err
+	}
+	return wg.LegacyMailAuth, nil
+}
+
 // ForMember returns the organization an address was explicitly added to.
 //
 // This is the second half of ForAddress: membership rows carry the people who
@@ -228,7 +250,7 @@ func (w *Workgroups) ForMember(ctx context.Context, q Querier, address string) (
 	}
 	var out Workgroup
 	err := q.GetContext(ctx, &out, `
-		SELECT w.id, w.name, w.domain, w.display_name, w.description, w.open_booking,
+		SELECT w.id, w.name, w.domain, w.display_name, w.description, w.open_booking, w.legacy_mail_auth,
 		       COALESCE(w.logo_uid, '') AS logo_uid,
 		       COALESCE(w.logo_mime, '') AS logo_mime,
 		       w.logo_sha256, COALESCE(w.theme, '') AS theme, w.created_at, w.updated_at
@@ -544,10 +566,11 @@ func (w *Workgroups) RemoveMember(ctx context.Context, q Querier, workgroupID in
 
 // UpdateWorkgroupRequest carries the mutable fields of a workgroup.
 type UpdateWorkgroupRequest struct {
-	Name        string
-	DisplayName string
-	Description string
-	OpenBooking *bool
+	Name           string
+	DisplayName    string
+	Description    string
+	OpenBooking    *bool
+	LegacyMailAuth *bool
 }
 
 // Update updates a workgroup's mutable fields.
@@ -556,10 +579,12 @@ func (w *Workgroups) Update(ctx context.Context, q Querier, id int64, req Update
 	err := q.GetContext(ctx, &out, `
 		UPDATE workgroups SET
 			name = $2, display_name = $3, description = $4,
-			open_booking = $5, updated_at = now()
+			open_booking = COALESCE($5, open_booking),
+			legacy_mail_auth = COALESCE($6, legacy_mail_auth),
+			updated_at = now()
 		WHERE id = $1
-		RETURNING id, name, domain, display_name, description, open_booking, created_at, updated_at`,
-		id, req.Name, req.DisplayName, req.Description, req.OpenBooking)
+		RETURNING `+workgroupColumns,
+		id, req.Name, req.DisplayName, req.Description, req.OpenBooking, req.LegacyMailAuth)
 	if err != nil {
 		if IsNotFound(err) {
 			return Workgroup{}, ErrNotFound

@@ -57,8 +57,10 @@ address-book service to install: everything ships in the same server.
 - Light, dark and system themes, plus custom CSS themes uploaded as ZIPs by an
   administrator. The default can be set per organization or with `web.theme`;
   a user's own choice wins.
-- A profile page to change the password, set a recovery email, and enrol an
-  authenticator app from a QR code with one-time recovery codes.
+- A profile page to change the password, set a recovery email, enrol an
+  authenticator app from a QR code with one-time recovery codes, and create or
+  revoke **application passwords** for MailCraft, phones and other IMAP, SMTP,
+  CalDAV and CardDAV clients.
 - Conversation view, search, drafts, signatures, inline images, attachment
   handling and import progress.
 - Two-factor authentication with TOTP and recovery codes, password reset,
@@ -155,14 +157,21 @@ Compatibility notes:
   authentication and must be behind TLS. See
   [Configuration](#configuration) and the comments in
   `config/linchange.example.yaml`.
-- **Two-factor authentication covers the web sign-in, not the mail/DAV/
-  Exchange protocols.** IMAP, POP3, SMTP submission, CalDAV, CardDAV, EWS, EAS
-  and MAPI authenticate with the account password only: a TOTP code is not
-  requested on those protocols. Until per-application passwords exist, treat
-  the account password as the credential for those clients, keep the
-  protocols behind TLS and network controls, and do not rely on 2FA to protect
-  an IMAP or Outlook password. Per-application passwords are the intended
-  follow-up.
+- **Two-factor authentication covers the web sign-in; mail clients use
+  application passwords.** IMAP, POP3, SMTP submission, CalDAV, CardDAV, EWS,
+  EAS and MAPI do not ask for a TOTP code. Instead, a client uses an
+  application password created from the account's profile page (or approved
+  through the web page a client opens). Each is named for where it is used and
+  can be revoked without changing the account password. The account password
+  is **not accepted** by those protocols by default; an organization's
+  administrator may allow it for that organization alone (Admin >
+  Organizations > General), and a person who has enabled two-factor
+  authentication always has to use an application password in a mail client.
+  Keep the protocols behind TLS and network controls in any case.
+- **Application-password approvals happen in the browser.** A client asks the
+  server for a short approval, opens the server's own page, and the person
+  signs in there (with the second factor when enrolled) and allows it. The
+  client receives a password of its own; it never sees the account password.
 - **Protocol logins are rate-limited per login address.** After
   `auth.protocol_lockout.max_attempts` wrong passwords within
   `auth.protocol_lockout.window`, further attempts for that login are refused

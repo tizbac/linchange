@@ -1,9 +1,9 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
-import { NgClass } from '@angular/common';
+import { DatePipe, NgClass } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { AuthService } from '../core/auth/auth.service';
 import { errorMessage } from '../core/http-error';
-import { OutOfOffice, Profile, ProfileApi, TwoFactorStart } from '../core/profile/profile-api';
+import { ApplicationToken, OutOfOffice, Profile, ProfileApi, TwoFactorStart } from '../core/profile/profile-api';
 
 // The signed-in user's own account. Everything here is about the caller: no
 // address is named in a request, so the server can never be asked to change
@@ -11,7 +11,7 @@ import { OutOfOffice, Profile, ProfileApi, TwoFactorStart } from '../core/profil
 @Component({
   selector: 'app-profile',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, NgClass],
+  imports: [FormsModule, NgClass, DatePipe],
   template: `
     <main class="mx-auto max-w-3xl px-4 py-8 sm:px-6">
       <header class="mb-6">
@@ -97,6 +97,68 @@ import { OutOfOffice, Profile, ProfileApi, TwoFactorStart } from '../core/profil
                 </div>
               </form>
             }
+          </section>
+
+          <section class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+            <h2 class="text-lg font-semibold text-slate-900" i18n="@@profile.applicationPasswordsTitle">
+              Application passwords
+            </h2>
+            <p class="mt-1 text-sm text-slate-500" i18n="@@profile.applicationPasswordsDescription">
+              Use one of these instead of your account password in MailCraft, your phone, or any IMAP, SMTP, CalDAV or CardDAV client. Each is named for the place it is used, and can be revoked here without changing your password.
+            </p>
+
+            @if (createdToken(); as created) {
+              <div class="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                <p class="text-sm font-medium text-emerald-900" i18n="@@profile.applicationPasswordCreated">
+                  Your new application password was created. Copy it now; it will not be shown again.
+                </p>
+                <div class="mt-2 flex flex-wrap items-center gap-2">
+                  <code class="min-w-0 flex-1 break-all rounded bg-white px-2 py-1 font-mono text-xs text-slate-700 ring-1 ring-emerald-200">{{ created.token }}</code>
+                  <button type="button" (click)="copyCreatedToken()" class="text-xs font-medium text-emerald-800 hover:underline" i18n="@@profile.copyApplicationPassword">
+                    Copy
+                  </button>
+                </div>
+                <p class="mt-2 text-xs text-emerald-800">{{ created.description }}</p>
+              </div>
+            }
+
+            @if (applicationTokens().length) {
+              <ul class="mt-4 divide-y divide-slate-200 rounded-xl border border-slate-200">
+                @for (token of applicationTokens(); track token.id) {
+                  <li class="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
+                    <div class="min-w-0">
+                      <p class="truncate text-sm font-medium text-slate-800">{{ token.description || 'Application password' }}</p>
+                      <p class="text-xs text-slate-500">
+                        {{ token.prefix }} · created {{ token.created_at | date: 'short' }}
+                        @if (token.last_used_at) { · last used {{ token.last_used_at | date: 'short' }} }
+                      </p>
+                    </div>
+                    <button type="button" (click)="revokeApplicationToken(token)" [disabled]="busy()" class="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-50 disabled:opacity-50" i18n="@@profile.revokeApplicationPassword">
+                      Revoke
+                    </button>
+                  </li>
+                }
+              </ul>
+            } @else {
+              <p class="mt-4 text-sm text-slate-500" i18n="@@profile.noApplicationPasswords">
+                No application passwords yet.
+              </p>
+            }
+
+            <form class="mt-4 flex flex-col gap-2 sm:flex-row" (ngSubmit)="createApplicationToken()">
+              <input
+                type="text"
+                name="applicationDescription"
+                [(ngModel)]="applicationDescription"
+                maxlength="120"
+                placeholder="MailCraft on my laptop"
+                i18n-placeholder="@@profile.applicationPasswordName"
+                class="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              />
+              <button type="submit" [disabled]="busy() || !applicationDescription.trim()" class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:opacity-50" i18n="@@profile.createApplicationPassword">
+                Create
+              </button>
+            </form>
           </section>
 
           <section class="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
@@ -372,6 +434,8 @@ export class ProfileComponent implements OnInit {
   private readonly auth = inject(AuthService);
 
   protected readonly profile = signal<Profile | null>(null);
+  protected readonly applicationTokens = signal<ApplicationToken[]>([]);
+  protected readonly createdToken = signal<{ token: string; description: string; created_at: string } | null>(null);
   protected readonly setup = signal<TwoFactorStart | null>(null);
   protected readonly confirmed = signal(false);
   protected readonly loading = signal(true);
@@ -383,6 +447,7 @@ export class ProfileComponent implements OnInit {
   protected newPassword = '';
   protected confirmPassword = '';
   protected recoveryEmail = '';
+  protected applicationDescription = '';
   protected oooEnabled = false;
   protected oooStart = '';
   protected oooEnd = '';
@@ -401,6 +466,8 @@ export class ProfileComponent implements OnInit {
     try {
       const profile = await this.api.get();
       this.profile.set(profile);
+      const passwords = await this.api.applicationTokens();
+      this.applicationTokens.set(passwords.tokens);
       this.recoveryEmail = profile.recovery_email ?? '';
       const ooo = profile.out_of_office;
       this.oooEnabled = ooo?.enabled ?? false;
@@ -436,6 +503,48 @@ export class ProfileComponent implements OnInit {
     } finally {
       this.busy.set(false);
     }
+  }
+
+  protected async createApplicationToken(): Promise<void> {
+    const description = this.applicationDescription.trim();
+    if (!description) return;
+    this.error.set('');
+    this.ok.set('');
+    this.busy.set(true);
+    try {
+      const created = await this.api.createApplicationToken(description);
+      this.createdToken.set(created);
+      this.applicationDescription = '';
+      this.ok.set($localize`:@@profile.applicationPasswordSaved:Application password created.`);
+      const passwords = await this.api.applicationTokens();
+      this.applicationTokens.set(passwords.tokens);
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  protected async revokeApplicationToken(token: ApplicationToken): Promise<void> {
+    this.error.set('');
+    this.ok.set('');
+    this.busy.set(true);
+    try {
+      await this.api.revokeApplicationToken(token.id);
+      this.applicationTokens.update((tokens) => tokens.filter((one) => one.id !== token.id));
+      this.ok.set($localize`:@@profile.applicationPasswordRevoked:Application password revoked.`);
+    } catch (err) {
+      this.error.set(errorMessage(err));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  protected copyCreatedToken(): void {
+    const token = this.createdToken()?.token;
+    if (!token) return;
+    void navigator.clipboard.writeText(token);
+    this.ok.set($localize`:@@profile.applicationPasswordCopied:Application password copied.`);
   }
 
   protected async saveRecovery(): Promise<void> {

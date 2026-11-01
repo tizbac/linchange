@@ -102,6 +102,15 @@ type Tab = 'general' | 'members' | 'calendars' | 'groups' | 'addressbooks';
                   <input type="checkbox" name="openBooking" [(ngModel)]="general.openBooking" class="mt-0.5 h-4 w-4" />
                   <span>Anyone may book the organization's calendars</span>
                 </label>
+                <label class="flex items-start gap-2 text-sm text-slate-700 sm:col-span-2">
+                  <input type="checkbox" name="legacyMailAuth" [(ngModel)]="general.legacyMailAuth" class="mt-0.5 h-4 w-4" />
+                  <span>
+                    Allow the account password in mail clients (IMAP, SMTP, CalDAV, CardDAV and the other protocols)
+                    <span class="mt-1 block text-xs text-slate-500">
+                      Off by default. People should use an application password from their account page instead; that can be revoked without exposing the password that changes the account. A person with two-factor authentication enabled always uses an application password in a mail client, whichever this setting says.
+                    </span>
+                  </span>
+                </label>
                 <div class="sm:col-span-2 flex items-center gap-3">
                   <admin-button variant="primary" type="submit" [disabled]="busy()">Save</admin-button>
                   <admin-busy [busy]="busy()" label="Saving…" />
@@ -486,7 +495,7 @@ export class AdminWorkgroupManageComponent implements OnInit {
   protected readonly domains = signal<Domain[]>([]);
   protected readonly users = signal<string[]>([]);
 
-  protected general = { name: '', displayName: '', description: '', openBooking: true, theme: '' };
+  protected general = { name: '', displayName: '', description: '', openBooking: true, legacyMailAuth: false, theme: '' };
   protected attachDomainName = '';
 
   protected readonly members = signal<WorkgroupMember[]>([]);
@@ -557,6 +566,7 @@ export class AdminWorkgroupManageComponent implements OnInit {
         displayName: wg.display_name,
         description: wg.description,
         openBooking: wg.open_booking,
+        legacyMailAuth: wg.legacy_mail_auth,
         theme: wg.theme ?? '',
       };
       await Promise.all([this.loadMembers(), this.loadCalendars(), this.loadGroups(), this.loadBooks(), this.loadAllGroups()]);
@@ -589,6 +599,7 @@ export class AdminWorkgroupManageComponent implements OnInit {
         display_name: this.general.displayName,
         description: this.general.description,
         open_booking: this.general.openBooking,
+        legacy_mail_auth: this.general.legacyMailAuth,
         theme: this.general.theme,
       });
       this.wg.set(updated);

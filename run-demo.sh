@@ -140,6 +140,9 @@ tls:
     cache_dir: /var/lib/linchange/acme
 
 auth:
+  # Mail clients use an application password from the account page. The
+  # account password stays for the web sign-in (with the second factor).
+  allow_main_password: false
   local:
     argon2:
       memory_kib: 65536
@@ -410,6 +413,8 @@ echo -e "  IMAP:      localhost:${DEMO_IMAP_PORT}   STARTTLS off"
 echo -e "  SMTP:      localhost:${DEMO_SUBMISSION_PORT} STARTTLS"
 echo -e "  POP3:      localhost:${DEMO_POP3_PORT}"
 echo -e "  Username:  ${DEMO_ADMIN_EMAIL}"
+echo -e "  Password:  ${GREEN}create an application password at ${DEMO_BASE_URL}/profile${NC}"
+echo -e "             (the account password is not accepted by mail clients by default)"
 echo -e "  Autodiscover answers with these ports for ${DEMO_ADMIN_EMAIL}"
 echo ""
 echo -e "${YELLOW}Thunderbird/iOS/macOS Calendar setup:${NC}"

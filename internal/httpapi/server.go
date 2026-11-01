@@ -156,6 +156,9 @@ type Server struct {
 	// account.
 	resetIPLimits      *rateLimiter
 	resetAddressLimits *rateLimiter
+	// appTokenIPLimits throttles unauthenticated starts of the application-
+	// password device flow, which any stranger may ask for.
+	appTokenIPLimits *rateLimiter
 }
 
 // Options are the inputs to New.
@@ -235,7 +238,10 @@ func New(opts Options) (*Server, error) {
 	// mail login rather than through a second one that could disagree with it.
 	mailVerifier := opts.MailAuth
 	if mailVerifier == nil {
-		mailVerifier = mailauth.NewWithLockout(opts.DB, log, directory, cfg.Auth.ProtocolLockout)
+		mailVerifier = mailauth.NewWithOptions(opts.DB, log, directory, mailauth.Options{
+			Lockout:           cfg.Auth.ProtocolLockout,
+			AllowMainPassword: cfg.Auth.AllowMainPassword,
+		})
 	}
 
 	tokens, err := token.NewManager(cfg.Auth.JWT)
@@ -529,6 +535,7 @@ func New(opts Options) (*Server, error) {
 		minPasswordLength:  cfg.Auth.Local.MinPasswordLength,
 		resetIPLimits:      newRateLimiter(10, 15*time.Minute),
 		resetAddressLimits: newRateLimiter(5, 15*time.Minute),
+		appTokenIPLimits:   newRateLimiter(30, 15*time.Minute),
 	}, nil
 }
 
@@ -553,6 +560,11 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/auth/captcha", s.handleCaptcha)
 		r.Post("/auth/reset/request", s.handleResetRequest)
 		r.Post("/auth/reset/complete", s.handleResetComplete)
+		// A mail client asks for an application password; the person approves
+		// it in their browser, where the account password and second factor
+		// are asked for. The client never sees those.
+		r.Post("/auth/app-token", s.handleAppTokenStart)
+		r.Post("/auth/app-token/token", s.handleAppTokenPoll)
 
 		// Organization logos are shown in the header and in a meeting room,
 		// including to a guest who has no account, so the image route is

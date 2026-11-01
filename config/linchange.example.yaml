@@ -69,6 +69,17 @@ tls:
     cache_dir: ./data/acme
 
 auth:
+  # The account password signs in to the web UI, with the second factor when
+  # one is enrolled. Mail, calendar and contact clients use an application
+  # password made from the account page (Profile > Application passwords).
+  # Set this to true to let the account password sign in to those protocols
+  # too; it is off by default so a compromised computer never holds the
+  # credential that can change the account. An organization's administrator
+  # can allow it for that organization alone (Admin > Organizations >
+  # General); this value is the fallback for addresses in no organization.
+  # A person who has enabled two-factor authentication never uses the account
+  # password in a mail client, whichever of those says yes.
+  allow_main_password: false
   # Encrypts second-factor secrets at rest. Required whenever totp.enabled is
   # on, which is the default. Deliberately not the same key as the DKIM one:
   # sharing it would mean rotating either key breaks the other.

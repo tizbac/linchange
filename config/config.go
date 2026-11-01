@@ -119,6 +119,13 @@ type ACME struct {
 // Auth covers every credential and session policy.
 type Auth struct {
 	Local LocalAuth `yaml:"local"`
+	// AllowMainPassword lets the account's main password sign in to IMAP, POP3,
+	// SMTP submission, CalDAV, CardDAV, EWS, EAS and MAPI. It is off by
+	// default: clients use an application password made from the account page,
+	// so a computer that is lost or compromised does not expose the password
+	// that can change the account. The web sign-in always uses the main
+	// password, with the second factor when one is enrolled.
+	AllowMainPassword bool `yaml:"allow_main_password"`
 	// EncryptionKey protects second-factor secrets at rest. It is separate
 	// from the DKIM key on purpose: those have nothing to do with each other,
 	// and sharing one key would mean rotating the DKIM key invalidates every

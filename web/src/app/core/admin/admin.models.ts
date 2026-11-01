@@ -174,6 +174,10 @@ export interface Workgroup {
   display_name: string;
   description: string;
   open_booking: boolean;
+  // legacy_mail_auth lets the account password sign in to IMAP, SMTP,
+  // CalDAV, CardDAV and the other mail protocols for this organization. Off
+  // by default; application passwords work either way.
+  legacy_mail_auth: boolean;
   // logo_url is the public image path; empty when the organization has no logo.
   logo_url?: string;
   // theme is the organization's default theme key; empty means the server

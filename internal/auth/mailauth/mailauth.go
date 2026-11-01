@@ -17,6 +17,7 @@ package mailauth
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -29,6 +30,7 @@ import (
 	"github.com/linchange/linchange/config"
 	"github.com/linchange/linchange/internal/auth/password"
 	"github.com/linchange/linchange/internal/auth/policy"
+	"github.com/linchange/linchange/internal/auth/secret"
 	"github.com/linchange/linchange/internal/store"
 )
 
@@ -62,22 +64,45 @@ type Verifier struct {
 	log         *slog.Logger
 	directory   Directory
 	credentials *store.Credentials
+	tokens      *store.ApplicationTokens
+	workgroups  *store.Workgroups
+	totp        *store.TOTP
+	// allowPassword lets the account's main password sign in. It is false by
+	// default in the server: clients use application passwords, which can be
+	// revoked without exposing the password that changes the account.
+	allowPassword bool
 	// failures throttles repeated wrong passwords for one login. It is nil
 	// when protocol_lockout is disabled.
 	failures *failureLimiter
 }
 
-// New returns a Verifier without a protocol lockout. Tests and embedders that
-// do not have a configuration use it; the server uses NewWithLockout.
-func New(db *sqlx.DB, log *slog.Logger, directory Directory) *Verifier {
-	return NewWithLockout(db, log, directory, config.LockoutScope{})
+// Options is what a deployment decides about protocol sign-ins.
+type Options struct {
+	// Lockout throttles repeated failures on the mail protocols.
+	Lockout config.LockoutScope
+	// AllowMainPassword lets the account password sign in to the protocols.
+	// Application passwords are always accepted.
+	AllowMainPassword bool
 }
 
-// NewWithLockout returns a Verifier with the configured protocol lockout. A
-// nil directory denies: a deployment with directory-backed accounts but no
+// New returns a Verifier without a protocol lockout. Tests and embedders that
+// do not have a configuration use it; the server uses NewWithOptions.
+func New(db *sqlx.DB, log *slog.Logger, directory Directory) *Verifier {
+	return NewWithOptions(db, log, directory, Options{AllowMainPassword: true})
+}
+
+// NewWithLockout returns a Verifier with the configured protocol lockout and
+// the account password allowed, as the mail listeners had it before
+// application passwords. The server uses NewWithOptions and its configuration.
+func NewWithLockout(db *sqlx.DB, log *slog.Logger, directory Directory, lockout config.LockoutScope) *Verifier {
+	return NewWithOptions(db, log, directory, Options{Lockout: lockout, AllowMainPassword: true})
+}
+
+// NewWithOptions returns a Verifier with the deployment's decisions. A nil
+// directory denies: a deployment with directory-backed accounts but no
 // directory wired up must refuse those logins rather than admit anyone whose
 // account happens to have no local password.
-func NewWithLockout(db *sqlx.DB, log *slog.Logger, directory Directory, lockout config.LockoutScope) *Verifier {
+func NewWithOptions(db *sqlx.DB, log *slog.Logger, directory Directory, opts Options) *Verifier {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -85,15 +110,39 @@ func NewWithLockout(db *sqlx.DB, log *slog.Logger, directory Directory, lockout 
 		directory = unavailableDirectory{}
 	}
 	v := &Verifier{
-		db:          db,
-		log:         log,
-		directory:   directory,
-		credentials: store.NewCredentials(),
+		db:            db,
+		log:           log,
+		directory:     directory,
+		credentials:   store.NewCredentials(),
+		tokens:        store.NewApplicationTokens(),
+		workgroups:    store.NewWorkgroups(),
+		totp:          store.NewTOTP(),
+		allowPassword: opts.AllowMainPassword,
 	}
-	if lockout.Enabled() {
-		v.failures = newFailureLimiter(lockout.MaxAttempts, lockout.Window, lockout.Duration)
+	if opts.Lockout.Enabled() {
+		v.failures = newFailureLimiter(opts.Lockout.MaxAttempts, opts.Lockout.Window, opts.Lockout.Duration)
 	}
 	return v
+}
+
+// applicationTokenPrefix names the credentials this server issues for mail
+// clients. A presented password that starts with it is tried as one, never as
+// the account password, so a wrong application password cannot fall back to
+// the main one.
+const applicationTokenPrefix = "lcapp_"
+
+// splitApplicationToken returns the public prefix and the secret part of a
+// credential that has the application-password shape.
+func splitApplicationToken(pw string) (string, string, bool) {
+	rest, ok := strings.CutPrefix(pw, applicationTokenPrefix)
+	if !ok {
+		return "", "", false
+	}
+	prefix, secretPart, ok := strings.Cut(rest, "_")
+	if !ok || prefix == "" || secretPart == "" {
+		return "", "", false
+	}
+	return prefix, secretPart, true
 }
 
 // unavailableDirectory stands in for a nil Directory and refuses.
@@ -261,11 +310,39 @@ func (v *Verifier) Authenticate(
 		return policy.Principal{}, ErrRejected
 	}
 
-	if err := v.verifyPassword(ctx, principal, pw); err != nil {
-		if errors.Is(err, ErrRejected) {
-			refuse()
+	if prefix, secretPart, looksLikeToken := splitApplicationToken(pw); looksLikeToken {
+		if err := v.verifyApplicationToken(ctx, principal.Address, prefix, secretPart); err != nil {
+			if errors.Is(err, ErrRejected) {
+				refuse()
+			}
+			return policy.Principal{}, err
 		}
-		return policy.Principal{}, err
+	} else {
+		allowed, allowedErr := v.mainPasswordAllowed(ctx, principal.Address)
+		if allowedErr != nil {
+			v.log.ErrorContext(ctx, "mail login refused: could not read the organization's legacy-auth setting",
+				"address", principal.Address, "protocol", string(action), "error", allowedErr)
+			password.DummyVerify(pw)
+			refuse()
+			return policy.Principal{}, ErrRejected
+		}
+		if !allowed {
+			// The account password is for the browser, where a second factor
+			// can be shown. A mail client uses an application password made
+			// from the account page, so a compromised computer never holds the
+			// credential that can change the account.
+			password.DummyVerify(pw)
+			refuse()
+			v.log.InfoContext(ctx, "mail login refused: the account password is not accepted here",
+				"address", principal.Address, "protocol", string(action))
+			return policy.Principal{}, ErrRejected
+		}
+		if err := v.verifyPassword(ctx, principal, pw); err != nil {
+			if errors.Is(err, ErrRejected) {
+				refuse()
+			}
+			return policy.Principal{}, err
+		}
 	}
 
 	// The identity is now proved, so it can be asked what it may do with mail.
@@ -284,6 +361,68 @@ func (v *Verifier) Authenticate(
 		v.failures.clear(key)
 	}
 	return principal, nil
+}
+
+// mainPasswordAllowed reports whether the account password may sign in to a
+// mail protocol for this address. The organization's administrator decides
+// for its people; an address in no organization follows the deployment's
+// default, which is off.
+func (v *Verifier) mainPasswordAllowed(ctx context.Context, address string) (bool, error) {
+	// A second factor is a promise that a password alone is not enough. A mail
+	// protocol that cannot present one never sees the account password, even
+	// where the organization allows legacy authentication generally.
+	enrolment, err := v.totp.Get(ctx, v.db, address)
+	switch {
+	case err == nil && enrolment.Enabled:
+		return false, nil
+	case err != nil && !errors.Is(err, store.ErrNoTOTP):
+		return false, err
+	}
+	allowed, err := v.workgroups.LegacyMailAuthForAddress(ctx, v.db, address)
+	if errors.Is(err, store.ErrNotFound) {
+		return v.allowPassword, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return allowed, nil
+}
+
+// verifyApplicationToken checks the secret of an application password against
+// the row its public prefix names. A token for another account is refused: the
+// login name and the token's owner must be the same person.
+func (v *Verifier) verifyApplicationToken(ctx context.Context, address, prefix, secretPart string) error {
+	row, err := v.tokens.Find(ctx, v.db, prefix)
+	if err != nil {
+		if errors.Is(err, store.ErrNoApplicationToken) {
+			dummyApplicationToken(secretPart)
+			return ErrRejected
+		}
+		return fmt.Errorf("mailauth: reading an application password: %w", err)
+	}
+	if !strings.EqualFold(row.Address, address) {
+		dummyApplicationToken(secretPart)
+		return ErrRejected
+	}
+	stored, err := hex.DecodeString(row.TokenHash)
+	if err != nil || len(stored) == 0 {
+		return fmt.Errorf("mailauth: the stored application password for %s is unreadable", address)
+	}
+	if !secret.Equal(secretPart, stored) {
+		return ErrRejected
+	}
+	// Recording the use is a convenience for the owner, never a reason to
+	// refuse an otherwise correct credential.
+	if err := v.tokens.Touch(ctx, v.db, row.ID); err != nil {
+		v.log.WarnContext(ctx, "could not record application-password use", "address", address, "error", err)
+	}
+	return nil
+}
+
+// dummyApplicationToken spends a comparison for a prefix nobody has, so a
+// missing row is not measurably faster than a wrong secret.
+func dummyApplicationToken(secretPart string) {
+	_ = secret.Equal(secretPart, make([]byte, 32))
 }
 
 // verifyPassword checks pw against whichever source owns the account.

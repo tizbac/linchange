@@ -162,6 +162,10 @@ func run() error {
 		Domain:      domain,
 		DisplayName: "Example",
 		Description: "Organization seeded for the end-to-end suites",
+		// The older suites sign in to IMAP, EWS and EAS with the account
+		// password; the application-password suites use a password of their
+		// own and do not depend on this.
+		LegacyMailAuth: boolPointer(true),
 	})
 	if err != nil {
 		return fmt.Errorf("creating organization: %w", err)
@@ -180,6 +184,8 @@ func run() error {
 		*user, *name, shared, outsider)
 	return nil
 }
+
+func boolPointer(value bool) *bool { return &value }
 
 func splitAddress(address string) (domain, local string, ok bool) {
 	i := strings.LastIndex(address, "@")

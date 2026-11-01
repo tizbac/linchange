@@ -57,6 +57,8 @@ tls:
     cache_dir: /var/lib/linchange/acme
 
 auth:
+  # Mail clients use an application password from the account page. The account password stays for the web sign-in.
+  allow_main_password: false
   # Encrypts TOTP secrets at rest. Required because totp.enabled is true.
   encryption_key: ${AUTH_ENCRYPTION_KEY}
   local:

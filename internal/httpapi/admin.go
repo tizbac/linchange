@@ -1864,11 +1864,12 @@ func (s *Server) updateWorkgroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Name        string  `json:"name"`
-		DisplayName string  `json:"display_name"`
-		Description string  `json:"description"`
-		OpenBooking *bool   `json:"open_booking"`
-		Theme       *string `json:"theme"`
+		Name           string  `json:"name"`
+		DisplayName    string  `json:"display_name"`
+		Description    string  `json:"description"`
+		OpenBooking    *bool   `json:"open_booking"`
+		LegacyMailAuth *bool   `json:"legacy_mail_auth"`
+		Theme          *string `json:"theme"`
 	}
 	if err := decodeAdmin(w, r, &in); err != nil {
 		s.writeError(w, http.StatusBadRequest, "malformed request")
@@ -1878,7 +1879,7 @@ func (s *Server) updateWorkgroup(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "unknown theme")
 		return
 	}
-	wg, err := s.admin.UpdateWorkgroup(r.Context(), Principal(r.Context()), id, in.Name, in.DisplayName, in.Description, in.OpenBooking)
+	wg, err := s.admin.UpdateWorkgroup(r.Context(), Principal(r.Context()), id, in.Name, in.DisplayName, in.Description, in.OpenBooking, in.LegacyMailAuth)
 	if err != nil {
 		adminErrors(w, s, err)
 		return
@@ -2684,6 +2685,9 @@ type workgroupView struct {
 	DisplayName string `json:"display_name"`
 	Description string `json:"description"`
 	OpenBooking bool   `json:"open_booking"`
+	// LegacyMailAuth lets the account password sign in to the mail protocols
+	// for this organization's people. Off unless an administrator turns it on.
+	LegacyMailAuth bool `json:"legacy_mail_auth"`
 	// LogoURL is the public image path, empty when the organization has no
 	// logo and the top bar should show its name instead.
 	LogoURL string `json:"logo_url,omitempty"`
@@ -2699,16 +2703,17 @@ type workgroupView struct {
 
 func viewWorkgroup(w store.Workgroup) workgroupView {
 	return workgroupView{
-		ID:          w.ID,
-		Name:        w.Name,
-		Domain:      w.Domain,
-		DisplayName: w.DisplayName,
-		Description: w.Description,
-		OpenBooking: w.OpenBooking,
-		LogoURL:     w.LogoURL(),
-		Theme:       w.Theme,
-		CreatedAt:   w.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt:   w.UpdatedAt.UTC().Format(time.RFC3339),
+		ID:             w.ID,
+		Name:           w.Name,
+		Domain:         w.Domain,
+		DisplayName:    w.DisplayName,
+		Description:    w.Description,
+		OpenBooking:    w.OpenBooking,
+		LegacyMailAuth: w.LegacyMailAuth,
+		LogoURL:        w.LogoURL(),
+		Theme:          w.Theme,
+		CreatedAt:      w.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:      w.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 }
 

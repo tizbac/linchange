@@ -396,22 +396,24 @@ func (s *Service) GetWorkgroup(ctx context.Context, actor policy.Principal, id i
 
 // UpdateWorkgroupRequest is the input for updating a workgroup.
 type UpdateWorkgroupRequest struct {
-	Name        string
-	DisplayName string
-	Description string
-	OpenBooking *bool
+	Name           string
+	DisplayName    string
+	Description    string
+	OpenBooking    *bool
+	LegacyMailAuth *bool
 }
 
 // UpdateWorkgroup updates a workgroup.
-func (s *Service) UpdateWorkgroup(ctx context.Context, actor policy.Principal, id int64, name, displayName, description string, openBooking *bool) (store.Workgroup, error) {
+func (s *Service) UpdateWorkgroup(ctx context.Context, actor policy.Principal, id int64, name, displayName, description string, openBooking, legacyMailAuth *bool) (store.Workgroup, error) {
 	if err := requireAdmin(actor); err != nil {
 		return store.Workgroup{}, err
 	}
 	wg, err := s.workgroups.Update(ctx, s.db, id, store.UpdateWorkgroupRequest{
-		Name:        name,
-		DisplayName: displayName,
-		Description: description,
-		OpenBooking: openBooking,
+		Name:           name,
+		DisplayName:    displayName,
+		Description:    description,
+		OpenBooking:    openBooking,
+		LegacyMailAuth: legacyMailAuth,
 	})
 	if err != nil {
 		return store.Workgroup{}, fmt.Errorf("admin: updating workgroup: %w", err)

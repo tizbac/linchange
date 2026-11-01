@@ -1,6 +1,6 @@
 import { Component, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthService } from '../core/auth/auth.service';
 import { errorMessage } from '../core/http-error';
 
@@ -69,6 +69,7 @@ export class LoginComponent {
   constructor(
     private readonly auth: AuthService,
     private readonly router: Router,
+    private readonly route: ActivatedRoute,
   ) {}
 
   async submit(loginEl: HTMLInputElement, passwordEl: HTMLInputElement): Promise<void> {
@@ -79,7 +80,13 @@ export class LoginComponent {
     this.error.set('');
     try {
       const challenge = await this.auth.login(login, password);
-      this.router.navigateByUrl(challenge ? '/second-factor' : '/dashboard');
+      const returnUrl = this.route.snapshot.queryParamMap.get('returnUrl') ?? '';
+      const next = returnUrl.startsWith('/') ? returnUrl : '/dashboard';
+      if (challenge) {
+        await this.router.navigate(['/second-factor'], { queryParams: { returnUrl: next } });
+      } else {
+        await this.router.navigateByUrl(next);
+      }
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {

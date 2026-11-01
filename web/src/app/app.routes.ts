@@ -104,6 +104,12 @@ export const routes: Routes = [
     loadComponent: () => import('./profile/profile.component').then((m) => m.ProfileComponent),
     title: $localize`:@@title.profile:Profile`,
   },
+  {
+    path: 'app-auth',
+    canActivate: [requireAuth],
+    loadComponent: () => import('./app-auth/app-auth.component').then((m) => m.AppAuthComponent),
+    title: $localize`:@@title.appAuth:Allow a mail client`,
+  },
   // The call itself is its own full-screen page, so the meeting details can
   // stay readable and the gallery has the whole viewport.
   {

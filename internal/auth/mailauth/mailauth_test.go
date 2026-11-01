@@ -2,6 +2,7 @@ package mailauth_test
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"io"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"github.com/linchange/linchange/internal/auth/mailauth"
 	"github.com/linchange/linchange/internal/auth/password"
 	"github.com/linchange/linchange/internal/auth/policy"
+	"github.com/linchange/linchange/internal/auth/secret"
 	"github.com/linchange/linchange/internal/store"
 	"github.com/linchange/linchange/internal/testdb"
 )
@@ -322,6 +324,79 @@ func TestProtocolLockoutBlocksAfterThreshold(t *testing.T) {
 	}
 	if _, err := v.Authenticate(ctx, "bob@example.com", "correct horse battery staple", policy.ActionIMAP); !errors.Is(err, mailauth.ErrRejected) {
 		t.Errorf("a correct password during the cooldown = %v, want ErrRejected", err)
+	}
+}
+
+// TestApplicationPasswordsAndOrganizationLegacyAuth is the rule this feature
+// exists for: a client signs in with a credential of its own, and the account
+// password is refused unless the organization's administrator allows it.
+func TestApplicationPasswordsAndOrganizationLegacyAuth(t *testing.T) {
+	db := testdb.Migrated(t)
+	ctx := context.Background()
+	createUser(t, db, "ada@example.com", policy.SourceLocal, true)
+	setPassword(t, db, "ada@example.com", "correct horse battery staple")
+	createUser(t, db, "bob@example.com", policy.SourceLocal, true)
+	setPassword(t, db, "bob@example.com", "another password")
+
+	// An organization for the domain, with the account password off (the
+	// default) although the deployment's fallback would allow it.
+	open := false
+	if _, err := store.NewWorkgroups().Create(ctx, db, store.CreateWorkgroupRequest{
+		Name: "Example", Domain: "example.com", DisplayName: "Example", LegacyMailAuth: &open,
+	}); err != nil {
+		t.Fatalf("creating organization: %v", err)
+	}
+
+	hash := hex.EncodeToString(secret.Hash("application-secret"))
+	if _, err := store.NewApplicationTokens().Create(ctx, db, "ada@example.com", "prefixone", hash, "MailCraft on ada's laptop"); err != nil {
+		t.Fatalf("creating application password: %v", err)
+	}
+
+	v := mailauth.NewWithOptions(db, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, mailauth.Options{AllowMainPassword: true})
+
+	// The account password is refused for the organization's address.
+	if _, err := v.Authenticate(ctx, "ada@example.com", "correct horse battery staple", policy.ActionIMAP); !errors.Is(err, mailauth.ErrRejected) {
+		t.Fatalf("account password with legacy auth off = %v, want ErrRejected", err)
+	}
+	// The application password works.
+	if _, err := v.Authenticate(ctx, "ada@example.com", "lcapp_prefixone_application-secret", policy.ActionIMAP); err != nil {
+		t.Fatalf("application password = %v, want it accepted", err)
+	}
+	// One account's application password is not another account's.
+	if _, err := v.Authenticate(ctx, "bob@example.com", "lcapp_prefixone_application-secret", policy.ActionIMAP); !errors.Is(err, mailauth.ErrRejected) {
+		t.Fatalf("another account's application password = %v, want ErrRejected", err)
+	}
+	// The wrong secret is refused.
+	if _, err := v.Authenticate(ctx, "ada@example.com", "lcapp_prefixone_wrong", policy.ActionIMAP); !errors.Is(err, mailauth.ErrRejected) {
+		t.Fatalf("wrong application secret = %v, want ErrRejected", err)
+	}
+
+	// The administrator turns the account password on for the organization.
+	allow := true
+	wg, err := store.NewWorkgroups().ForDomain(ctx, db, "example.com")
+	if err != nil {
+		t.Fatalf("reading organization: %v", err)
+	}
+	if _, err := store.NewWorkgroups().Update(ctx, db, wg.ID, store.UpdateWorkgroupRequest{
+		Name: wg.Name, DisplayName: wg.DisplayName, Description: wg.Description, LegacyMailAuth: &allow,
+	}); err != nil {
+		t.Fatalf("turning legacy auth on: %v", err)
+	}
+	if _, err := v.Authenticate(ctx, "ada@example.com", "correct horse battery staple", policy.ActionIMAP); err != nil {
+		t.Fatalf("account password with legacy auth on = %v, want it accepted", err)
+	}
+
+	// A confirmed second factor disables the account password for mail even
+	// though the organization allows legacy authentication: the browser is the
+	// only place that can ask for the code.
+	if err := store.NewTOTP().Store(ctx, db, "ada@example.com", []byte{1, 2, 3}, nil, true); err != nil {
+		t.Fatalf("enrolling a second factor: %v", err)
+	}
+	if _, err := v.Authenticate(ctx, "ada@example.com", "correct horse battery staple", policy.ActionIMAP); !errors.Is(err, mailauth.ErrRejected) {
+		t.Fatalf("account password with a second factor = %v, want ErrRejected", err)
+	}
+	if _, err := v.Authenticate(ctx, "ada@example.com", "lcapp_prefixone_application-secret", policy.ActionIMAP); err != nil {
+		t.Fatalf("application password with a second factor = %v, want it accepted", err)
 	}
 }
 

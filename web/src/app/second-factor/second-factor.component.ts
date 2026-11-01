@@ -1,6 +1,6 @@
 import { Component, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import { AuthService } from '../core/auth/auth.service';
 import { errorMessage } from '../core/http-error';
 
@@ -49,6 +49,7 @@ export class SecondFactorComponent implements OnInit {
   constructor(
     private readonly auth: AuthService,
     private readonly router: Router,
+    private readonly route: ActivatedRoute,
   ) {}
 
   ngOnInit(): void {
@@ -64,7 +65,8 @@ export class SecondFactorComponent implements OnInit {
     this.error.set('');
     try {
       await this.auth.secondFactor(code);
-      this.router.navigateByUrl('/dashboard');
+      const returnUrl = this.route.snapshot.queryParamMap.get('returnUrl') ?? '';
+      await this.router.navigateByUrl(returnUrl.startsWith('/') ? returnUrl : '/dashboard');
     } catch (err) {
       this.error.set(errorMessage(err));
     } finally {

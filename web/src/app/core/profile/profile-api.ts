@@ -35,8 +35,30 @@ export interface TwoFactorStart {
   recovery_codes: string[];
 }
 
+export interface ApplicationToken {
+  id: number;
+  prefix: string;
+  description: string;
+  created_at: string;
+  last_used_at?: string;
+}
+
+export interface CreatedApplicationToken {
+  token: string;
+  description: string;
+  created_at: string;
+}
+
+export interface ApplicationTokenRequest {
+  user_code: string;
+  description: string;
+  status: 'pending' | 'approved' | 'denied' | 'consumed';
+  expires_at: string;
+}
+
 // ProfileApi is the signed-in user's own account surface: password, recovery
-// address, and second-factor enrolment. Nothing here can name another user.
+// address, second-factor enrolment and application passwords. Nothing here can
+// name another user.
 @Injectable({ providedIn: 'root' })
 export class ProfileApi {
   private readonly http = inject(HttpClient);
@@ -80,5 +102,36 @@ export class ProfileApi {
 
   disable2FA(code: string): Promise<void> {
     return firstValueFrom(this.http.post<void>(`${API}/profile/2fa/disable`, { code }));
+  }
+
+  applicationTokens(): Promise<{ tokens: ApplicationToken[] }> {
+    return firstValueFrom(this.http.get<{ tokens: ApplicationToken[] }>(`${API}/profile/application-tokens`));
+  }
+
+  createApplicationToken(description: string): Promise<CreatedApplicationToken> {
+    return firstValueFrom(
+      this.http.post<CreatedApplicationToken>(`${API}/profile/application-tokens`, { description }),
+    );
+  }
+
+  revokeApplicationToken(id: number): Promise<void> {
+    return firstValueFrom(this.http.delete<void>(`${API}/profile/application-tokens/${id}`));
+  }
+
+  applicationTokenRequest(code: string): Promise<ApplicationTokenRequest> {
+    return firstValueFrom(
+      this.http.get<ApplicationTokenRequest>(
+        `${API}/profile/application-tokens/request/${encodeURIComponent(code)}`,
+      ),
+    );
+  }
+
+  decideApplicationToken(code: string, approve: boolean): Promise<{ status: string }> {
+    return firstValueFrom(
+      this.http.post<{ status: string }>(
+        `${API}/profile/application-tokens/request/${encodeURIComponent(code)}`,
+        { approve },
+      ),
+    );
   }
 }
