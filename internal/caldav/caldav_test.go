@@ -986,6 +986,28 @@ func TestCalendarQueryOverATimeRange(t *testing.T) {
 	}
 }
 
+// A repeating event whose first occurrence is before the window still happens
+// inside it. Querying only the master row's DTSTART/DTEND would hide every
+// series that began earlier, which is most of them.
+func TestCalendarQueryExpandsASeriesThatBeganBeforeTheWindow(t *testing.T) {
+	h := newHarness(t)
+	seedEvents(t, h,
+		seedEvent{uid: "weekly", summary: "Weekly sync",
+			start: time.Date(2026, 1, 5, 9, 0, 0, 0, time.UTC), rrule: "FREQ=WEEKLY;BYDAY=MO"},
+		seedEvent{uid: "ended", summary: "Ended series",
+			start: time.Date(2026, 1, 6, 9, 0, 0, 0, time.UTC), rrule: "FREQ=WEEKLY;COUNT=2"},
+	)
+
+	_, body := h.do("REPORT", calPath("Work"), calendarQuery(
+		"20260301T000000Z", "20260401T000000Z", "getetag", "calendar-data"), nil)
+	if !strings.Contains(body, "Weekly sync") {
+		t.Fatalf("a continuing series that began before the window is missing: %s", body)
+	}
+	if strings.Contains(body, "Ended series") {
+		t.Errorf("a series that ended before the window was returned: %s", body)
+	}
+}
+
 // A meeting that began before the window and ends inside it is in the window. It
 // is the case that matching on DTSTART alone drops, and it is every multi-day
 // event.

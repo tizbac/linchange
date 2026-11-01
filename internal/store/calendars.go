@@ -772,7 +772,10 @@ func (e *Events) ListInRange(ctx context.Context, q Querier, calendarIDs []int64
 		    FROM events
 		    WHERE calendar_id = ANY($1)
 		      AND dtstart < $3
-		      AND (dtend > $2 OR dtend = dtstart)
+		      -- A repeating event's row holds only its first occurrence. It may
+		      -- still happen inside the window, so every series that began before
+		      -- the window's end is a candidate; the caller expands it.
+		      AND (dtend > $2 OR dtend = dtstart OR rrule IS NOT NULL)
 		)
 		SELECT `+prefixedColumns("e")+`
 		FROM events e

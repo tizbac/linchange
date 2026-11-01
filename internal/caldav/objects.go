@@ -15,6 +15,7 @@ import (
 	"github.com/linchange/linchange/internal/auth/policy"
 	"github.com/linchange/linchange/internal/calendar"
 	"github.com/linchange/linchange/internal/ical"
+	"github.com/linchange/linchange/internal/recurrence"
 	"github.com/linchange/linchange/internal/store"
 )
 
@@ -202,7 +203,7 @@ func parseICalTime(v string) (time.Time, bool) {
 // meeting that began yesterday and ends tomorrow is in this week's view, and
 // matching on DTSTART alone would drop every multi-day event from every view that
 // does not start in it.
-func (f *compFilter) matchWindow(ev store.Event) bool {
+func (f *compFilter) matchWindow(ev store.Event, doc ical.Event) bool {
 	if f.isNotDefinedTimeRange {
 		return false
 	}
@@ -210,6 +211,20 @@ func (f *compFilter) matchWindow(ev store.Event) bool {
 		return true
 	}
 	w := f.timeRange
+	// A repeating event's stored DTSTART and DTEND are only its first
+	// occurrence. An event whose first occurrence is before the window can
+	// still happen inside it, so the series is expanded for the window before
+	// the master's own dates are compared. A rule that cannot be expanded (or
+	// a window with only one bound) falls back to the master's dates below.
+	if doc.RRULE != "" && w.hasStart && w.hasEnd {
+		from, to := rangeOf(w)
+		instances, err := recurrence.Expand(context.Background(), doc,
+			recurrence.Window{Start: from, End: to},
+			recurrence.Limits{MaxOccurrences: 5000, MaxWindow: 10 * 366 * 24 * time.Hour})
+		if err == nil {
+			return len(instances) > 0
+		}
+	}
 	// The same overlap predicate the store uses, so a REPORT and a range query
 	// cannot disagree about which events are in a window.
 	if w.hasEnd && !ev.DTStart.Before(w.end) {
@@ -243,7 +258,7 @@ func (f *compFilter) match(ev store.Event, doc ical.Event) bool {
 		return false
 	}
 
-	if !f.matchWindow(ev) {
+	if !f.matchWindow(ev, doc) {
 		return false
 	}
 	if !f.matchProps(doc) {
