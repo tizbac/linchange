@@ -57,8 +57,9 @@ chat, riunioni o rubriche da installare: tutto è nello stesso server.
 
 - Applicazione Angular a pagina singola per **posta, calendario, contatti,
   riunioni, chat e amministrazione**.
-- Build in inglese e italiano con l'i18n di Angular (`@angular/localize`); la
-  barra superiore cambia lingua e ricorda la scelta.
+- Build in inglese, italiano, tedesco e polacco con l'i18n di Angular
+  (`@angular/localize`); la barra superiore cambia lingua e ricorda la scelta, e
+  chi non ne sceglie una riceve quella richiesta dal browser.
 - Temi chiaro, scuro e di sistema, più temi CSS personalizzati caricati come
   ZIP da un amministratore. Il predefinito si può impostare per organizzazione
   o con `web.theme`; la scelta dell'utente ha la precedenza.

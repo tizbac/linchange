@@ -3,6 +3,10 @@ import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } fro
 import { AuthService } from './core/auth/auth.service';
 import { ThemeOption } from './core/auth/models';
 
+// The locales the build produces. The language selector and the server agree on
+// this list: a value here is a directory the server can serve.
+const SUPPORTED_LANGUAGES = new Set(['en', 'it', 'de', 'pl']);
+
 @Component({
   selector: 'app-root',
   imports: [RouterOutlet, RouterLink, RouterLinkActive],
@@ -86,10 +90,10 @@ export class App implements OnInit {
   // other locale's build. A cookie lets the server send the bare "/" there on
   // the next visit.
   protected switchLanguage(language: string): void {
-    if (language !== 'en' && language !== 'it') return;
+    if (!SUPPORTED_LANGUAGES.has(language)) return;
     if (language === this.locale) return;
     const path = window.location.pathname;
-    const bare = path.replace(/^\/(?:en|it)(?=\/|$)/, '') || '/';
+    const bare = path.replace(/^\/(?:en|it|de|pl)(?=\/|$)/, '') || '/';
     const target = `/${language}${bare === '/' ? '/' : bare}`;
     document.cookie = `linchange_lang=${language}; path=/; max-age=31536000; samesite=lax`;
     window.location.assign(target || '/');

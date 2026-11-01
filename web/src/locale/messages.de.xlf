@@ -1,0 +1,3382 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+  <file source-language="en" target-language="de" datatype="plaintext" original="ng2.template">
+    <body>
+      <trans-unit id="appAuth.title" datatype="html">
+        <source> Allow a mail client? </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">18,21</context>
+        </context-group>
+      
+        <target>Einen Mail-Client erlauben?</target>
+      </trans-unit>
+      <trans-unit id="appAuth.loading" datatype="html">
+        <source>Reading the request…</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">22,23</context>
+        </context-group>
+      
+        <target>Die Anfrage wird gelesen…</target>
+      </trans-unit>
+      <trans-unit id="appAuth.approved" datatype="html">
+        <source>Allowed. You can return to the application now.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">26,28</context>
+        </context-group>
+      
+        <target>Erlaubt. Sie können jetzt zur Anwendung zurückkehren.</target>
+      </trans-unit>
+      <trans-unit id="appAuth.denied" datatype="html">
+        <source>Denied. The application was not given a password.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">28,30</context>
+        </context-group>
+      
+        <target>Abgelehnt. Die Anwendung bekam kein Passwort.</target>
+      </trans-unit>
+      <trans-unit id="appAuth.manage" datatype="html">
+        <source> Manage application passwords </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">32,34</context>
+        </context-group>
+      
+        <target>Anwendungspasswörter verwalten</target>
+      </trans-unit>
+      <trans-unit id="appAuth.asks" datatype="html">
+        <source>This application is asking for an application password:</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">36,37</context>
+        </context-group>
+      
+        <target>Diese Anwendung fragt nach einem Anwendungspasswort:</target>
+      </trans-unit>
+      <trans-unit id="appAuth.explain" datatype="html">
+        <source> It will be able to read and change your mail, calendar and contacts as you can. Your account password is not shared with it, and you can revoke it later from your account page. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">40,42</context>
+        </context-group>
+      
+        <target>Die Anwendung kann E-Mail, Kalender und Kontakte lesen und ändern, so wie Sie. Ihr Konto-Passwort wird ihr nicht gegeben; die Erlaubnis können Sie später auf der Kontoseite widerrufen.</target>
+      </trans-unit>
+      <trans-unit id="appAuth.code" datatype="html">
+        <source>Request code:</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">43</context>
+        </context-group>
+      
+        <target>Anforderungscode:</target>
+      </trans-unit>
+      <trans-unit id="appAuth.allow" datatype="html">
+        <source> Allow </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">58,59</context>
+        </context-group>
+      
+        <target>Erlauben</target>
+      </trans-unit>
+      <trans-unit id="appAuth.deny" datatype="html">
+        <source> Deny </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">67,68</context>
+        </context-group>
+      
+        <target>Ablehnen</target>
+      </trans-unit>
+      <trans-unit id="appAuth.back" datatype="html">
+        <source> Back to your account </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">73,75</context>
+        </context-group>
+      
+        <target>Zurück zu Ihrem Konto</target>
+      </trans-unit>
+      <trans-unit id="appAuth.missingCode" datatype="html">
+        <source>This link has no request code. Start again from the application.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">97</context>
+        </context-group>
+      
+        <target>Dieser Link hat keinen Anforderungscode. Starten Sie erneut in der Anwendung.</target>
+      </trans-unit>
+      <trans-unit id="nav.mail" datatype="html">
+        <source> Mail </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">34,35</context>
+        </context-group>
+      
+        <target>E-Mail</target>
+      </trans-unit>
+      <trans-unit id="nav.calendar" datatype="html">
+        <source> Calendar </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">42,43</context>
+        </context-group>
+      
+        <target>Kalender</target>
+      </trans-unit>
+      <trans-unit id="nav.contacts" datatype="html">
+        <source> Contacts </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">50,51</context>
+        </context-group>
+      
+        <target>Kontakte</target>
+      </trans-unit>
+      <trans-unit id="nav.meetings" datatype="html">
+        <source> Meetings </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">58,59</context>
+        </context-group>
+      
+        <target>Besprechungen</target>
+      </trans-unit>
+      <trans-unit id="nav.theme" datatype="html">
+        <source>Theme</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">67</context>
+        </context-group>
+      
+        <target>Design</target>
+      </trans-unit>
+      <trans-unit id="nav.language" datatype="html">
+        <source>Language</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">77,78</context>
+        </context-group>
+      
+        <target>Sprache</target>
+      </trans-unit>
+      <trans-unit id="nav.profile" datatype="html">
+        <source><x id="START_TAG__SVG_SVG" ctype="x-_svg_svg" equiv-text="&lt;svg viewBox=&quot;0 0 24 24&quot; class=&quot;h-4 w-4 text-slate-400&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.8&quot;&gt;"/><x id="START_TAG__SVG_CIRCLE" ctype="x-_svg_circle" equiv-text="&lt;circle cx=&quot;12&quot; cy=&quot;8&quot; r=&quot;3.5&quot; /&gt;"/><x id="CLOSE_TAG__SVG_CIRCLE" ctype="x-_svg_circle" equiv-text="&lt;circle cx=&quot;12&quot; cy=&quot;8&quot; r=&quot;3.5&quot; /&gt;"/><x id="START_TAG__SVG_PATH" ctype="x-_svg_path" equiv-text="&lt;path d=&quot;M4.5 20a7.5 7.5 0 0 1 15 0&quot; /&gt;"/><x id="CLOSE_TAG__SVG_PATH" ctype="x-_svg_path" equiv-text="&lt;path d=&quot;M4.5 20a7.5 7.5 0 0 1 15 0&quot; /&gt;"/><x id="CLOSE_TAG__SVG_SVG" ctype="x-_svg_svg" equiv-text="&lt;/svg&gt;"/> Profile </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">125,130</context>
+        </context-group>
+      
+        <target>Profil</target>
+      </trans-unit>
+      <trans-unit id="nav.signature" datatype="html">
+        <source><x id="START_TAG__SVG_SVG" ctype="x-_svg_svg" equiv-text="&lt;svg viewBox=&quot;0 0 24 24&quot; class=&quot;h-4 w-4 text-slate-400&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.8&quot;&gt;"/><x id="START_TAG__SVG_PATH" ctype="x-_svg_path" equiv-text="&lt;path d=&quot;M4 20h16M6 16l9.5-9.5a2.1 2.1 0 0 1 3 3L9 19l-4 1 1-4Z&quot; /&gt;"/><x id="CLOSE_TAG__SVG_PATH" ctype="x-_svg_path" equiv-text="&lt;path d=&quot;M4 20h16M6 16l9.5-9.5a2.1 2.1 0 0 1 3 3L9 19l-4 1 1-4Z&quot; /&gt;"/><x id="CLOSE_TAG__SVG_SVG" ctype="x-_svg_svg" equiv-text="&lt;/svg&gt;"/> Signature </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">137,141</context>
+        </context-group>
+      
+        <target>Signatur</target>
+      </trans-unit>
+      <trans-unit id="nav.administration" datatype="html">
+        <source><x id="START_TAG__SVG_SVG" ctype="x-_svg_svg" equiv-text="&lt;svg viewBox=&quot;0 0 24 24&quot; class=&quot;h-4 w-4 text-slate-400&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.8&quot;&gt;"/><x id="START_TAG__SVG_PATH" ctype="x-_svg_path" equiv-text="&lt;path d=&quot;M12 3 4 6v5c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V6l-8-3Z&quot; /&gt;"/><x id="CLOSE_TAG__SVG_PATH" ctype="x-_svg_path" equiv-text="&lt;path d=&quot;M12 3 4 6v5c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V6l-8-3Z&quot; /&gt;"/><x id="CLOSE_TAG__SVG_SVG" ctype="x-_svg_svg" equiv-text="&lt;/svg&gt;"/> Administration </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">149,152</context>
+        </context-group>
+      
+        <target>Verwaltung</target>
+      </trans-unit>
+      <trans-unit id="nav.appearance" datatype="html">
+        <source> Appearance </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">158,159</context>
+        </context-group>
+      
+        <target>Darstellung</target>
+      </trans-unit>
+      <trans-unit id="nav.themeMobile" datatype="html">
+        <source>Theme</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">165</context>
+        </context-group>
+      
+        <target>Design</target>
+      </trans-unit>
+      <trans-unit id="nav.languageMobile" datatype="html">
+        <source>Language</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">175,176</context>
+        </context-group>
+      
+        <target>Sprache</target>
+      </trans-unit>
+      <trans-unit id="nav.actingAs" datatype="html">
+        <source> acting as <x id="INTERPOLATION" equiv-text="{{ auth.impersonating() }}"/> (stop) </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">191,192</context>
+        </context-group>
+      
+        <target>handelnd als <x id="INTERPOLATION" equiv-text="{{ auth.impersonating() }}"/> (beenden)</target>
+      </trans-unit>
+      <trans-unit id="nav.signOut" datatype="html">
+        <source><x id="START_TAG__SVG_SVG" ctype="x-_svg_svg" equiv-text="&lt;svg viewBox=&quot;0 0 24 24&quot; class=&quot;h-4 w-4&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.8&quot;&gt;"/><x id="START_TAG__SVG_PATH" ctype="x-_svg_path" equiv-text="&lt;path d=&quot;M14 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h7a2 2 0 0 0 2-2v-3&quot; /&gt;"/><x id="CLOSE_TAG__SVG_PATH" ctype="x-_svg_path" equiv-text="&lt;path d=&quot;M9 12h12m0 0-3-3m3 3-3 3&quot; /&gt;"/><x id="START_TAG__SVG_PATH_1" ctype="x-_svg_path_1" equiv-text="&lt;path d=&quot;M9 12h12m0 0-3-3m3 3-3 3&quot; /&gt;"/><x id="CLOSE_TAG__SVG_PATH" ctype="x-_svg_path" equiv-text="&lt;path d=&quot;M9 12h12m0 0-3-3m3 3-3 3&quot; /&gt;"/><x id="CLOSE_TAG__SVG_SVG" ctype="x-_svg_svg" equiv-text="&lt;/svg&gt;"/> Sign out </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">202,207</context>
+        </context-group>
+      
+        <target>Abmelden</target>
+      </trans-unit>
+      <trans-unit id="app.loading" datatype="html">
+        <source>Loading</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.html</context>
+          <context context-type="linenumber">223</context>
+        </context-group>
+      
+        <target>Laden</target>
+      </trans-unit>
+      <trans-unit id="title.dashboard" datatype="html">
+        <source>Dashboard</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">23</context>
+        </context-group>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">32</context>
+        </context-group>
+      
+        <target>Übersicht</target>
+      </trans-unit>
+      <trans-unit id="title.mail" datatype="html">
+        <source>Mail</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">42</context>
+        </context-group>
+      
+        <target>E-Mail</target>
+      </trans-unit>
+      <trans-unit id="title.compose" datatype="html">
+        <source>Compose</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">47</context>
+        </context-group>
+      
+        <target>Verfassen</target>
+      </trans-unit>
+      <trans-unit id="title.rules" datatype="html">
+        <source>Rules</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">52</context>
+        </context-group>
+      
+        <target>Regeln</target>
+      </trans-unit>
+      <trans-unit id="title.signature" datatype="html">
+        <source>Signature</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">57</context>
+        </context-group>
+      
+        <target>Signatur</target>
+      </trans-unit>
+      <trans-unit id="title.import" datatype="html">
+        <source>Import</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">66</context>
+        </context-group>
+      
+        <target>Import</target>
+      </trans-unit>
+      <trans-unit id="title.importImap" datatype="html">
+        <source>Import from IMAP</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">71</context>
+        </context-group>
+      
+        <target>Aus IMAP importieren</target>
+      </trans-unit>
+      <trans-unit id="title.importPst" datatype="html">
+        <source>Import from PST</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">77</context>
+        </context-group>
+      
+        <target>Aus PST importieren</target>
+      </trans-unit>
+      <trans-unit id="title.calendar" datatype="html">
+        <source>Calendar</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">87</context>
+        </context-group>
+      
+        <target>Kalender</target>
+      </trans-unit>
+      <trans-unit id="title.contacts" datatype="html">
+        <source>Contacts</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">93</context>
+        </context-group>
+      
+        <target>Kontakte</target>
+      </trans-unit>
+      <trans-unit id="title.meetings" datatype="html">
+        <source>Meetings</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">99</context>
+        </context-group>
+      
+        <target>Besprechungen</target>
+      </trans-unit>
+      <trans-unit id="title.profile" datatype="html">
+        <source>Profile</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">105</context>
+        </context-group>
+      
+        <target>Profil</target>
+      </trans-unit>
+      <trans-unit id="title.appAuth" datatype="html">
+        <source>Allow a mail client</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">111</context>
+        </context-group>
+      
+        <target>Einen Mail-Client erlauben</target>
+      </trans-unit>
+      <trans-unit id="title.room" datatype="html">
+        <source>Meeting room</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">119</context>
+        </context-group>
+      
+        <target>Besprechungsraum</target>
+      </trans-unit>
+      <trans-unit id="title.meeting" datatype="html">
+        <source>Meeting</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">129</context>
+        </context-group>
+      
+        <target>Besprechung</target>
+      </trans-unit>
+      <trans-unit id="title.login" datatype="html">
+        <source>Sign in</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">135</context>
+        </context-group>
+      
+        <target>Anmelden</target>
+      </trans-unit>
+      <trans-unit id="title.secondFactor" datatype="html">
+        <source>Two-factor authentication</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">141</context>
+        </context-group>
+      
+        <target>Zwei-Faktor-Authentifizierung</target>
+      </trans-unit>
+      <trans-unit id="title.forgotPassword" datatype="html">
+        <source>Forgot password</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">147</context>
+        </context-group>
+      
+        <target>Passwort vergessen</target>
+      </trans-unit>
+      <trans-unit id="title.resetPassword" datatype="html">
+        <source>Reset password</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">152</context>
+        </context-group>
+      
+        <target>Passwort zurücksetzen</target>
+      </trans-unit>
+      <trans-unit id="title.adminOrganizations" datatype="html">
+        <source>Organizations</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">162</context>
+        </context-group>
+      
+        <target>Organisationen</target>
+      </trans-unit>
+      <trans-unit id="title.adminOrganization" datatype="html">
+        <source>Organization</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">168</context>
+        </context-group>
+      
+        <target>Organisation</target>
+      </trans-unit>
+      <trans-unit id="title.adminThemes" datatype="html">
+        <source>Themes</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">173</context>
+        </context-group>
+      
+        <target>Designs</target>
+      </trans-unit>
+      <trans-unit id="title.adminDomains" datatype="html">
+        <source>Domains</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">178</context>
+        </context-group>
+      
+        <target>Domains</target>
+      </trans-unit>
+      <trans-unit id="title.adminUsers" datatype="html">
+        <source>Users</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">183</context>
+        </context-group>
+      
+        <target>Benutzer</target>
+      </trans-unit>
+      <trans-unit id="title.adminUserEdit" datatype="html">
+        <source>Edit mailbox</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">189</context>
+        </context-group>
+      
+        <target>Postfach bearbeiten</target>
+      </trans-unit>
+      <trans-unit id="title.adminAliases" datatype="html">
+        <source>Aliases</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">194</context>
+        </context-group>
+      
+        <target>Aliasse</target>
+      </trans-unit>
+      <trans-unit id="title.adminSharedMailboxes" datatype="html">
+        <source>Shared mailboxes</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">200</context>
+        </context-group>
+      
+        <target>Gemeinsame Postfächer</target>
+      </trans-unit>
+      <trans-unit id="title.adminImpersonation" datatype="html">
+        <source>Impersonation</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">206</context>
+        </context-group>
+      
+        <target>Impersonation</target>
+      </trans-unit>
+      <trans-unit id="title.adminQueue" datatype="html">
+        <source>Outbound queue</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">211</context>
+        </context-group>
+      
+        <target>Ausgehende Warteschlange</target>
+      </trans-unit>
+      <trans-unit id="title.adminAudit" datatype="html">
+        <source>Audit log</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">216</context>
+        </context-group>
+      
+        <target>Auditprotokoll</target>
+      </trans-unit>
+      <trans-unit id="title.adminPstImports" datatype="html">
+        <source>PST import</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">222</context>
+        </context-group>
+      
+        <target>PST-Import</target>
+      </trans-unit>
+      <trans-unit id="title.adminImports" datatype="html">
+        <source>Imports</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">227</context>
+        </context-group>
+      
+        <target>Importe</target>
+      </trans-unit>
+      <trans-unit id="theme.light" datatype="html">
+        <source>Light</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.ts</context>
+          <context context-type="linenumber">80</context>
+        </context-group>
+      
+        <target>Hell</target>
+      </trans-unit>
+      <trans-unit id="theme.dark" datatype="html">
+        <source>Dark</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.ts</context>
+          <context context-type="linenumber">82</context>
+        </context-group>
+      
+        <target>Dunkel</target>
+      </trans-unit>
+      <trans-unit id="theme.system" datatype="html">
+        <source>System</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.ts</context>
+          <context context-type="linenumber">84</context>
+        </context-group>
+      
+        <target>System</target>
+      </trans-unit>
+      <trans-unit id="contacts.title" datatype="html">
+        <source>Contacts</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">26,27</context>
+        </context-group>
+      
+        <target>Kontakte</target>
+      </trans-unit>
+      <trans-unit id="contacts.subtitle" datatype="html">
+        <source> Your personal book, books shared with you, and the organization directory. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">28,30</context>
+        </context-group>
+      
+        <target>Ihr eigenes Adressbuch, mit Ihnen geteilte Bücher und das Verzeichnis der Organisation.</target>
+      </trans-unit>
+      <trans-unit id="contacts.newBook" datatype="html">
+        <source> New address book </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">37,39</context>
+        </context-group>
+      
+        <target>Neues Adressbuch</target>
+      </trans-unit>
+      <trans-unit id="contacts.sharedWithYou" datatype="html">
+        <source>Shared with you</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">50,51</context>
+        </context-group>
+      
+        <target>Mit Ihnen geteilt</target>
+      </trans-unit>
+      <trans-unit id="contacts.offerLine" datatype="html">
+        <source><x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-medium&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ offer.bookOwner }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/> shared <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-medium&quot;&gt;"/><x id="INTERPOLATION_1" equiv-text="{{ offer.bookName }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/> with you <x id="START_TAG_SPAN_1" ctype="x-span_1" equiv-text="&lt;span class=&quot;text-xs text-slate-400&quot;&gt;"/>(<x id="INTERPOLATION_2" equiv-text="{{ levelLabel(offer.level) }}"/>)<x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">54,57</context>
+        </context-group>
+      
+        <target><x id="INTERPOLATION" equiv-text="{{ offer.bookOwner }}"/> hat <x id="INTERPOLATION_1" equiv-text="{{ offer.bookName }}"/> mit Ihnen geteilt (<x id="INTERPOLATION_2" equiv-text="{{ levelLabel(offer.level) }}"/>)</target>
+      </trans-unit>
+      <trans-unit id="contacts.accept" datatype="html">
+        <source> Accept </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">65,66</context>
+        </context-group>
+      
+        <target>Annehmen</target>
+      </trans-unit>
+      <trans-unit id="contacts.decline" datatype="html">
+        <source> Decline </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">73,74</context>
+        </context-group>
+      
+        <target>Ablehnen</target>
+      </trans-unit>
+      <trans-unit id="contacts.newBookTitle" datatype="html">
+        <source>New address book</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">83,84</context>
+        </context-group>
+      
+        <target>Neues Adressbuch</target>
+      </trans-unit>
+      <trans-unit id="contacts.name" datatype="html">
+        <source>Name</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">86,87</context>
+        </context-group>
+      
+        <target>Name</target>
+      </trans-unit>
+      <trans-unit id="contacts.bookNamePlaceholder" datatype="html">
+        <source>Team contacts</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">92,93</context>
+        </context-group>
+      
+        <target>Team-Kontakte</target>
+      </trans-unit>
+      <trans-unit id="contacts.descriptionOptional" datatype="html">
+        <source>Description (optional)</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">97,99</context>
+        </context-group>
+      
+        <target>Beschreibung (optional)</target>
+      </trans-unit>
+      <trans-unit id="contacts.create" datatype="html">
+        <source> Create </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">109,110</context>
+        </context-group>
+      
+        <target>Anlegen</target>
+      </trans-unit>
+      <trans-unit id="contacts.cancel" datatype="html">
+        <source> Cancel </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">115,116</context>
+        </context-group>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">468,469</context>
+        </context-group>
+      
+        <target>Abbrechen</target>
+      </trans-unit>
+      <trans-unit id="contacts.loading" datatype="html">
+        <source> Loading address books… </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">142,144</context>
+        </context-group>
+      
+        <target>Adressbücher werden geladen…</target>
+      </trans-unit>
+      <trans-unit id="contacts.newContact" datatype="html">
+        <source> New contact </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">165,166</context>
+        </context-group>
+      
+        <target>Neuer Kontakt</target>
+      </trans-unit>
+      <trans-unit id="contacts.share" datatype="html">
+        <source> Share </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">184,185</context>
+        </context-group>
+      
+        <target>Teilen</target>
+      </trans-unit>
+      <trans-unit id="contacts.rename" datatype="html">
+        <source> Rename </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">192,193</context>
+        </context-group>
+      
+        <target>Umbenennen</target>
+      </trans-unit>
+      <trans-unit id="contacts.delete" datatype="html">
+        <source> Delete </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">200,201</context>
+        </context-group>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">461,462</context>
+        </context-group>
+      
+        <target>Löschen</target>
+      </trans-unit>
+      <trans-unit id="contacts.searchPlaceholder" datatype="html">
+        <source>Search this book by name, address, phone or organization</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">210,211</context>
+        </context-group>
+      
+        <target>Dieses Adressbuch nach Name, Adresse, Telefon oder Organisation durchsuchen</target>
+      </trans-unit>
+      <trans-unit id="contacts.shareTitle" datatype="html">
+        <source>Share this address book</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">248,249</context>
+        </context-group>
+      
+        <target>Dieses Adressbuch teilen</target>
+      </trans-unit>
+      <trans-unit id="contacts.shareHint" datatype="html">
+        <source> The person or group is offered the book by email and must accept before it appears. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">250,251</context>
+        </context-group>
+      
+        <target>Die Person oder Gruppe bekommt das Buch per E-Mail angeboten und muss annehmen, bevor es erscheint.</target>
+      </trans-unit>
+      <trans-unit id="contacts.shareWith" datatype="html">
+        <source>Share with</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">254,255</context>
+        </context-group>
+      
+        <target>Teilen mit</target>
+      </trans-unit>
+      <trans-unit id="contacts.aPerson" datatype="html">
+        <source>A person</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">260,261</context>
+        </context-group>
+      
+        <target>Eine Person</target>
+      </trans-unit>
+      <trans-unit id="contacts.aGroup" datatype="html">
+        <source>A group</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">261,262</context>
+        </context-group>
+      
+        <target>Eine Gruppe</target>
+      </trans-unit>
+      <trans-unit id="contacts.address" datatype="html">
+        <source>Address</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">266,267</context>
+        </context-group>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">430,431</context>
+        </context-group>
+      
+        <target>Adresse</target>
+      </trans-unit>
+      <trans-unit id="contacts.group" datatype="html">
+        <source>Group</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">277,278</context>
+        </context-group>
+      
+        <target>Gruppe</target>
+      </trans-unit>
+      <trans-unit id="contacts.chooseGroup" datatype="html">
+        <source>Choose a group</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">283,284</context>
+        </context-group>
+      
+        <target>Gruppe auswählen</target>
+      </trans-unit>
+      <trans-unit id="contacts.access" datatype="html">
+        <source>Access</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">291,292</context>
+        </context-group>
+      
+        <target>Zugriff</target>
+      </trans-unit>
+      <trans-unit id="contacts.read" datatype="html">
+        <source>Read</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">297,298</context>
+        </context-group>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">648</context>
+        </context-group>
+      
+        <target>Lesen</target>
+      </trans-unit>
+      <trans-unit id="contacts.readWrite" datatype="html">
+        <source>Read and write</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">298,299</context>
+        </context-group>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">650</context>
+        </context-group>
+      
+        <target>Lesen und schreiben</target>
+      </trans-unit>
+      <trans-unit id="contacts.sendOffer" datatype="html">
+        <source> Send offer </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">308,309</context>
+        </context-group>
+      
+        <target>Angebot senden</target>
+      </trans-unit>
+      <trans-unit id="contacts.removeShare" datatype="html">
+        <source> Remove </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">327,328</context>
+        </context-group>
+      
+        <target>Entfernen</target>
+      </trans-unit>
+      <trans-unit id="contacts.chooseBook" datatype="html">
+        <source> Choose an address book. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">337,339</context>
+        </context-group>
+      
+        <target>Ein Adressbuch auswählen.</target>
+      </trans-unit>
+      <trans-unit id="contacts.displayName" datatype="html">
+        <source>Display name</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">350,351</context>
+        </context-group>
+      
+        <target>Anzeigename</target>
+      </trans-unit>
+      <trans-unit id="contacts.firstName" datatype="html">
+        <source>First name</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">354,355</context>
+        </context-group>
+      
+        <target>Vorname</target>
+      </trans-unit>
+      <trans-unit id="contacts.lastName" datatype="html">
+        <source>Last name</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">358,359</context>
+        </context-group>
+      
+        <target>Nachname</target>
+      </trans-unit>
+      <trans-unit id="contacts.emails" datatype="html">
+        <source>Email addresses</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">363,364</context>
+        </context-group>
+      
+        <target>E-Mail-Adressen</target>
+      </trans-unit>
+      <trans-unit id="contacts.work" datatype="html">
+        <source>Work</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">367,368</context>
+        </context-group>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">391,392</context>
+        </context-group>
+      
+        <target>Beruf</target>
+      </trans-unit>
+      <trans-unit id="contacts.home" datatype="html">
+        <source>Home</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">368,369</context>
+        </context-group>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">393,394</context>
+        </context-group>
+      
+        <target>Privat</target>
+      </trans-unit>
+      <trans-unit id="contacts.other" datatype="html">
+        <source>Other</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">369,370</context>
+        </context-group>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">395,396</context>
+        </context-group>
+      
+        <target>Sonstige</target>
+      </trans-unit>
+      <trans-unit id="contacts.removeEmail" datatype="html">
+        <source>Remove</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">378,380</context>
+        </context-group>
+      
+        <target>Entfernen</target>
+      </trans-unit>
+      <trans-unit id="contacts.addEmail" datatype="html">
+        <source> + Add email </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">382,383</context>
+        </context-group>
+      
+        <target>+ E-Mail hinzufügen</target>
+      </trans-unit>
+      <trans-unit id="contacts.phones" datatype="html">
+        <source>Phone numbers</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">387,388</context>
+        </context-group>
+      
+        <target>Telefonnummern</target>
+      </trans-unit>
+      <trans-unit id="contacts.mobile" datatype="html">
+        <source>Mobile</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">392,393</context>
+        </context-group>
+      
+        <target>Mobil</target>
+      </trans-unit>
+      <trans-unit id="contacts.fax" datatype="html">
+        <source>Fax</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">394,395</context>
+        </context-group>
+      
+        <target>Fax</target>
+      </trans-unit>
+      <trans-unit id="contacts.removePhone" datatype="html">
+        <source>Remove</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">404,406</context>
+        </context-group>
+      
+        <target>Entfernen</target>
+      </trans-unit>
+      <trans-unit id="contacts.addPhone" datatype="html">
+        <source> + Add phone </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">408,409</context>
+        </context-group>
+      
+        <target>+ Telefonnummer hinzufügen</target>
+      </trans-unit>
+      <trans-unit id="contacts.organization" datatype="html">
+        <source>Organization</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">413,414</context>
+        </context-group>
+      
+        <target>Organisation</target>
+      </trans-unit>
+      <trans-unit id="contacts.department" datatype="html">
+        <source>Department</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">417,418</context>
+        </context-group>
+      
+        <target>Abteilung</target>
+      </trans-unit>
+      <trans-unit id="contacts.jobTitle" datatype="html">
+        <source>Job title</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">421,422</context>
+        </context-group>
+      
+        <target>Position</target>
+      </trans-unit>
+      <trans-unit id="contacts.website" datatype="html">
+        <source>Website</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">425,426</context>
+        </context-group>
+      
+        <target>Webseite</target>
+      </trans-unit>
+      <trans-unit id="contacts.street" datatype="html">
+        <source>Street</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">432</context>
+        </context-group>
+      
+        <target>Straße</target>
+      </trans-unit>
+      <trans-unit id="contacts.city" datatype="html">
+        <source>City</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">433</context>
+        </context-group>
+      
+        <target>Ort</target>
+      </trans-unit>
+      <trans-unit id="contacts.region" datatype="html">
+        <source>State / region</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">434</context>
+        </context-group>
+      
+        <target>Bundesland / Region</target>
+      </trans-unit>
+      <trans-unit id="contacts.postalCode" datatype="html">
+        <source>Postal code</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">435</context>
+        </context-group>
+      
+        <target>Postleitzahl</target>
+      </trans-unit>
+      <trans-unit id="contacts.country" datatype="html">
+        <source>Country</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">436</context>
+        </context-group>
+      
+        <target>Land</target>
+      </trans-unit>
+      <trans-unit id="contacts.birthday" datatype="html">
+        <source>Birthday</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">441,442</context>
+        </context-group>
+      
+        <target>Geburtstag</target>
+      </trans-unit>
+      <trans-unit id="contacts.notes" datatype="html">
+        <source>Notes</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">445,446</context>
+        </context-group>
+      
+        <target>Notizen</target>
+      </trans-unit>
+      <trans-unit id="contacts.save" datatype="html">
+        <source> Save </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">454,455</context>
+        </context-group>
+      
+        <target>Speichern</target>
+      </trans-unit>
+      <trans-unit id="contacts.noName" datatype="html">
+        <source>(no name)</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">536</context>
+        </context-group>
+      
+        <target>(kein Name)</target>
+      </trans-unit>
+      <trans-unit id="contacts.noMatch" datatype="html">
+        <source>No contact matches that.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">537</context>
+        </context-group>
+      
+        <target>Dazu passt kein Kontakt.</target>
+      </trans-unit>
+      <trans-unit id="contacts.emptyBook" datatype="html">
+        <source>This book has no contacts yet.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">538</context>
+        </context-group>
+      
+        <target>Dieses Adressbuch hat noch keine Kontakte.</target>
+      </trans-unit>
+      <trans-unit id="contacts.editContact" datatype="html">
+        <source>Edit contact</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">539</context>
+        </context-group>
+      
+        <target>Kontakt bearbeiten</target>
+      </trans-unit>
+      <trans-unit id="contacts.newContactTitle" datatype="html">
+        <source>New contact</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">540</context>
+        </context-group>
+      
+        <target>Neuer Kontakt</target>
+      </trans-unit>
+      <trans-unit id="contacts.scopePersonal" datatype="html">
+        <source>Personal</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">635</context>
+        </context-group>
+      
+        <target>Persönlich</target>
+      </trans-unit>
+      <trans-unit id="contacts.scopeOrganization" datatype="html">
+        <source>Organization</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">637</context>
+        </context-group>
+      
+        <target>Organisation</target>
+      </trans-unit>
+      <trans-unit id="contacts.scopeSharedByYou" datatype="html">
+        <source>Shared by you</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">640</context>
+        </context-group>
+      
+        <target>Von Ihnen geteilt</target>
+      </trans-unit>
+      <trans-unit id="contacts.scopeSharedWithYou" datatype="html">
+        <source>Shared with you</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">641</context>
+        </context-group>
+      
+        <target>Mit Ihnen geteilt</target>
+      </trans-unit>
+      <trans-unit id="contacts.statusPending" datatype="html">
+        <source>Pending</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">659</context>
+        </context-group>
+      
+        <target>Offen</target>
+      </trans-unit>
+      <trans-unit id="contacts.statusAccepted" datatype="html">
+        <source>Accepted</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">661</context>
+        </context-group>
+      
+        <target>Angenommen</target>
+      </trans-unit>
+      <trans-unit id="contacts.statusDeclined" datatype="html">
+        <source>Declined</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">663</context>
+        </context-group>
+      
+        <target>Abgelehnt</target>
+      </trans-unit>
+      <trans-unit id="contacts.groupWithId" datatype="html">
+        <source>Group <x id="PH" equiv-text="id ?? &apos;&apos;"/></source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">670</context>
+        </context-group>
+      
+        <target>Gruppe <x id="PH" equiv-text="id ?? &apos;&apos;"/></target>
+      </trans-unit>
+      <trans-unit id="contacts.updated" datatype="html">
+        <source>Contact updated.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">777</context>
+        </context-group>
+      
+        <target>Kontakt aktualisiert.</target>
+      </trans-unit>
+      <trans-unit id="contacts.added" datatype="html">
+        <source>Contact added.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">778</context>
+        </context-group>
+      
+        <target>Kontakt hinzugefügt.</target>
+      </trans-unit>
+      <trans-unit id="contacts.deleteContactConfirm" datatype="html">
+        <source>Delete this contact?</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">792</context>
+        </context-group>
+      
+        <target>Diesen Kontakt löschen?</target>
+      </trans-unit>
+      <trans-unit id="contacts.deleted" datatype="html">
+        <source>Contact deleted.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">796</context>
+        </context-group>
+      
+        <target>Kontakt gelöscht.</target>
+      </trans-unit>
+      <trans-unit id="contacts.bookCreated" datatype="html">
+        <source><x id="PH" equiv-text="book.name"/> was created.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">812</context>
+        </context-group>
+      
+        <target><x id="PH" equiv-text="book.name"/> wurde angelegt.</target>
+      </trans-unit>
+      <trans-unit id="contacts.renamePrompt" datatype="html">
+        <source>New name for the address book</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">824</context>
+        </context-group>
+      
+        <target>Neuer Name für das Adressbuch</target>
+      </trans-unit>
+      <trans-unit id="contacts.deleteBookConfirm" datatype="html">
+        <source>Delete the address book &quot;<x id="PH" equiv-text="book.name"/>&quot; and all its contacts?</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">838</context>
+        </context-group>
+      
+        <target>Adressbuch "<x id="PH" equiv-text="book.name"/>" und alle seine Kontakte löschen?</target>
+      </trans-unit>
+      <trans-unit id="contacts.bookDeleted" datatype="html">
+        <source><x id="PH" equiv-text="book.name"/> was deleted.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">842</context>
+        </context-group>
+      
+        <target><x id="PH" equiv-text="book.name"/> wurde gelöscht.</target>
+      </trans-unit>
+      <trans-unit id="contacts.offerSent" datatype="html">
+        <source>Offer sent. It appears for them once they accept.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">870</context>
+        </context-group>
+      
+        <target>Angebot gesendet. Es erscheint für sie, sobald sie annehmen.</target>
+      </trans-unit>
+      <trans-unit id="contacts.bookAccepted" datatype="html">
+        <source>Address book accepted.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">900</context>
+        </context-group>
+      
+        <target>Adressbuch angenommen.</target>
+      </trans-unit>
+      <trans-unit id="contacts.offerDeclined" datatype="html">
+        <source>Offer declined.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/contacts/contacts.component.ts</context>
+          <context context-type="linenumber">901</context>
+        </context-group>
+      
+        <target>Angebot abgelehnt.</target>
+      </trans-unit>
+      <trans-unit id="adminNav.domains" datatype="html">
+        <source>Domains</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">10</context>
+        </context-group>
+      
+        <target>Domains</target>
+      </trans-unit>
+      <trans-unit id="adminNav.organizations" datatype="html">
+        <source>Organizations</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">11</context>
+        </context-group>
+      
+        <target>Organisationen</target>
+      </trans-unit>
+      <trans-unit id="adminNav.themes" datatype="html">
+        <source>Themes</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">12</context>
+        </context-group>
+      
+        <target>Designs</target>
+      </trans-unit>
+      <trans-unit id="adminNav.users" datatype="html">
+        <source>Users</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">13</context>
+        </context-group>
+      
+        <target>Benutzer</target>
+      </trans-unit>
+      <trans-unit id="adminNav.aliases" datatype="html">
+        <source>Aliases</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">14</context>
+        </context-group>
+      
+        <target>Aliasse</target>
+      </trans-unit>
+      <trans-unit id="adminNav.sharedMailboxes" datatype="html">
+        <source>Shared mailboxes</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">15</context>
+        </context-group>
+      
+        <target>Gemeinsame Postfächer</target>
+      </trans-unit>
+      <trans-unit id="adminNav.imports" datatype="html">
+        <source>Imports</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">16</context>
+        </context-group>
+      
+        <target>Importe</target>
+      </trans-unit>
+      <trans-unit id="adminNav.impersonation" datatype="html">
+        <source>Impersonation</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">17</context>
+        </context-group>
+      
+        <target>Impersonation</target>
+      </trans-unit>
+      <trans-unit id="adminNav.queue" datatype="html">
+        <source>Outbound queue</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">18</context>
+        </context-group>
+      
+        <target>Ausgehende Warteschlange</target>
+      </trans-unit>
+      <trans-unit id="adminNav.audit" datatype="html">
+        <source>Audit log</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/admin/admin-nav.component.ts</context>
+          <context context-type="linenumber">19</context>
+        </context-group>
+      
+        <target>Auditprotokoll</target>
+      </trans-unit>
+      <trans-unit id="partStat.needsAction" datatype="html">
+        <source>No answer</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/meetings/meetings.ui.ts</context>
+          <context context-type="linenumber">6</context>
+        </context-group>
+      
+        <target>Keine Antwort</target>
+      </trans-unit>
+      <trans-unit id="partStat.accepted" datatype="html">
+        <source>Accepted</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/meetings/meetings.ui.ts</context>
+          <context context-type="linenumber">7</context>
+        </context-group>
+      
+        <target>Angenommen</target>
+      </trans-unit>
+      <trans-unit id="partStat.declined" datatype="html">
+        <source>Declined</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/meetings/meetings.ui.ts</context>
+          <context context-type="linenumber">8</context>
+        </context-group>
+      
+        <target>Abgelehnt</target>
+      </trans-unit>
+      <trans-unit id="partStat.tentative" datatype="html">
+        <source>Maybe</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/core/meetings/meetings.ui.ts</context>
+          <context context-type="linenumber">9</context>
+        </context-group>
+      
+        <target>Vielleicht</target>
+      </trans-unit>
+      <trans-unit id="dashboard.mail" datatype="html">
+        <source>Mail</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/dashboard/dashboard.component.ts</context>
+          <context context-type="linenumber">16,17</context>
+        </context-group>
+      
+        <target>E-Mail</target>
+      </trans-unit>
+      <trans-unit id="dashboard.mailHint" datatype="html">
+        <source>Read, compose, and organize your email.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/dashboard/dashboard.component.ts</context>
+          <context context-type="linenumber">17,19</context>
+        </context-group>
+      
+        <target>Lesen, verfassen und sortieren Sie Ihre E-Mails.</target>
+      </trans-unit>
+      <trans-unit id="dashboard.calendar" datatype="html">
+        <source>Calendar</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/dashboard/dashboard.component.ts</context>
+          <context context-type="linenumber">20,21</context>
+        </context-group>
+      
+        <target>Kalender</target>
+      </trans-unit>
+      <trans-unit id="dashboard.calendarHint" datatype="html">
+        <source>Manage events, free/busy, and scheduling.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/dashboard/dashboard.component.ts</context>
+          <context context-type="linenumber">21,23</context>
+        </context-group>
+      
+        <target>Termine verwalten, free/busy und Terminplanung.</target>
+      </trans-unit>
+      <trans-unit id="dashboard.meetings" datatype="html">
+        <source>Meetings</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/dashboard/dashboard.component.ts</context>
+          <context context-type="linenumber">24,25</context>
+        </context-group>
+      
+        <target>Besprechungen</target>
+      </trans-unit>
+      <trans-unit id="dashboard.meetingsHint" datatype="html">
+        <source>Invite people by email and chat in the meeting room.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/dashboard/dashboard.component.ts</context>
+          <context context-type="linenumber">25,28</context>
+        </context-group>
+      
+        <target>Laden Sie Personen per E-Mail ein und chatten Sie im Besprechungsraum.</target>
+      </trans-unit>
+      <trans-unit id="login.title" datatype="html">
+        <source>Sign in</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/login/login.component.ts</context>
+          <context context-type="linenumber">13,14</context>
+        </context-group>
+      
+        <target>Anmelden</target>
+      </trans-unit>
+      <trans-unit id="login.subtitle" datatype="html">
+        <source>Use your linchange account to continue.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/login/login.component.ts</context>
+          <context context-type="linenumber">14,16</context>
+        </context-group>
+      
+        <target>Nutzen Sie Ihr linchange-Konto, um fortzufahren.</target>
+      </trans-unit>
+      <trans-unit id="login.email" datatype="html">
+        <source>Email</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/login/login.component.ts</context>
+          <context context-type="linenumber">22,23</context>
+        </context-group>
+      
+        <target>E-Mail</target>
+      </trans-unit>
+      <trans-unit id="login.password" datatype="html">
+        <source>Password</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/login/login.component.ts</context>
+          <context context-type="linenumber">33,35</context>
+        </context-group>
+      
+        <target>Passwort</target>
+      </trans-unit>
+      <trans-unit id="login.signingIn" datatype="html">
+        <source>Signing in…</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/login/login.component.ts</context>
+          <context context-type="linenumber">48,50</context>
+        </context-group>
+      
+        <target>Anmeldung…</target>
+      </trans-unit>
+      <trans-unit id="login.signIn" datatype="html">
+        <source>Sign in</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/login/login.component.ts</context>
+          <context context-type="linenumber">50,52</context>
+        </context-group>
+      
+        <target>Anmelden</target>
+      </trans-unit>
+      <trans-unit id="login.forgot" datatype="html">
+        <source>Forgot your password?</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/login/login.component.ts</context>
+          <context context-type="linenumber">59,62</context>
+        </context-group>
+      
+        <target>Passwort vergessen?</target>
+      </trans-unit>
+      <trans-unit id="call.enableSound" datatype="html">
+        <source>Click to enable sound</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">48,51</context>
+        </context-group>
+      
+        <target>Klicken, um Ton zu aktivieren</target>
+      </trans-unit>
+      <trans-unit id="call.preJoinTitle" datatype="html">
+        <source>Ready to join?</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">76,77</context>
+        </context-group>
+      
+        <target>Bereit beizutreten?</target>
+      </trans-unit>
+      <trans-unit id="call.preJoinHint" datatype="html">
+        <source> Your browser needs a click before it will start the camera, microphone and sound. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">78,80</context>
+        </context-group>
+      
+        <target>Der Browser braucht einen Klick, bevor Kamera, Mikrofon und Ton starten.</target>
+      </trans-unit>
+      <trans-unit id="call.joining" datatype="html">
+        <source>Joining…</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">92,93</context>
+        </context-group>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">288,289</context>
+        </context-group>
+      
+        <target>Beitreten…</target>
+      </trans-unit>
+      <trans-unit id="call.joinNow" datatype="html">
+        <source>Join now</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">94,96</context>
+        </context-group>
+      
+        <target>Jetzt beitreten</target>
+      </trans-unit>
+      <trans-unit id="call.backDetails" datatype="html">
+        <source> Back to details </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">104,106</context>
+        </context-group>
+      
+        <target>Zurück zu den Details</target>
+      </trans-unit>
+      <trans-unit id="call.inCall" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ participants().length }}"/> in call</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">128,129</context>
+        </context-group>
+      
+        <target><x id="INTERPOLATION" equiv-text="{{ participants().length }}"/> in der Besprechung</target>
+      </trans-unit>
+      <trans-unit id="call.copyLink" datatype="html">
+        <source> Copy link </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">142,144</context>
+        </context-group>
+      
+        <target>Link kopieren</target>
+      </trans-unit>
+      <trans-unit id="call.details" datatype="html">
+        <source> Details </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">150,152</context>
+        </context-group>
+      
+        <target>Details</target>
+      </trans-unit>
+      <trans-unit id="call.retryMedia" datatype="html">
+        <source> Try camera and microphone </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">162,163</context>
+        </context-group>
+      
+        <target>Kamera und Mikrofon erneut versuchen</target>
+      </trans-unit>
+      <trans-unit id="call.yourScreen" datatype="html">
+        <source>Your screen</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">193,194</context>
+        </context-group>
+      
+        <target>Ihr Bildschirm</target>
+      </trans-unit>
+      <trans-unit id="call.someoneSharing" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ screen.member }}"/> is sharing</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">195,196</context>
+        </context-group>
+      
+        <target><x id="INTERPOLATION" equiv-text="{{ screen.member }}"/> teilt</target>
+      </trans-unit>
+      <trans-unit id="call.viewOnly" datatype="html">
+        <source>· view only</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">197,198</context>
+        </context-group>
+      
+        <target>· nur ansehen</target>
+      </trans-unit>
+      <trans-unit id="call.cameraOffLabel" datatype="html">
+        <source>Camera off</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">223,225</context>
+        </context-group>
+      
+        <target>Kamera aus</target>
+      </trans-unit>
+      <trans-unit id="call.you" datatype="html">
+        <source>You</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">233,234</context>
+        </context-group>
+      
+        <target>Sie</target>
+      </trans-unit>
+      <trans-unit id="call.floor" datatype="html">
+        <source>floor</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">240,241</context>
+        </context-group>
+      
+        <target>Rederecht</target>
+      </trans-unit>
+      <trans-unit id="call.raisedHands" datatype="html">
+        <source>Raised hands</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">256,257</context>
+        </context-group>
+      
+        <target>Gehobene Hände</target>
+      </trans-unit>
+      <trans-unit id="call.allowSpeak" datatype="html">
+        <source> Allow to speak </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">262,263</context>
+        </context-group>
+      
+        <target>Sprechen erlauben</target>
+      </trans-unit>
+      <trans-unit id="call.muteGuest" datatype="html">
+        <source> Mute </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">266,267</context>
+        </context-group>
+      
+        <target>Stumm</target>
+      </trans-unit>
+      <trans-unit id="call.webinarNote" datatype="html">
+        <source>One-way conference: only the presenter speaks.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">277,278</context>
+        </context-group>
+      
+        <target>Einweg-Konferenz: Nur der Präsentator spricht.</target>
+      </trans-unit>
+      <trans-unit id="call.hasFloor" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ floorSpeaker() }}"/> has the floor.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">279,280</context>
+        </context-group>
+      
+        <target><x id="INTERPOLATION" equiv-text="{{ floorSpeaker() }}"/> hat das Rederecht.</target>
+      </trans-unit>
+      <trans-unit id="call.join" datatype="html">
+        <source>Join call</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">290,292</context>
+        </context-group>
+      
+        <target>An der Besprechung teilnehmen</target>
+      </trans-unit>
+      <trans-unit id="call.mute" datatype="html">
+        <source>Mute</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">300,301</context>
+        </context-group>
+      
+        <target>Stumm</target>
+      </trans-unit>
+      <trans-unit id="call.unmute" datatype="html">
+        <source>Unmute</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">302,304</context>
+        </context-group>
+      
+        <target>Ton an</target>
+      </trans-unit>
+      <trans-unit id="call.camera" datatype="html">
+        <source>Camera</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">311,312</context>
+        </context-group>
+      
+        <target>Kamera</target>
+      </trans-unit>
+      <trans-unit id="call.cameraOff" datatype="html">
+        <source>Camera off</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">313,315</context>
+        </context-group>
+      
+        <target>Kamera aus</target>
+      </trans-unit>
+      <trans-unit id="call.lowerHand" datatype="html">
+        <source>Lower hand</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">323,324</context>
+        </context-group>
+      
+        <target>Hand senken</target>
+      </trans-unit>
+      <trans-unit id="call.raiseHand" datatype="html">
+        <source>Raise hand</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">325,327</context>
+        </context-group>
+      
+        <target>Hand heben</target>
+      </trans-unit>
+      <trans-unit id="call.stopShare" datatype="html">
+        <source>Stop share</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">342,343</context>
+        </context-group>
+      
+        <target>Freigabe beenden</target>
+      </trans-unit>
+      <trans-unit id="call.share" datatype="html">
+        <source>Share</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">344,346</context>
+        </context-group>
+      
+        <target>Teilen</target>
+      </trans-unit>
+      <trans-unit id="call.chat" datatype="html">
+        <source>Chat</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">357,358</context>
+        </context-group>
+      
+        <target>Chat</target>
+      </trans-unit>
+      <trans-unit id="call.leave" datatype="html">
+        <source>Leave</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">363,364</context>
+        </context-group>
+      
+        <target>Verlassen</target>
+      </trans-unit>
+      <trans-unit id="call.chatTitle" datatype="html">
+        <source>Chat</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">371,372</context>
+        </context-group>
+      
+        <target>Chat</target>
+      </trans-unit>
+      <trans-unit id="call.collapseChat" datatype="html">
+        <source>Collapse chat</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">372</context>
+        </context-group>
+      
+        <target>Chat schließen</target>
+      </trans-unit>
+      <trans-unit id="call.noMessages" datatype="html">
+        <source>No messages yet. Say something.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">387,389</context>
+        </context-group>
+      
+        <target>Noch keine Nachrichten. Schreiben Sie etwas.</target>
+      </trans-unit>
+      <trans-unit id="call.download" datatype="html">
+        <source> Download </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">416,417</context>
+        </context-group>
+      
+        <target>Herunterladen</target>
+      </trans-unit>
+      <trans-unit id="call.attachFile" datatype="html">
+        <source>Attach a file</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">436,437</context>
+        </context-group>
+      
+        <target>Datei anhängen</target>
+      </trans-unit>
+      <trans-unit id="call.attachFileTitle" datatype="html">
+        <source>Attach a file (up to 25 MB)</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">437,438</context>
+        </context-group>
+      
+        <target>Datei anhängen (bis 25 MB)</target>
+      </trans-unit>
+      <trans-unit id="call.messagePlaceholder" datatype="html">
+        <source>Message the room</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">451,452</context>
+        </context-group>
+      
+        <target>Nachricht an die Runde</target>
+      </trans-unit>
+      <trans-unit id="call.send" datatype="html">
+        <source> Send </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">457,458</context>
+        </context-group>
+      
+        <target>Senden</target>
+      </trans-unit>
+      <trans-unit id="call.expired" datatype="html">
+        <source>This meeting link has expired.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">686</context>
+        </context-group>
+      
+        <target>Dieser Besprechungslink ist abgelaufen.</target>
+      </trans-unit>
+      <trans-unit id="call.noRoom" datatype="html">
+        <source>This meeting has no room to join.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">878</context>
+        </context-group>
+      
+        <target>Diese Besprechung hat keinen Raum zum Beitreten.</target>
+      </trans-unit>
+      <trans-unit id="call.connectFailed" datatype="html">
+        <source>The call could not connect.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">886</context>
+        </context-group>
+      
+        <target>Die Verbindung konnte nicht hergestellt werden.</target>
+      </trans-unit>
+      <trans-unit id="call.noMic" datatype="html">
+        <source>No microphone is available, so you joined listen-only. You can still chat.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">924</context>
+        </context-group>
+      
+        <target>Kein Mikrofon verfügbar, daher sind Sie nur Zuhörer. Sie können weiterhin chatten.</target>
+      </trans-unit>
+      <trans-unit id="call.noDevices" datatype="html">
+        <source>No camera or microphone is available, so you joined listen-only. You can still chat.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">925</context>
+        </context-group>
+      
+        <target>Keine Kamera und kein Mikrofon verfügbar, daher sind Sie nur Zuhörer. Sie können weiterhin chatten.</target>
+      </trans-unit>
+      <trans-unit id="call.noCamera" datatype="html">
+        <source>No camera is available, so you joined with audio only.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">928</context>
+        </context-group>
+      
+        <target>Keine Kamera verfügbar, daher hören Sie nur.</target>
+      </trans-unit>
+      <trans-unit id="call.raiseForFloor" datatype="html">
+        <source>Raise your hand to ask the presenter for the floor.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">999</context>
+        </context-group>
+      
+        <target>Heben Sie die Hand, um den Präsentator um das Rederecht zu bitten.</target>
+      </trans-unit>
+      <trans-unit id="call.hostOnlyShare" datatype="html">
+        <source>Only the presenter can share a screen in a webinar.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">1034</context>
+        </context-group>
+      
+        <target>In einem Webinar darf nur der Präsentator den Bildschirm teilen.</target>
+      </trans-unit>
+      <trans-unit id="call.noDisplayMedia" datatype="html">
+        <source>This browser cannot share a screen.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">1038</context>
+        </context-group>
+      
+        <target>Dieser Browser kann keinen Bildschirm teilen.</target>
+      </trans-unit>
+      <trans-unit id="call.captureFailed" datatype="html">
+        <source>The screen could not be captured.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">1046</context>
+        </context-group>
+      
+        <target>Der Bildschirm konnte nicht erfasst werden.</target>
+      </trans-unit>
+      <trans-unit id="call.shareCancelled" datatype="html">
+        <source>Screen sharing was cancelled or refused.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">1061</context>
+        </context-group>
+      
+        <target>Die Bildschirmfreigabe wurde abgebrochen oder abgelehnt.</target>
+      </trans-unit>
+      <trans-unit id="call.connectionFailed" datatype="html">
+        <source>A call connection could not be established.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">1243</context>
+        </context-group>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/call-room.component.ts</context>
+          <context context-type="linenumber">1300</context>
+        </context-group>
+      
+        <target>Es konnte keine Verbindung zur Besprechung aufgebaut werden.</target>
+      </trans-unit>
+      <trans-unit id="meeting.loading" datatype="html">
+        <source>Loading the meeting…</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">48,49</context>
+        </context-group>
+      
+        <target>Besprechung wird geladen…</target>
+      </trans-unit>
+      <trans-unit id="meeting.signIn" datatype="html">
+        <source> Sign in </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">58,59</context>
+        </context-group>
+      
+        <target>Anmelden</target>
+      </trans-unit>
+      <trans-unit id="meeting.cancelled" datatype="html">
+        <source>Cancelled</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">67,69</context>
+        </context-group>
+      
+        <target>Abgesagt</target>
+      </trans-unit>
+      <trans-unit id="meeting.expired" datatype="html">
+        <source>Expired</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">70,72</context>
+        </context-group>
+      
+        <target>Abgelaufen</target>
+      </trans-unit>
+      <trans-unit id="meeting.answeringAs" datatype="html">
+        <source> You are answering as <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-medium text-slate-700&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ inviteeTo() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/> — the link from your invitation. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">75,77</context>
+        </context-group>
+      
+        <target>Sie antworten als <x id="INTERPOLATION" equiv-text="{{ inviteeTo() }}"/> — über den Link aus Ihrer Einladung.</target>
+      </trans-unit>
+      <trans-unit id="meeting.organiser" datatype="html">
+        <source>You are the organiser.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">79,81</context>
+        </context-group>
+      
+        <target>Sie sind der Präsentator.</target>
+      </trans-unit>
+      <trans-unit id="meeting.when" datatype="html">
+        <source>When</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">98,99</context>
+        </context-group>
+      
+        <target>Wann</target>
+      </trans-unit>
+      <trans-unit id="meeting.where" datatype="html">
+        <source>Where</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">102,103</context>
+        </context-group>
+      
+        <target>Wo</target>
+      </trans-unit>
+      <trans-unit id="meeting.organizer" datatype="html">
+        <source>Organiser</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">106,107</context>
+        </context-group>
+      
+        <target>Organisator</target>
+      </trans-unit>
+      <trans-unit id="meeting.about" datatype="html">
+        <source>About</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">116,117</context>
+        </context-group>
+      
+        <target>Über</target>
+      </trans-unit>
+      <trans-unit id="meeting.roomLink" datatype="html">
+        <source>Room link</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">121,122</context>
+        </context-group>
+      
+        <target>Link zum Raum</target>
+      </trans-unit>
+      <trans-unit id="meeting.copy" datatype="html">
+        <source> Copy </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">130,131</context>
+        </context-group>
+      
+        <target>Kopieren</target>
+      </trans-unit>
+      <trans-unit id="meeting.yourAnswer" datatype="html">
+        <source>Your answer</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">142,143</context>
+        </context-group>
+      
+        <target>Ihre Antwort</target>
+      </trans-unit>
+      <trans-unit id="meeting.answered" datatype="html">
+        <source> You answered <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-medium text-slate-700&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ label(myAnswer()!) }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>. You can change it until the meeting is over. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">146,148</context>
+        </context-group>
+      
+        <target>Sie haben <x id="INTERPOLATION" equiv-text="{{ label(myAnswer()!) }}"/> geantwortet. Sie können es ändern, bis die Besprechung vorbei ist.</target>
+      </trans-unit>
+      <trans-unit id="meeting.answerHint" datatype="html">
+        <source>The organiser sees your answer as soon as you give one.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">150,152</context>
+        </context-group>
+      
+        <target>Die Antwort erscheint sofort für den Organisator.</target>
+      </trans-unit>
+      <trans-unit id="meeting.calledOff" datatype="html">
+        <source> This meeting was called off by the organiser. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">174,176</context>
+        </context-group>
+      
+        <target>Diese Besprechung wurde vom Organisator abgesagt.</target>
+      </trans-unit>
+      <trans-unit id="meeting.expiredNote" datatype="html">
+        <source> This meeting link has expired. The organiser still has the record. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">179,181</context>
+        </context-group>
+      
+        <target>Dieser Besprechungslink ist abgelaufen. Der Organisator hat die Aufzeichnung noch.</target>
+      </trans-unit>
+      <trans-unit id="meeting.invitations" datatype="html">
+        <source>Invitations</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">186,187</context>
+        </context-group>
+      
+        <target>Einladungen</target>
+      </trans-unit>
+      <trans-unit id="meeting.invitationsHint" datatype="html">
+        <source> <x id="INTERPOLATION" equiv-text="{{ m.attendees.length }}"/> guests, <x id="INTERPOLATION_1" equiv-text="{{ acceptedCount(m) }}"/> accepted. Resending mails everybody their own link again — answers already given stand. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">188,190</context>
+        </context-group>
+      
+        <target><x id="INTERPOLATION" equiv-text="{{ m.attendees.length }}"/> Gäste, <x id="INTERPOLATION_1" equiv-text="{{ acceptedCount(m) }}"/> angenommen. Ein erneutes Senden mailt jedem seinen Link erneut — gegebene Antworten bleiben.</target>
+      </trans-unit>
+      <trans-unit id="meeting.cancelMeeting" datatype="html">
+        <source> Cancel meeting </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">207,208</context>
+        </context-group>
+      
+        <target>Besprechung absagen</target>
+      </trans-unit>
+      <trans-unit id="meeting.guests" datatype="html">
+        <source>Guests</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">215,216</context>
+        </context-group>
+      
+        <target>Gäste</target>
+      </trans-unit>
+      <trans-unit id="meeting.guest" datatype="html">
+        <source>Guest</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">219,220</context>
+        </context-group>
+      
+        <target>Gast</target>
+      </trans-unit>
+      <trans-unit id="meeting.answer" datatype="html">
+        <source>Answer</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">220,222</context>
+        </context-group>
+      
+        <target>Antworten</target>
+      </trans-unit>
+      <trans-unit id="meeting.you" datatype="html">
+        <source>you</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">233,234</context>
+        </context-group>
+      
+        <target>Sie</target>
+      </trans-unit>
+      <trans-unit id="meeting.joinTitle" datatype="html">
+        <source>Join the meeting</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">255,256</context>
+        </context-group>
+      
+        <target>An der Besprechung teilnehmen</target>
+      </trans-unit>
+      <trans-unit id="meeting.joinHint" datatype="html">
+        <source> The video room opens on its own page. Camera and microphone are optional. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">257,258</context>
+        </context-group>
+      
+        <target>Der Videoraum öffnet sich auf einer eigenen Seite. Kamera und Mikrofon sind optional.</target>
+      </trans-unit>
+      <trans-unit id="meeting.join" datatype="html">
+        <source> Join meeting </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">267,268</context>
+        </context-group>
+      
+        <target>Besprechung beitreten</target>
+      </trans-unit>
+      <trans-unit id="meeting.linkBelow" datatype="html">
+        <source>The link below</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">361</context>
+        </context-group>
+      
+        <target>Der Link unten</target>
+      </trans-unit>
+      <trans-unit id="meeting.sending" datatype="html">
+        <source>Sending…</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">362</context>
+        </context-group>
+      
+        <target>Senden…</target>
+      </trans-unit>
+      <trans-unit id="meeting.resend" datatype="html">
+        <source>Resend invitations</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">363</context>
+        </context-group>
+      
+        <target>Einladungen erneut senden</target>
+      </trans-unit>
+      <trans-unit id="meeting.answeredNote" datatype="html">
+        <source>Answered: <x id="PH" equiv-text="partStatLabel(partStat)"/>. The organiser sees it straight away.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">486</context>
+        </context-group>
+      
+        <target>Antwort: <x id="PH" equiv-text="partStatLabel(partStat)"/>. Der Organisator sieht sie sofort.</target>
+      </trans-unit>
+      <trans-unit id="meeting.cancelledNote" datatype="html">
+        <source>Meeting cancelled. Every guest has been mailed the cancellation.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meeting-room.component.ts</context>
+          <context context-type="linenumber">528</context>
+        </context-group>
+      
+        <target>Besprechung abgesagt. Jeder Gast wurde per E-Mail informiert.</target>
+      </trans-unit>
+      <trans-unit id="meetings.title" datatype="html">
+        <source>Meetings</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">41,42</context>
+        </context-group>
+      
+        <target>Besprechungen</target>
+      </trans-unit>
+      <trans-unit id="meetings.intro" datatype="html">
+        <source> A meeting is a calendar event with an invitation: every guest is mailed a link that works whether or not they have an account here. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">43,45</context>
+        </context-group>
+      
+        <target>Eine Besprechung ist eine Kalenderveranstaltung mit Einladung: jeder Gast bekommt per E-Mail einen Link, der auch ohne Konto hier funktioniert.</target>
+      </trans-unit>
+      <trans-unit id="meetings.close" datatype="html">
+        <source>Close</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">53,55</context>
+        </context-group>
+      
+        <target>Schließen</target>
+      </trans-unit>
+      <trans-unit id="meetings.new" datatype="html">
+        <source>New meeting</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">55,57</context>
+        </context-group>
+      
+        <target>Neue Besprechung</target>
+      </trans-unit>
+      <trans-unit id="meetings.newTitle" datatype="html">
+        <source>New meeting</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">62,64</context>
+        </context-group>
+      
+        <target>Neue Besprechung</target>
+      </trans-unit>
+      <trans-unit id="meetings.titleLabel" datatype="html">
+        <source>Title</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">66,68</context>
+        </context-group>
+      
+        <target>Titel</target>
+      </trans-unit>
+      <trans-unit id="meetings.titlePlaceholder" datatype="html">
+        <source>Design review</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">71,72</context>
+        </context-group>
+      
+        <target>Design-Review</target>
+      </trans-unit>
+      <trans-unit id="meetings.date" datatype="html">
+        <source>Date</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">78,79</context>
+        </context-group>
+      
+        <target>Datum</target>
+      </trans-unit>
+      <trans-unit id="meetings.from" datatype="html">
+        <source>From</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">88,89</context>
+        </context-group>
+      
+        <target>Von</target>
+      </trans-unit>
+      <trans-unit id="meetings.to" datatype="html">
+        <source>To</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">97,98</context>
+        </context-group>
+      
+        <target>Bis</target>
+      </trans-unit>
+      <trans-unit id="meetings.guestsLabel" datatype="html">
+        <source> Guests <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-normal text-slate-400&quot;&gt;"/>— one per line, &quot;Bob &lt;bob@example.com&gt;&quot; or just the address<x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">109,110</context>
+        </context-group>
+      
+        <target>Gäste — einer pro Zeile, "Bob &lt;bob@example.com&gt;" oder nur die Adresse</target>
+      </trans-unit>
+      <trans-unit id="meetings.guestsPlaceholder" datatype="html">
+        <source>bob@example.com
+carol@outside.example</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">115,116</context>
+        </context-group>
+      
+        <target>bob@example.com carol@outside.example</target>
+      </trans-unit>
+      <trans-unit id="meetings.contactsLabel" datatype="html">
+        <source> Add from contacts <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-normal text-slate-400&quot;&gt;"/>— search your books and the organization directory<x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">126,128</context>
+        </context-group>
+      
+        <target>Aus Kontakten hinzufügen — Adressbücher und das Organisationsverzeichnis durchsuchen</target>
+      </trans-unit>
+      <trans-unit id="meetings.contactsPlaceholder" datatype="html">
+        <source>Name, address, phone or organization</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">135,136</context>
+        </context-group>
+      
+        <target>Name, Adresse, Telefon oder Organisation</target>
+      </trans-unit>
+      <trans-unit id="meetings.groupsLabel" datatype="html">
+        <source> Groups <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-normal text-slate-400&quot;&gt;"/>— invited whole, at whatever they hold when the invitation goes out<x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">173,174</context>
+        </context-group>
+      
+        <target>Gruppen — eingeladen als Ganzes, mit dem Inhalt zum Zeitpunkt der Einladung</target>
+      </trans-unit>
+      <trans-unit id="meetings.noGroups" datatype="html">
+        <source> Your organization has no groups — invite people by address above. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">201,202</context>
+        </context-group>
+      
+        <target>Ihre Organisation hat keine Gruppen — laden Sie Personen oben per Adresse ein.</target>
+      </trans-unit>
+      <trans-unit id="meetings.oneWay" datatype="html">
+        <source>One-way conference (webinar)</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">216,217</context>
+        </context-group>
+      
+        <target>Einweg-Konferenz (Webinar)</target>
+      </trans-unit>
+      <trans-unit id="meetings.oneWayHint" datatype="html">
+        <source> Only you speak. Guests stay muted and can raise a hand to ask for the floor. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">218,219</context>
+        </context-group>
+      
+        <target>Nur Sie sprechen. Gäste bleiben stumm und können die Hand heben, um das Rederecht zu bitten.</target>
+      </trans-unit>
+      <trans-unit id="meetings.expiryLabel" datatype="html">
+        <source>Room available for (hours)</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">224,226</context>
+        </context-group>
+      
+        <target>Raum verfügbar für (Stunden)</target>
+      </trans-unit>
+      <trans-unit id="meetings.expiryHint" datatype="html">
+        <source> The link and room stop working this long after the meeting ends. Default 12, maximum 24. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">234,235</context>
+        </context-group>
+      
+        <target>Link und Raum funktionieren so lange nach Ende der Besprechung nicht mehr. Standard 12, maximum 24.</target>
+      </trans-unit>
+      <trans-unit id="meetings.location" datatype="html">
+        <source> Location <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-normal text-slate-400&quot;&gt;"/>(optional; the join link fills in)<x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">240,241</context>
+        </context-group>
+      
+        <target>Ort (optional; der Beitrittslink wird eingetragen)</target>
+      </trans-unit>
+      <trans-unit id="meetings.locationPlaceholder" datatype="html">
+        <source>Room 3 or a link</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">246,247</context>
+        </context-group>
+      
+        <target>Raum 3 oder ein Link</target>
+      </trans-unit>
+      <trans-unit id="meetings.timezone" datatype="html">
+        <source>Shown in</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">252,254</context>
+        </context-group>
+      
+        <target>Angezeigt in</target>
+      </trans-unit>
+      <trans-unit id="meetings.description" datatype="html">
+        <source> Description <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-normal text-slate-400&quot;&gt;"/>(optional)<x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">263,264</context>
+        </context-group>
+      
+        <target>Beschreibung (optional)</target>
+      </trans-unit>
+      <trans-unit id="meetings.inviting" datatype="html">
+        <source>Inviting…</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">286,288</context>
+        </context-group>
+      
+        <target>Einladen…</target>
+      </trans-unit>
+      <trans-unit id="meetings.create" datatype="html">
+        <source>Create and invite</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">288,290</context>
+        </context-group>
+      
+        <target>Anlegen und einladen</target>
+      </trans-unit>
+      <trans-unit id="meetings.inviteHint" datatype="html">
+        <source>Invitations go out immediately, one per guest.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">291,293</context>
+        </context-group>
+      
+        <target>Die Einladungen gehen sofort hinaus, eine pro Gast.</target>
+      </trans-unit>
+      <trans-unit id="meetings.listTitle" datatype="html">
+        <source> Your meetings </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">302,304</context>
+        </context-group>
+      
+        <target>Ihre Besprechungen</target>
+      </trans-unit>
+      <trans-unit id="meetings.showExpired" datatype="html">
+        <source>Show expired</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">311,313</context>
+        </context-group>
+      
+        <target>Abgelaufene anzeigen</target>
+      </trans-unit>
+      <trans-unit id="meetings.loading" datatype="html">
+        <source>Loading…</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">317,318</context>
+        </context-group>
+      
+        <target>Wird geladen…</target>
+      </trans-unit>
+      <trans-unit id="meetings.empty" datatype="html">
+        <source> No meetings yet. Create one and the guests are mailed their links. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">321,322</context>
+        </context-group>
+      
+        <target>Noch keine Besprechungen. Legen Sie eine an, und die Gäste erhalten ihre Links per E-Mail.</target>
+      </trans-unit>
+      <trans-unit id="meetings.cancelled" datatype="html">
+        <source>Cancelled</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">337,338</context>
+        </context-group>
+      
+        <target>Abgesagt</target>
+      </trans-unit>
+      <trans-unit id="meetings.expired" datatype="html">
+        <source>Expired</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">340,341</context>
+        </context-group>
+      
+        <target>Abgelaufen</target>
+      </trans-unit>
+      <trans-unit id="meetings.acceptedCount" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ m.acceptedCount }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ m.attendeeCount }}"/> accepted</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">355,356</context>
+        </context-group>
+      
+        <target><x id="INTERPOLATION" equiv-text="{{ m.acceptedCount }}"/> von <x id="INTERPOLATION_1" equiv-text="{{ m.attendeeCount }}"/> angenommen</target>
+      </trans-unit>
+      <trans-unit id="meetings.yourAnswer" datatype="html">
+        <source>You: <x id="INTERPOLATION" equiv-text="{{ answer(m.myPartStat) }}"/></source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">357,358</context>
+        </context-group>
+      
+        <target>Sie: <x id="INTERPOLATION" equiv-text="{{ answer(m.myPartStat) }}"/></target>
+      </trans-unit>
+      <trans-unit id="meetings.pageSummary" datatype="html">
+        <source> <x id="INTERPOLATION" equiv-text="{{ total() }}"/> meetings · page <x id="INTERPOLATION_1" equiv-text="{{ page() + 1 }}"/> of <x id="INTERPOLATION_2" equiv-text="{{ pageCount() }}"/> </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">367,368</context>
+        </context-group>
+      
+        <target><x id="INTERPOLATION" equiv-text="{{ total() }}"/> Besprechungen · Seite <x id="INTERPOLATION_1" equiv-text="{{ page() + 1 }}"/> von <x id="INTERPOLATION_2" equiv-text="{{ pageCount() }}"/></target>
+      </trans-unit>
+      <trans-unit id="meetings.previous" datatype="html">
+        <source> Previous </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">377,378</context>
+        </context-group>
+      
+        <target>Vorherige</target>
+      </trans-unit>
+      <trans-unit id="meetings.next" datatype="html">
+        <source> Next </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">386,387</context>
+        </context-group>
+      
+        <target>Nächste</target>
+      </trans-unit>
+      <trans-unit id="meetings.organiser" datatype="html">
+        <source>Organiser</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">401</context>
+        </context-group>
+      
+        <target>Organisator</target>
+      </trans-unit>
+      <trans-unit id="meetings.guest" datatype="html">
+        <source>Guest</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">402</context>
+        </context-group>
+      
+        <target>Gast</target>
+      </trans-unit>
+      <trans-unit id="meetings.wholeOrganization" datatype="html">
+        <source>whole organization</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">403</context>
+        </context-group>
+      
+        <target>ganze Organisation</target>
+      </trans-unit>
+      <trans-unit id="meetings.memberOne" datatype="html">
+        <source>1 person</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">407</context>
+        </context-group>
+      
+        <target>1 Person</target>
+      </trans-unit>
+      <trans-unit id="meetings.memberMany" datatype="html">
+        <source><x id="PH" equiv-text="count"/> people</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">409</context>
+        </context-group>
+      
+        <target><x id="PH" equiv-text="count"/> Personen</target>
+      </trans-unit>
+      <trans-unit id="meetings.errTitle" datatype="html">
+        <source>A meeting needs a title.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">520</context>
+        </context-group>
+      
+        <target>Eine Besprechung braucht einen Titel.</target>
+      </trans-unit>
+      <trans-unit id="meetings.errWhen" datatype="html">
+        <source>A meeting needs a date and a time.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">524</context>
+        </context-group>
+      
+        <target>Eine Besprechung braucht Datum und Uhrzeit.</target>
+      </trans-unit>
+      <trans-unit id="meetings.errGuests" datatype="html">
+        <source>Add at least one guest, or invite a group.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">530</context>
+        </context-group>
+      
+        <target>Fügen Sie mindestens einen Gast hinzu, oder laden Sie eine Gruppe ein.</target>
+      </trans-unit>
+      <trans-unit id="meetings.errDate" datatype="html">
+        <source>That date or time could not be read.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">537</context>
+        </context-group>
+      
+        <target>Dieses Datum oder diese Uhrzeit konnte nicht gelesen werden.</target>
+      </trans-unit>
+      <trans-unit id="meetings.inviteFailures" datatype="html">
+        <source>Meeting created, but invitations failed for: <x id="PH" equiv-text="result.inviteFailures.join(&apos;, &apos;)"/></source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/meetings/meetings.component.ts</context>
+          <context context-type="linenumber">568</context>
+        </context-group>
+      
+        <target>Besprechung angelegt, aber die Einladungen schlugen für folgende Personen fehl: <x id="PH" equiv-text="result.inviteFailures.join(&apos;, &apos;)"/></target>
+      </trans-unit>
+      <trans-unit id="profile.title" datatype="html">
+        <source>Your account</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">18,19</context>
+        </context-group>
+      
+        <target>Ihr Konto</target>
+      </trans-unit>
+      <trans-unit id="profile.loading" datatype="html">
+        <source>Loading your account…</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">23,24</context>
+        </context-group>
+      
+        <target>Ihr Konto wird geladen…</target>
+      </trans-unit>
+      <trans-unit id="profile.account" datatype="html">
+        <source>Account</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">27,28</context>
+        </context-group>
+      
+        <target>Konto</target>
+      </trans-unit>
+      <trans-unit id="profile.address" datatype="html">
+        <source>Address</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">30,31</context>
+        </context-group>
+      
+        <target>Adresse</target>
+      </trans-unit>
+      <trans-unit id="profile.displayName" datatype="html">
+        <source>Display name</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">34,35</context>
+        </context-group>
+      
+        <target>Anzeigename</target>
+      </trans-unit>
+      <trans-unit id="profile.recovery" datatype="html">
+        <source>Recovery email</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">38,39</context>
+        </context-group>
+      
+        <target>Wiederherstellungs-E-Mail</target>
+      </trans-unit>
+      <trans-unit id="profile.passwordTitle" datatype="html">
+        <source>Password</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">45,46</context>
+        </context-group>
+      
+        <target>Passwort</target>
+      </trans-unit>
+      <trans-unit id="profile.ldapPassword" datatype="html">
+        <source> Your password is managed by your organization&apos;s directory. Change it there. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">48,50</context>
+        </context-group>
+      
+        <target>Ihr Passwort wird vom Verzeichnis Ihrer Organisation verwaltet. Ändern Sie es dort.</target>
+      </trans-unit>
+      <trans-unit id="profile.currentPassword" datatype="html">
+        <source>Current password</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">53,55</context>
+        </context-group>
+      
+        <target>Aktuelles Passwort</target>
+      </trans-unit>
+      <trans-unit id="profile.newPassword" datatype="html">
+        <source>New password</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">64,66</context>
+        </context-group>
+      
+        <target>Neues Passwort</target>
+      </trans-unit>
+      <trans-unit id="profile.confirmPassword" datatype="html">
+        <source>Confirm new password</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">75,77</context>
+        </context-group>
+      
+        <target>Neues Passwort bestätigen</target>
+      </trans-unit>
+      <trans-unit id="profile.changePassword" datatype="html">
+        <source> Change password </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">92,93</context>
+        </context-group>
+      
+        <target>Passwort ändern</target>
+      </trans-unit>
+      <trans-unit id="profile.passwordHint" datatype="html">
+        <source> At least <x id="INTERPOLATION" equiv-text="{{ p.min_password_length }}"/> characters. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">95,96</context>
+        </context-group>
+      
+        <target>Mindestens <x id="INTERPOLATION" equiv-text="{{ p.min_password_length }}"/> Zeichen.</target>
+      </trans-unit>
+      <trans-unit id="profile.applicationPasswordsTitle" datatype="html">
+        <source> Application passwords </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">104,106</context>
+        </context-group>
+      
+        <target>Anwendungspasswörter</target>
+      </trans-unit>
+      <trans-unit id="profile.applicationPasswordsDescription" datatype="html">
+        <source> Use one of these instead of your account password in MailCraft, your phone, or any IMAP, SMTP, CalDAV or CardDAV client. Each is named for the place it is used, and can be revoked here without changing your password. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">107,110</context>
+        </context-group>
+      
+        <target>Verwenden Sie eines dieser Passwörter statt Ihres Konto-Passworts in MailCraft, Ihrem Telefon oder einem IMAP-, SMTP-, CalDAV- oder CardDAV-Client. Jedes trägt den Namen des Ortes, an dem es benutzt wird, und kann hier widerrufen werden, ohne das Passwort zu ändern.</target>
+      </trans-unit>
+      <trans-unit id="profile.applicationPasswordCreated" datatype="html">
+        <source> Your new application password was created. Copy it now; it will not be shown again. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">113,115</context>
+        </context-group>
+      
+        <target>Ihr neues Anwendungspasswort wurde erstellt. Kopieren Sie es jetzt; es wird nicht erneut angezeigt.</target>
+      </trans-unit>
+      <trans-unit id="profile.copyApplicationPassword" datatype="html">
+        <source> Copy </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">118,119</context>
+        </context-group>
+      
+        <target>Kopieren</target>
+      </trans-unit>
+      <trans-unit id="profile.revokeApplicationPassword" datatype="html">
+        <source> Revoke </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">137,138</context>
+        </context-group>
+      
+        <target>Widerrufen</target>
+      </trans-unit>
+      <trans-unit id="profile.noApplicationPasswords" datatype="html">
+        <source> No application passwords yet. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">144,146</context>
+        </context-group>
+      
+        <target>Noch keine Anwendungspasswörter.</target>
+      </trans-unit>
+      <trans-unit id="profile.applicationPasswordName" datatype="html">
+        <source>MailCraft on my laptop</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">154,155</context>
+        </context-group>
+      
+        <target>MailCraft auf meinem Laptop</target>
+      </trans-unit>
+      <trans-unit id="profile.createApplicationPassword" datatype="html">
+        <source> Create </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">159,161</context>
+        </context-group>
+      
+        <target>Erstellen</target>
+      </trans-unit>
+      <trans-unit id="profile.recoveryTitle" datatype="html">
+        <source>Recovery email</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">165,166</context>
+        </context-group>
+      
+        <target>Wiederherstellungs-E-Mail</target>
+      </trans-unit>
+      <trans-unit id="profile.recoveryDescription" datatype="html">
+        <source> An address we can use if you lose access to this mailbox. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">167,169</context>
+        </context-group>
+      
+        <target>Eine Adresse, die wir nutzen können, wenn Sie den Zugriff auf dieses Postfach verlieren.</target>
+      </trans-unit>
+      <trans-unit id="profile.recoveryPlaceholder" datatype="html">
+        <source>you@elsewhere.com</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">175,176</context>
+        </context-group>
+      
+        <target>sie@andererseits.com</target>
+      </trans-unit>
+      <trans-unit id="profile.save" datatype="html">
+        <source> Save </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">185,186</context>
+        </context-group>
+      
+        <target>Speichern</target>
+      </trans-unit>
+      <trans-unit id="profile.outOfOfficeTitle" datatype="html">
+        <source> Out of office </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">194,195</context>
+        </context-group>
+      
+        <target>Abwesend</target>
+      </trans-unit>
+      <trans-unit id="profile.outOfOfficeDescription" datatype="html">
+        <source> Send one automatic reply to each person who writes while this is active. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">197,199</context>
+        </context-group>
+      
+        <target>Sendet eine automatische Antwort an jede Person, die schreibt, solange dies aktiv ist.</target>
+      </trans-unit>
+      <trans-unit id="profile.outOfOfficeEnabled" datatype="html">
+        <source>Active</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">202,204</context>
+        </context-group>
+      
+        <target>Aktiv</target>
+      </trans-unit>
+      <trans-unit id="profile.outOfOfficeStart" datatype="html">
+        <source>Start</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">208,210</context>
+        </context-group>
+      
+        <target>Beginn</target>
+      </trans-unit>
+      <trans-unit id="profile.outOfOfficeEnd" datatype="html">
+        <source>End</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">217,219</context>
+        </context-group>
+      
+        <target>Ende</target>
+      </trans-unit>
+      <trans-unit id="profile.outOfOfficeSubject" datatype="html">
+        <source>Subject</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">227,229</context>
+        </context-group>
+      
+        <target>Betreff</target>
+      </trans-unit>
+      <trans-unit id="profile.outOfOfficeMessage" datatype="html">
+        <source>Message</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">238,240</context>
+        </context-group>
+      
+        <target>Nachricht</target>
+      </trans-unit>
+      <trans-unit id="profile.outOfOfficeSave" datatype="html">
+        <source> Save automatic reply </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">255,256</context>
+        </context-group>
+      
+        <target>Automatische Antwort speichern</target>
+      </trans-unit>
+      <trans-unit id="profile.outOfOfficeHint" datatype="html">
+        <source> Each sender is answered once per activation. Saving resets that list. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">258,259</context>
+        </context-group>
+      
+        <target>Jeder Absender wird einmal pro Aktivierung beantwortet. Speichern setzt diese Liste zurück.</target>
+      </trans-unit>
+      <trans-unit id="profile.twoFactorTitle" datatype="html">
+        <source> Two-factor authentication </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">268,269</context>
+        </context-group>
+      
+        <target>Zwei-Faktor-Authentifizierung</target>
+      </trans-unit>
+      <trans-unit id="profile.twoFactorDescription" datatype="html">
+        <source> Use an authenticator app such as Google Authenticator, 1Password or Authy. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">271,273</context>
+        </context-group>
+      
+        <target>Verwenden Sie eine Authenticator-App wie Google Authenticator, 1Password oder Authy.</target>
+      </trans-unit>
+      <trans-unit id="profile.enabled" datatype="html">
+        <source>Enabled</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">280,281</context>
+        </context-group>
+      
+        <target>Aktiviert</target>
+      </trans-unit>
+      <trans-unit id="profile.notEnabled" datatype="html">
+        <source>Not enabled</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">282,284</context>
+        </context-group>
+      
+        <target>Nicht aktiviert</target>
+      </trans-unit>
+      <trans-unit id="profile.twoFactorUnavailable" datatype="html">
+        <source> Two-factor authentication is disabled on this server. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">290,292</context>
+        </context-group>
+      
+        <target>Zwei-Faktor-Authentifizierung ist auf diesem Server deaktiviert.</target>
+      </trans-unit>
+      <trans-unit id="profile.codeLabel" datatype="html">
+        <source> Authenticator or recovery code </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">296,297</context>
+        </context-group>
+      
+        <target>Authenticator- oder Wiederherstellungscode</target>
+      </trans-unit>
+      <trans-unit id="profile.disable2fa" datatype="html">
+        <source> Disable </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">312,313</context>
+        </context-group>
+      
+        <target>Deaktivieren</target>
+      </trans-unit>
+      <trans-unit id="profile.setup2fa" datatype="html">
+        <source> Set up two-factor authentication </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">323,324</context>
+        </context-group>
+      
+        <target>Zwei-Faktor-Authentifizierung einrichten</target>
+      </trans-unit>
+      <trans-unit id="profile.pending2fa" datatype="html">
+        <source> A setup is in progress. Start again to get a fresh QR code. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">327,328</context>
+        </context-group>
+      
+        <target>Eine Einrichtung läuft. Starten Sie erneut, um einen neuen QR-Code zu erhalten.</target>
+      </trans-unit>
+      <trans-unit id="profile.scan" datatype="html">
+        <source> Scan this code with your authenticator app. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">341,342</context>
+        </context-group>
+      
+        <target>Scannen Sie diesen Code mit Ihrer Authenticator-App.</target>
+      </trans-unit>
+      <trans-unit id="profile.manualKey" datatype="html">
+        <source>Can&apos;t scan it? Enter this key:</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">343,344</context>
+        </context-group>
+      
+        <target>Lässt sich nicht scannen? Geben Sie diesen Schlüssel ein:</target>
+      </trans-unit>
+      <trans-unit id="profile.recoveryCodes" datatype="html">
+        <source>Recovery codes</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">348,349</context>
+        </context-group>
+      
+        <target>Wiederherstellungscodes</target>
+      </trans-unit>
+      <trans-unit id="profile.recoveryCodesHint" datatype="html">
+        <source> Store these somewhere safe. Each works once if you lose your phone. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">350,351</context>
+        </context-group>
+      
+        <target>Bewahren Sie diese sicher auf. Jeder Code funktioniert einmal, wenn Sie Ihr Telefon verlieren.</target>
+      </trans-unit>
+      <trans-unit id="profile.copyCodes" datatype="html">
+        <source> Copy codes </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">359,360</context>
+        </context-group>
+      
+        <target>Codes kopieren</target>
+      </trans-unit>
+      <trans-unit id="profile.downloadCodes" datatype="html">
+        <source> Download </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">362,363</context>
+        </context-group>
+      
+        <target>Herunterladen</target>
+      </trans-unit>
+      <trans-unit id="profile.enabledNow" datatype="html">
+        <source> Two-factor authentication is enabled. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">372,373</context>
+        </context-group>
+      
+        <target>Zwei-Faktor-Authentifizierung ist aktiviert.</target>
+      </trans-unit>
+      <trans-unit id="profile.done" datatype="html">
+        <source> Done </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">380,381</context>
+        </context-group>
+      
+        <target>Fertig</target>
+      </trans-unit>
+      <trans-unit id="profile.verifyCode" datatype="html">
+        <source> Code from the app </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">387,388</context>
+        </context-group>
+      
+        <target>Code aus der App</target>
+      </trans-unit>
+      <trans-unit id="profile.verifyEnable" datatype="html">
+        <source> Verify and enable </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">404,405</context>
+        </context-group>
+      
+        <target>Prüfen und aktivieren</target>
+      </trans-unit>
+      <trans-unit id="profile.cancel" datatype="html">
+        <source> Cancel </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">412,413</context>
+        </context-group>
+      
+        <target>Abbrechen</target>
+      </trans-unit>
+      <trans-unit id="profile.mismatch" datatype="html">
+        <source>The new passwords do not match.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">490</context>
+        </context-group>
+      
+        <target>Die neuen Passwörter stimmen nicht überein.</target>
+      </trans-unit>
+      <trans-unit id="profile.passwordChanged" datatype="html">
+        <source>Your password has been changed. Other devices have been signed out.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">499</context>
+        </context-group>
+      
+        <target>Ihr Passwort wurde geändert. Andere Geräte wurden abgemeldet.</target>
+      </trans-unit>
+      <trans-unit id="profile.applicationPasswordSaved" datatype="html">
+        <source>Application password created.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">518</context>
+        </context-group>
+      
+        <target>Anwendungspasswort erstellt.</target>
+      </trans-unit>
+      <trans-unit id="profile.applicationPasswordRevoked" datatype="html">
+        <source>Application password revoked.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">535</context>
+        </context-group>
+      
+        <target>Anwendungspasswort widerrufen.</target>
+      </trans-unit>
+      <trans-unit id="profile.applicationPasswordCopied" datatype="html">
+        <source>Application password copied.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">547</context>
+        </context-group>
+      
+        <target>Anwendungspasswort kopiert.</target>
+      </trans-unit>
+      <trans-unit id="profile.recoverySaved" datatype="html">
+        <source>Recovery email saved.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">556</context>
+        </context-group>
+      
+        <target>Wiederherstellungs-E-Mail gespeichert.</target>
+      </trans-unit>
+      <trans-unit id="profile.outOfOfficeMessageRequired" datatype="html">
+        <source>A message is needed before automatic replies can be enabled.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">589</context>
+        </context-group>
+      
+        <target>Eine Nachricht ist nötig, bevor automatische Antworten aktiviert werden können.</target>
+      </trans-unit>
+      <trans-unit id="profile.outOfOfficeEndBeforeStart" datatype="html">
+        <source>The end must be after the start.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">595</context>
+        </context-group>
+      
+        <target>Das Ende muss nach dem Anfang liegen.</target>
+      </trans-unit>
+      <trans-unit id="profile.outOfOfficeSaved" datatype="html">
+        <source>Automatic replies saved.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">608</context>
+        </context-group>
+      
+        <target>Automatische Antworten gespeichert.</target>
+      </trans-unit>
+      <trans-unit id="profile.twoFactorEnabled" datatype="html">
+        <source>Two-factor authentication is enabled.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">646</context>
+        </context-group>
+      
+        <target>Zwei-Faktor-Authentifizierung ist aktiviert.</target>
+      </trans-unit>
+      <trans-unit id="profile.twoFactorDisabled" datatype="html">
+        <source>Two-factor authentication is disabled.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">666</context>
+        </context-group>
+      
+        <target>Zwei-Faktor-Authentifizierung ist deaktiviert.</target>
+      </trans-unit>
+      <trans-unit id="profile.codesCopied" datatype="html">
+        <source>Recovery codes copied.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">691</context>
+        </context-group>
+      
+        <target>Wiederherstellungscodes kopiert.</target>
+      </trans-unit>
+    </body>
+  </file>
+</xliff>

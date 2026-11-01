@@ -2350,6 +2350,286 @@ carol@esterno.example</target></trans-unit>
           <context context-type="linenumber">145</context>
         </context-group>
       <target>Organizzazione</target></trans-unit>
+      <trans-unit id="appAuth.allow" datatype="html">
+        <source> Allow </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">58,59</context>
+        </context-group>
+      <target>Permettere</target></trans-unit>
+      <trans-unit id="appAuth.approved" datatype="html">
+        <source>Allowed. You can return to the application now.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">26,28</context>
+        </context-group>
+      <target>Autorizzata. Ora puoi tornare all'applicazione.</target></trans-unit>
+      <trans-unit id="appAuth.asks" datatype="html">
+        <source>This application is asking for an application password:</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">36,37</context>
+        </context-group>
+      <target>L'applicazione chiede una password applicativa:</target></trans-unit>
+      <trans-unit id="appAuth.back" datatype="html">
+        <source> Back to your account </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">73,75</context>
+        </context-group>
+      <target>Torna al tuo account</target></trans-unit>
+      <trans-unit id="appAuth.code" datatype="html">
+        <source>Request code:</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">43</context>
+        </context-group>
+      <target>Codice di richiesta:</target></trans-unit>
+      <trans-unit id="appAuth.denied" datatype="html">
+        <source>Denied. The application was not given a password.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">28,30</context>
+        </context-group>
+      <target>Negata. L'applicazione non ha ricevuto una password.</target></trans-unit>
+      <trans-unit id="appAuth.deny" datatype="html">
+        <source> Deny </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">67,68</context>
+        </context-group>
+      <target>Negare</target></trans-unit>
+      <trans-unit id="appAuth.explain" datatype="html">
+        <source> It will be able to read and change your mail, calendar and contacts as you can. Your account password is not shared with it, and you can revoke it later from your account page. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">40,42</context>
+        </context-group>
+      <target>Potrà leggere e modificare la posta, il calendario e i contatti come fai tu. La password del tuo account non viene condivisa, e puoi revocare il permesso più tardi dalla pagina dell'account.</target></trans-unit>
+      <trans-unit id="appAuth.loading" datatype="html">
+        <source>Reading the request…</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">22,23</context>
+        </context-group>
+      <target>Lettura della richiesta…</target></trans-unit>
+      <trans-unit id="appAuth.manage" datatype="html">
+        <source> Manage application passwords </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">32,34</context>
+        </context-group>
+      <target>Gestisci le password applicative</target></trans-unit>
+      <trans-unit id="appAuth.missingCode" datatype="html">
+        <source>This link has no request code. Start again from the application.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">97</context>
+        </context-group>
+      <target>Questo link non ha un codice di richiesta. Ricomincia dall'applicazione.</target></trans-unit>
+      <trans-unit id="appAuth.title" datatype="html">
+        <source> Allow a mail client? </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app-auth/app-auth.component.ts</context>
+          <context context-type="linenumber">18,21</context>
+        </context-group>
+      <target>Permettere un client di posta?</target></trans-unit>
+      <trans-unit id="profile.applicationPasswordCopied" datatype="html">
+        <source>Application password copied.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">547</context>
+        </context-group>
+      <target>Password applicativa copiata.</target></trans-unit>
+      <trans-unit id="profile.applicationPasswordCreated" datatype="html">
+        <source> Your new application password was created. Copy it now; it will not be shown again. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">113,115</context>
+        </context-group>
+      <target>La nuova password applicativa è stata creata. Copiala ora; non sarà mostrata di nuovo.</target></trans-unit>
+      <trans-unit id="profile.applicationPasswordName" datatype="html">
+        <source>MailCraft on my laptop</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">154,155</context>
+        </context-group>
+      <target>MailCraft sul mio laptop</target></trans-unit>
+      <trans-unit id="profile.applicationPasswordRevoked" datatype="html">
+        <source>Application password revoked.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">535</context>
+        </context-group>
+      <target>Password applicativa revocata.</target></trans-unit>
+      <trans-unit id="profile.applicationPasswordSaved" datatype="html">
+        <source>Application password created.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">518</context>
+        </context-group>
+      <target>Password applicativa creata.</target></trans-unit>
+      <trans-unit id="profile.applicationPasswordsDescription" datatype="html">
+        <source> Use one of these instead of your account password in MailCraft, your phone, or any IMAP, SMTP, CalDAV or CardDAV client. Each is named for the place it is used, and can be revoked here without changing your password. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">107,110</context>
+        </context-group>
+      <target>Usa una di queste invece della password del tuo account in MailCraft, il telefono o qualsiasi client IMAP, SMTP, CalDAV o CardDAV. Ciascuna è nominata per il luogo dove si usa e può essere revocata qui senza cambiare la password.</target></trans-unit>
+      <trans-unit id="profile.applicationPasswordsTitle" datatype="html">
+        <source> Application passwords </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">104,106</context>
+        </context-group>
+      <target>Password applicative</target></trans-unit>
+      <trans-unit id="profile.copyApplicationPassword" datatype="html">
+        <source> Copy </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">118,119</context>
+        </context-group>
+      <target>Copiare</target></trans-unit>
+      <trans-unit id="profile.createApplicationPassword" datatype="html">
+        <source> Create </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">159,161</context>
+        </context-group>
+      <target>Creare</target></trans-unit>
+      <trans-unit id="profile.noApplicationPasswords" datatype="html">
+        <source> No application passwords yet. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">144,146</context>
+        </context-group>
+      <target>Non ci sono ancora password applicative.</target></trans-unit>
+      <trans-unit id="profile.outOfOfficeDescription" datatype="html">
+        <source> Send one automatic reply to each person who writes while this is active. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">197,199</context>
+        </context-group>
+      <target>Envia una risposta automatica a ogni persona che scrive mentre è attivo.</target></trans-unit>
+      <trans-unit id="profile.outOfOfficeEnabled" datatype="html">
+        <source>Active</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">202,204</context>
+        </context-group>
+      <target>Attivo</target></trans-unit>
+      <trans-unit id="profile.outOfOfficeEnd" datatype="html">
+        <source>End</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">217,219</context>
+        </context-group>
+      <target>Fine</target></trans-unit>
+      <trans-unit id="profile.outOfOfficeEndBeforeStart" datatype="html">
+        <source>The end must be after the start.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">595</context>
+        </context-group>
+      <target>La fine deve essere dopo l'inizio.</target></trans-unit>
+      <trans-unit id="profile.outOfOfficeHint" datatype="html">
+        <source> Each sender is answered once per activation. Saving resets that list. </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">258,259</context>
+        </context-group>
+      <target>Ogni mittente riceve una risposta per attivazione. Salvare reimposta quella lista.</target></trans-unit>
+      <trans-unit id="profile.outOfOfficeMessage" datatype="html">
+        <source>Message</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">238,240</context>
+        </context-group>
+      <target>Messaggio</target></trans-unit>
+      <trans-unit id="profile.outOfOfficeMessageRequired" datatype="html">
+        <source>A message is needed before automatic replies can be enabled.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">589</context>
+        </context-group>
+      <target>Serve un messaggio per attivare le risposte automatiche.</target></trans-unit>
+      <trans-unit id="profile.outOfOfficeSave" datatype="html">
+        <source> Save automatic reply </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">255,256</context>
+        </context-group>
+      <target>Salva la risposta automatica</target></trans-unit>
+      <trans-unit id="profile.outOfOfficeSaved" datatype="html">
+        <source>Automatic replies saved.</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">608</context>
+        </context-group>
+      <target>Risposte automatiche salvate.</target></trans-unit>
+      <trans-unit id="profile.outOfOfficeStart" datatype="html">
+        <source>Start</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">208,210</context>
+        </context-group>
+      <target>Inizio</target></trans-unit>
+      <trans-unit id="profile.outOfOfficeSubject" datatype="html">
+        <source>Subject</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">227,229</context>
+        </context-group>
+      <target>Oggetto</target></trans-unit>
+      <trans-unit id="profile.outOfOfficeTitle" datatype="html">
+        <source> Out of office </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">194,195</context>
+        </context-group>
+      <target>Fuori ufficio</target></trans-unit>
+      <trans-unit id="profile.revokeApplicationPassword" datatype="html">
+        <source> Revoke </source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/profile/profile.component.ts</context>
+          <context context-type="linenumber">137,138</context>
+        </context-group>
+      <target>Revocare</target></trans-unit>
+      <trans-unit id="title.adminPstImports" datatype="html">
+        <source>PST import</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">222</context>
+        </context-group>
+      <target>Importazione PST</target></trans-unit>
+      <trans-unit id="title.adminUserEdit" datatype="html">
+        <source>Edit mailbox</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">189</context>
+        </context-group>
+      <target>Modifica casella</target></trans-unit>
+      <trans-unit id="title.appAuth" datatype="html">
+        <source>Allow a mail client</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">111</context>
+        </context-group>
+      <target>Permettere un client di posta</target></trans-unit>
+      <trans-unit id="title.importImap" datatype="html">
+        <source>Import from IMAP</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">71</context>
+        </context-group>
+      <target>Importa da IMAP</target></trans-unit>
+      <trans-unit id="title.importPst" datatype="html">
+        <source>Import from PST</source>
+        <context-group purpose="location">
+          <context context-type="sourcefile">src/app/app.routes.ts</context>
+          <context context-type="linenumber">77</context>
+        </context-group>
+      <target>Importa da PST</target></trans-unit>
     </body>
   </file>
 </xliff>

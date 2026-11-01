@@ -70,3 +70,35 @@ func TestServeSPAServesNestedAssetsAndShell(t *testing.T) {
 		}
 	}
 }
+
+// A link without a locale is redirected to the language the browser asked for.
+// The order matters: the cookie is an explicit choice, Accept-Language is a
+// guess, and English is what everything falls back to.
+func TestPreferredLanguage(t *testing.T) {
+	cases := []struct {
+		cookie string
+		accept string
+		want   string
+	}{
+		{"", "", "en"},
+		{"", "de-DE,de;q=0.9,en;q=0.8", "de"},
+		{"", "pl-PL", "pl"},
+		{"", "it-IT,it;q=0.9", "it"},
+		{"", "fr,de;q=0.5", "de"},
+		{"", "zh;q=0.9,ja;q=0.8", "en"},
+		{"de", "en-US", "de"},
+		{"pl", "de-DE", "pl"},
+		{"it", "en", "it"},
+		{"xx", "de", "de"}, // an unknown cookie is not a language
+	}
+	for _, c := range cases {
+		req := httptest.NewRequest(http.MethodGet, "http://example.test/mail", nil)
+		req.Header.Set("Accept-Language", c.accept)
+		if c.cookie != "" {
+			req.AddCookie(&http.Cookie{Name: "linchange_lang", Value: c.cookie})
+		}
+		if got := preferredLanguage(req); got != c.want {
+			t.Errorf("cookie %q accept %q = %q, want %q", c.cookie, c.accept, got, c.want)
+		}
+	}
+}

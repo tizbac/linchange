@@ -666,12 +666,16 @@ func (s *Server) Handler() http.Handler {
 	return r
 }
 
+// webLocales are the shells the web build produces. angular.json defines them,
+// and this list has to agree: each entry is a directory under the web root.
+var webLocales = []string{"en", "it", "de", "pl"}
+
 // serveSPA serves a real asset if one exists at the requested path and otherwise
 // hands back the app shell, so /login and /second-factor work without a 404.
 //
-// Angular builds one shell per locale: /en/ and /it/. A path without a locale is
-// redirected to the visitor's preferred one, which keeps old links and the
-// invitation URLs working.
+// Angular builds one shell per locale: /en/, /it/, /de/ and /pl/. A path without
+// a locale is redirected to the visitor's preferred one, which keeps old links
+// and the invitation URLs working.
 func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	if path == "/api" || strings.HasPrefix(path, "/api/") || path == "/healthz" {
@@ -683,7 +687,7 @@ func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
 	rel := strings.Trim(path, "/")
 
 	locale := ""
-	for _, candidate := range []string{"en", "it"} {
+	for _, candidate := range webLocales {
 		if rel == candidate || strings.HasPrefix(rel, candidate+"/") {
 			locale = candidate
 			rel = strings.TrimPrefix(strings.TrimPrefix(rel, candidate), "/")
@@ -771,24 +775,22 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request, target string
 }
 
 // preferredLanguage is the UI language a browser should get. The explicit
-// cookie wins; otherwise the first Italian or English tag in Accept-Language
-// decides. English is the source locale and the fallback.
+// cookie wins; otherwise the first supported tag in Accept-Language decides.
+// English is the source locale and the fallback.
 func preferredLanguage(r *http.Request) string {
 	if c, err := r.Cookie("linchange_lang"); err == nil {
-		switch c.Value {
-		case "it":
-			return "it"
-		case "en":
-			return "en"
+		for _, locale := range webLocales {
+			if c.Value == locale {
+				return locale
+			}
 		}
 	}
 	for _, part := range strings.Split(r.Header.Get("Accept-Language"), ",") {
 		tag := strings.ToLower(strings.TrimSpace(strings.SplitN(part, ";", 2)[0]))
-		if strings.HasPrefix(tag, "it") {
-			return "it"
-		}
-		if strings.HasPrefix(tag, "en") {
-			return "en"
+		for _, locale := range webLocales {
+			if strings.HasPrefix(tag, locale) {
+				return locale
+			}
 		}
 	}
 	return "en"

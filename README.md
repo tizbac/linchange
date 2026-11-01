@@ -57,8 +57,11 @@ address-book service to install: everything ships in the same server.
 
 - Angular single-page application for **mail, calendar, contacts, meetings,
   chat and administration**.
-- English and Italian builds using Angular's own i18n (`@angular/localize`);
-  the top bar switches language and remembers the choice.
+- English, Italian, German and Polish builds using Angular's own i18n
+  (`@angular/localize`); the top bar switches language and remembers the
+  choice, and a visitor who never picks one gets the language their browser
+  asks for. A new language is a locale file in `web/src/locale`, an entry in
+  `web/angular.json`, and the locale list in `internal/httpapi/server.go`.
 - Light, dark and system themes, plus custom CSS themes uploaded as ZIPs by an
   administrator. The default can be set per organization or with `web.theme`;
   a user's own choice wins.
