@@ -609,7 +609,10 @@ func (s *Server) handleCalendarReport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	propReq := propfindRequest{props: req.props, allprop: req.allprop}
-	base := propResource{kind: kindCalendar, who: who, server: s, calendar: &cal, href: s.calendarURL(cal)}
+	base := propResource{
+		kind: kindCalendar, who: who, server: s, calendar: &cal, href: s.calendarURL(cal),
+		writable: s.requireWrite(r, who, cal) == nil,
+	}
 
 	if req.kind == "sync-collection" {
 		result, derr := s.runSync(r, cal, req)
@@ -729,6 +732,7 @@ func (s *Server) handleCalendarHomeReport(w http.ResponseWriter, r *http.Request
 		base := propResource{
 			kind: kindObject, who: who, server: s,
 			calendar: &cal, href: s.calendarURL(cal),
+			writable: s.requireWrite(r, who, cal) == nil,
 		}
 		var events []store.Event
 		switch req.kind {

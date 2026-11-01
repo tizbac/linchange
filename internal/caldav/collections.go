@@ -339,6 +339,7 @@ func (s *Server) handleCalendarHome(w http.ResponseWriter, r *http.Request) {
 			answer(calResp, req, propResource{
 				kind: kindCalendar, who: who, server: s,
 				calendars: calendars, calendar: &cal, href: s.calendarURL(cal),
+				writable: s.requireWrite(r, who, cal) == nil,
 			})
 		}
 	}
@@ -380,6 +381,7 @@ func (s *Server) handleWorkgroupHome(w http.ResponseWriter, r *http.Request) {
 			answer(calResp, req, propResource{
 				kind: kindCalendar, who: who, server: s,
 				calendars: calendars, calendar: &cal, href: s.calendarURL(cal),
+				writable: s.requireWrite(r, who, cal) == nil,
 			})
 		}
 	}
@@ -425,6 +427,7 @@ func (s *Server) handleCalendarPropfind(w http.ResponseWriter, r *http.Request) 
 		kind: kindCalendar, who: who, server: s,
 		calendars: siblings, calendar: &cal,
 		syncToken: s.syncTokenFor(r, cal), href: s.calendarURL(cal),
+		writable: s.requireWrite(r, who, cal) == nil,
 	})
 
 	if d >= 1 {
@@ -480,6 +483,7 @@ func (s *Server) handleCalendarGet(w http.ResponseWriter, r *http.Request) {
 		kind: kindCalendar, who: who, server: s,
 		calendars: siblings, calendar: &cal,
 		syncToken: s.syncTokenFor(r, cal), href: s.calendarURL(cal),
+		writable: s.requireWrite(r, who, cal) == nil,
 	})
 	ms.write(w)
 }
@@ -935,7 +939,10 @@ func (s *Server) handlePropPatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := response{href: hrefOf(s.calendarURL(cal))}
-	res := propResource{kind: kindCalendar, who: who, server: s, calendar: &cal, href: s.calendarURL(cal)}
+	res := propResource{
+		kind: kindCalendar, who: who, server: s, calendar: &cal, href: s.calendarURL(cal),
+		writable: s.requireWrite(r, who, cal) == nil,
+	}
 
 	update := store.UpdateCalendarRequest{}
 	var applied []propName

@@ -1745,9 +1745,15 @@ func TestSharedCalendarIsListedAndReachableByTheSubject(t *testing.T) {
 	}
 
 	resp, body = h.doAs(bobAddr, bobPass, "PROPFIND", aliceCal,
-		propfindBody("displayname", "resourcetype"), map[string]string{"Depth": "0"})
+		propfindBody("displayname", "resourcetype", "current-user-privilege-set"), map[string]string{"Depth": "0"})
 	if resp.StatusCode != http.StatusMultiStatus {
 		t.Fatalf("bob reading the shared calendar = %d %s", resp.StatusCode, body)
+	}
+	// The privilege set is how a client knows not to offer an edit that the
+	// share would refuse. A calendar whose answer is "all" while its PUT is 403
+	// is one the client's interface lies about.
+	if !strings.Contains(body, "<D:privilege><D:read/></D:privilege>") || strings.Contains(body, "<D:privilege><D:all/></D:privilege>") {
+		t.Fatalf("a read-only share reports the wrong privileges: %s", body)
 	}
 
 	// Read means read: a write is refused until the share is raised.
@@ -1765,6 +1771,11 @@ func TestSharedCalendarIsListedAndReachableByTheSubject(t *testing.T) {
 		map[string]string{"Content-Type": "text/calendar"})
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("bob writing to a write share = %d %s", resp.StatusCode, body)
+	}
+	resp, body = h.doAs(bobAddr, bobPass, "PROPFIND", aliceCal,
+		propfindBody("current-user-privilege-set"), map[string]string{"Depth": "0"})
+	if resp.StatusCode != http.StatusMultiStatus || !strings.Contains(body, "<D:privilege><D:all/></D:privilege>") {
+		t.Fatalf("a write share = %d %s, want the all privilege", resp.StatusCode, body)
 	}
 }
 

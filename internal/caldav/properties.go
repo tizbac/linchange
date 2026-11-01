@@ -128,6 +128,10 @@ type propResource struct {
 	syncToken string
 	// href is the URL of the resource being described.
 	href string
+	// writable is whether the caller may change this calendar. It is answered by the
+	// handler, from the same share check a write goes through, because a property
+	// value has no request of its own to resolve the caller's access with.
+	writable bool
 	// server is the CalDAV service, for the paths a property value needs.
 	server *Server
 }
@@ -556,7 +560,7 @@ func (r propResource) canWrite() bool {
 		// created in them, which is what MKCALENDAR needs.
 		return true
 	}
-	return true
+	return r.writable
 }
 
 // calendarBytes is the stored size of a calendar, for the quota properties.
