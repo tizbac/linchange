@@ -2,6 +2,7 @@ package carddav_test
 
 import (
 	"context"
+	"encoding/xml"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -170,6 +171,19 @@ func TestCardDAVLifecycle(t *testing.T) {
 		t.Fatalf("bob's home = %d %s", code, body)
 	}
 	alias := "/carddav/bob@example.com/contacts/~book-" + strconv.FormatInt(book.ID, 10) + "/"
+	code, body = call(t, client, httpSrv.URL, "PROPFIND", alias, `<?xml version="1.0"?>
+<d:propfind xmlns:d="DAV:"><d:prop><d:current-user-privilege-set/></d:prop></d:propfind>`, "bob@example.com")
+	if code != http.StatusMultiStatus || !strings.Contains(body, "<read") || strings.Contains(body, "<write") {
+		t.Fatalf("bob's privilege on a read-only share = %d %s, want read only", code, body)
+	}
+	if err := xml.Unmarshal([]byte(body), new(struct{})); err != nil {
+		t.Fatalf("the corrected privileges are not well-formed XML: %v\n%s", err, body)
+	}
+	code, body = call(t, client, httpSrv.URL, "PROPFIND", "/carddav/bob@example.com/contacts/personal/", `<?xml version="1.0"?>
+<d:propfind xmlns:d="DAV:"><d:prop><d:current-user-privilege-set/></d:prop></d:propfind>`, "bob@example.com")
+	if code != http.StatusMultiStatus || !strings.Contains(body, "<read") || !strings.Contains(body, "<write") {
+		t.Fatalf("bob's privilege on his own book = %d %s, want read and write", code, body)
+	}
 	code, body = call(t, client, httpSrv.URL, "GET", alias+"shared-card.vcf", "", "bob@example.com")
 	if code != http.StatusOK || !strings.Contains(body, "FN:Bob Example") {
 		t.Fatalf("bob GET shared card = %d %s", code, body)

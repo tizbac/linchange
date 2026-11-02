@@ -77,7 +77,11 @@ func (s *Server) Handler() http.Handler {
 		Backend: &backend{prefix: s.prefix, contacts: s.contacts},
 		Prefix:  s.prefix,
 	}
-	return s.authenticate(inner)
+	// The go-webdav server writes read+write for every address book (its own
+	// TODO). A client trusts that answer, so a read-only share would look
+	// writable until its PUT or DELETE was refused. Correct the property from
+	// the access level this server actually granted.
+	return s.authenticate(s.correctPrivileges(inner))
 }
 
 // WellKnownHandler answers the RFC 6764 discovery path.
@@ -161,11 +165,16 @@ func (b *backend) home(address string) string {
 
 // bookPath is the URL a book has under the signed-in user's home. An owned book
 // uses its slug; a shared or organization book gets a stable alias.
-func (b *backend) bookPath(address string, book store.AddressBookAccess) string {
+func bookPath(prefix, address string, book store.AddressBookAccess) string {
+	home := prefix + "/" + address + "/contacts/"
 	if strings.EqualFold(book.Owner, address) {
-		return b.home(address) + book.Slug + "/"
+		return home + book.Slug + "/"
 	}
-	return b.home(address) + "~book-" + strconv.FormatInt(book.ID, 10) + "/"
+	return home + "~book-" + strconv.FormatInt(book.ID, 10) + "/"
+}
+
+func (b *backend) bookPath(address string, book store.AddressBookAccess) string {
+	return bookPath(b.prefix, address, book)
 }
 
 func (b *backend) ListAddressBooks(ctx context.Context) ([]webdavcarddav.AddressBook, error) {
