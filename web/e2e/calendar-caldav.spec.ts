@@ -56,6 +56,7 @@ test('an event written over CalDAV is drawn on the calendar page', async ({ page
     'DTSTAMP:20261102T200000Z',
     'DTSTART:20261105T100000Z',
     'DTEND:20261105T110000Z',
+    'TRANSP:TRANSPARENT',
     `SUMMARY:${title}`,
     'END:VEVENT',
     'END:VCALENDAR',

@@ -293,15 +293,18 @@ func TestCancelledEventExpandsToNothing(t *testing.T) {
 	}
 }
 
-// TestTransparentEventExpandsToNothing: an event marked free is not busy time,
-// so it must not appear in a busy list either.
-func TestTransparentEventExpandsToNothing(t *testing.T) {
+// TestTransparentEventStillExpands: "free" is an availability answer, not a
+// reason for a calendar view to hide the event. Only a free/busy query drops it.
+func TestTransparentEventStillExpands(t *testing.T) {
 	ev := timedEvent(utc(2026, 2, 10, 9, 0), time.Hour)
 	ev.ShowAs = ical.ShowAsFree
 
 	got := expand(t, ev, window(utc(2026, 2, 1, 0, 0), utc(2026, 3, 1, 0, 0)))
-	if len(got) != 0 {
-		t.Errorf("a transparent event must yield no occurrences, got %d", len(got))
+	if len(got) != 1 {
+		t.Errorf("a transparent event must still yield its occurrence, got %d", len(got))
+	}
+	if !got[0].Event.IsFree() {
+		t.Error("the event must still read as free for free/busy")
 	}
 }
 

@@ -42,6 +42,10 @@ type View struct {
 	AllDay   bool      `json:"allDay"`
 	Timezone string    `json:"timezone"`
 	Status   string    `json:"status"`
+	// ShowAs is the availability the event declares (BUSY, FREE, TENTATIVE,
+	// OOF). It is returned with the event so a client can draw a free one as
+	// free instead of guessing from its absence.
+	ShowAs string `json:"showAs,omitempty"`
 
 	Organizer        string `json:"organizer,omitempty"`
 	OrganizerAddress string `json:"organizerAddress,omitempty"`
@@ -436,6 +440,7 @@ func view(inst recurrence.Instance) View {
 		AllDay:           ev.AllDay,
 		Timezone:         ev.Timezone,
 		Status:           ev.Status,
+		ShowAs:           ev.ShowAs,
 		Sequence:         ev.Sequence,
 		Organizer:        ev.Organizer.Name,
 		OrganizerAddress: ev.Organizer.Address,
@@ -461,9 +466,10 @@ type Busy struct {
 
 // Busy blocks for a window: the occurrences that occupy time.
 //
-// Cancelled and transparent events are already excluded by expansion, so nothing
-// here re-checks them: a cancelled meeting is free, and a private one occupies
-// nothing, which is the same answer in both cases and the same reason.
+// Expansion keeps cancelled and transparent events so a calendar view can draw
+// them; here is where they stop counting: a cancelled meeting is free, and a
+// transparent one occupies nothing, which is the same answer in both cases and
+// the same reason.
 func BusyBlocks(ctx context.Context, rows []store.Event, w recurrence.Window, lim recurrence.Limits) ([]Busy, error) {
 	expansion, err := Expand(ctx, rows, w, lim)
 	if err != nil {
@@ -471,6 +477,9 @@ func BusyBlocks(ctx context.Context, rows []store.Event, w recurrence.Window, li
 	}
 	blocks := make([]Busy, 0, len(expansion.Occurrences))
 	for _, v := range expansion.Occurrences {
+		if v.Status == ical.StatusCancelled || v.ShowAs == ical.ShowAsFree || v.ShowAs == "" {
+			continue
+		}
 		// A zero-length event occupies no time. Expansion keeps it so that a
 		// marker on a day is drawn, but there is nothing to book against.
 		if !v.End.After(v.Start) {

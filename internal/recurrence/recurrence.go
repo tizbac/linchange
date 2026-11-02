@@ -176,10 +176,10 @@ func Expand(ctx context.Context, ev ical.Event, w Window, lim Limits) ([]Instanc
 		return nil, fmt.Errorf("%w: the event has no start", ErrInvalidRule)
 	}
 
-	// An event that is cancelled, or that declares itself free, occupies no
-	// time at all. Expanding it would produce instances that every consumer
-	// then has to remember to discard.
-	if ev.IsFree() {
+	// A cancelled event occupies no time at all. A free one does: "free" is an
+	// availability answer, not a reason for a calendar view to hide the event.
+	// Free/busy drops it at the point that asks about busy time.
+	if ev.IsCancelled() {
 		return nil, nil
 	}
 

@@ -369,14 +369,25 @@ func TestCancelledSeriesYieldsNothing(t *testing.T) {
 	}
 }
 
-// A private event occupies no time, which is the same answer as a cancelled one
-// and for the same reason: neither can be booked against.
-func TestTransparentEventYieldsNothing(t *testing.T) {
+// A transparent event is still on the calendar. It is only not busy time, so
+// the view shows it while the free/busy answer leaves it out.
+func TestTransparentEventIsShownButNotBusy(t *testing.T) {
 	ev := meeting("p@example.com", "Private", utc(2026, 3, 10, 9, 0))
 	ev.ShowAs = ical.ShowAsFree
 
-	if got := expand(t, []store.Event{row(1, ev)}, march()); len(got.Occurrences) != 0 {
-		t.Errorf("got %d occurrences, want none", len(got.Occurrences))
+	got := expand(t, []store.Event{row(1, ev)}, march())
+	if len(got.Occurrences) != 1 {
+		t.Fatalf("got %d occurrences, want the free event", len(got.Occurrences))
+	}
+	if got.Occurrences[0].ShowAs != ical.ShowAsFree {
+		t.Errorf("show_as = %q, want FREE", got.Occurrences[0].ShowAs)
+	}
+	blocks, err := calendar.BusyBlocks(context.Background(), []store.Event{row(1, ev)}, march(), recurrence.Limits{})
+	if err != nil {
+		t.Fatalf("BusyBlocks: %v", err)
+	}
+	if len(blocks) != 0 {
+		t.Errorf("a free event is not busy time, got %d blocks", len(blocks))
 	}
 }
 
