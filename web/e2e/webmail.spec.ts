@@ -62,7 +62,9 @@ test.describe('webmail', () => {
     await fillPlainTextBody(page, body);
     await page
       .locator('input[type="file"]')
-      .setInputFiles([{ name: 'note.txt', mimeType: 'text/plain', buffer: Buffer.from('hello from playwright') }]);
+      .setInputFiles([
+        { name: 'note.txt', mimeType: 'text/plain', buffer: Buffer.from('hello from playwright') },
+      ]);
     await expect(page.getByText('note.txt')).toBeVisible();
 
     await page.getByRole('button', { name: 'Send' }).click();
@@ -152,6 +154,23 @@ test.describe('webmail', () => {
     await expect(page.getByText(name)).toHaveCount(0);
   });
 
+  test('an open inbox brings in new mail by itself', async ({ page, browser }) => {
+    const subject = `E2E ${RUN} live arrival`;
+    await signIn(page);
+    await page.goto('/mail');
+    await expect(page.getByText('Select a message to read it.')).toBeVisible();
+
+    // Compose in another signed-in tab, leaving the Inbox open in this one: the
+    // periodic look is what has to put the message into the list.
+    const otherContext = await browser.newContext();
+    const other = await otherContext.newPage();
+    await signIn(other);
+    await sendCompose(other, USER, subject, `Live arrival (${RUN}).`);
+    await otherContext.close();
+
+    await expect(page.getByText(subject).first()).toBeVisible({ timeout: 45_000 });
+  });
+
   test('opens a shared mailbox and files a message with an editor grant', async ({ page }) => {
     const subject = `E2E ${RUN} to the team`;
 
@@ -161,14 +180,11 @@ test.describe('webmail', () => {
 
     await page.goto('/mail');
     await expect(page.getByText('Shared with you')).toBeVisible();
-    // Delivery is asynchronous, and the list does not live-refresh, so reopen
-    // the shared inbox until the message has landed in it.
+    // Delivery is asynchronous. The Inbox now looks again on its own, so the
+    // message appears in the open shared inbox without clicking it again.
+    await page.getByText('Team Mailbox').first().click();
     const message = page.getByText(subject).first();
-    for (let i = 0; i < 20 && !(await message.isVisible()); i++) {
-      await page.getByText('Team Mailbox').first().click();
-      await page.waitForTimeout(1000);
-    }
-    await expect(message).toBeVisible();
+    await expect(message).toBeVisible({ timeout: 45_000 });
     await message.click();
     await expect(page.getByRole('heading', { name: subject })).toBeVisible();
     await expect(page.locator('pre')).toContainText(`Team copy (${RUN}).`);

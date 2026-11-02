@@ -1,11 +1,27 @@
-import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  HostListener,
+  OnDestroy,
+  OnInit,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { MailApi } from '../core/mail/mail-api';
 import { ComposeTarget } from '../core/mail/compose-target';
 import { Cursor, Folder, MessageSummary, SharedMailbox, Thread } from '../core/mail/mail.models';
 import { errorMessage } from '../core/http-error';
-import { FLAG_FLAGGED, FLAG_SEEN, MailIcon, formatDate, folderIcon, hasFlag } from '../core/mail/ui';
+import {
+  FLAG_FLAGGED,
+  FLAG_SEEN,
+  MailIcon,
+  formatDate,
+  folderIcon,
+  hasFlag,
+} from '../core/mail/ui';
 import { MailReaderComponent, MailSelection } from './mail.reader.component';
 
 // The three-pane mail view: mailboxes on the left, a list (messages or
@@ -54,15 +70,18 @@ function flattenFolders(folders: Folder[]): Folder[] {
     // A parent outside this list (a shared mailbox the user can read but not
     // fully list, or a deleted parent) is treated as a root rather than
     // dropped.
-    const parent = f.parent_id !== undefined && f.parent_id !== null && byID.has(f.parent_id)
-      ? f.parent_id
-      : null;
+    const parent =
+      f.parent_id !== undefined && f.parent_id !== null && byID.has(f.parent_id)
+        ? f.parent_id
+        : null;
     const list = children.get(parent) ?? [];
     list.push(f);
     children.set(parent, list);
   }
   for (const list of children.values()) {
-    list.sort((a, b) => rankFolder(a) - rankFolder(b) || folderLabel(a).localeCompare(folderLabel(b)));
+    list.sort(
+      (a, b) => rankFolder(a) - rankFolder(b) || folderLabel(a).localeCompare(folderLabel(b)),
+    );
   }
 
   const out: Folder[] = [];
@@ -109,21 +128,41 @@ function flattenFolders(folders: Folder[]): Folder[] {
                 <app-mail-icon [name]="folderIcon(f.special_use)" class="text-slate-400" />
                 <span class="min-w-0 flex-1 truncate">{{ folderLabel(f) }}</span>
                 @if (f.unread > 0) {
-                  <span class="rounded-full bg-brand-600 px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                  <span
+                    class="rounded-full bg-brand-600 px-1.5 py-0.5 text-[11px] font-semibold text-white"
+                  >
                     {{ f.unread > 999 ? '999+' : f.unread }}
                   </span>
                 }
               </button>
               @if (selectedFolderId() === f.id) {
-                <div class="mb-1 flex flex-wrap gap-x-2 pb-1 pt-0.5" [style.padding-left.px]="folderPadding(f)">
+                <div
+                  class="mb-1 flex flex-wrap gap-x-2 pb-1 pt-0.5"
+                  [style.padding-left.px]="folderPadding(f)"
+                >
                   @if (f.deletable) {
-                    <button class="text-[11px] font-medium text-blue-600 hover:underline" (click)="renameFolder(f)">Rename</button>
+                    <button
+                      class="text-[11px] font-medium text-blue-600 hover:underline"
+                      (click)="renameFolder(f)"
+                    >
+                      Rename
+                    </button>
                   }
                   @if (f.total > 0) {
-                    <button class="text-[11px] font-medium text-blue-600 hover:underline" (click)="emptyFolder(f)">Empty</button>
+                    <button
+                      class="text-[11px] font-medium text-blue-600 hover:underline"
+                      (click)="emptyFolder(f)"
+                    >
+                      Empty
+                    </button>
                   }
                   @if (f.deletable) {
-                    <button class="text-[11px] font-medium text-rose-600 hover:underline" (click)="deleteFolder(f)">Delete</button>
+                    <button
+                      class="text-[11px] font-medium text-rose-600 hover:underline"
+                      (click)="deleteFolder(f)"
+                    >
+                      Delete
+                    </button>
                   }
                 </div>
               }
@@ -136,7 +175,9 @@ function flattenFolders(folders: Folder[]): Folder[] {
             <app-mail-icon name="plus" /> New folder
           </button>
           @if (shared().length > 0) {
-            <div class="px-2 pb-1.5 pt-4 text-xs font-semibold uppercase tracking-wide text-slate-400">
+            <div
+              class="px-2 pb-1.5 pt-4 text-xs font-semibold uppercase tracking-wide text-slate-400"
+            >
               Shared with you
             </div>
             @for (s of shared(); track s.address) {
@@ -176,7 +217,9 @@ function flattenFolders(folders: Folder[]): Folder[] {
                       <app-mail-icon [name]="folderIcon(f.special_use)" class="text-slate-400" />
                       <span class="min-w-0 flex-1 truncate">{{ folderLabel(f) }}</span>
                       @if (f.unread > 0) {
-                        <span class="rounded-full bg-brand-600 px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                        <span
+                          class="rounded-full bg-brand-600 px-1.5 py-0.5 text-[11px] font-semibold text-white"
+                        >
                           {{ f.unread > 999 ? '999+' : f.unread }}
                         </span>
                       } @else if (f.total > 0) {
@@ -184,15 +227,33 @@ function flattenFolders(folders: Folder[]): Folder[] {
                       }
                     </button>
                     @if (selectedFolderId() === f.id && s.writable) {
-                      <div class="mb-1 flex flex-wrap gap-x-2 pb-1 pt-0.5" [style.padding-left.px]="folderPadding(f, s.address)">
+                      <div
+                        class="mb-1 flex flex-wrap gap-x-2 pb-1 pt-0.5"
+                        [style.padding-left.px]="folderPadding(f, s.address)"
+                      >
                         @if (f.deletable) {
-                          <button class="text-[11px] font-medium text-blue-600 hover:underline" (click)="renameFolder(f)">Rename</button>
+                          <button
+                            class="text-[11px] font-medium text-blue-600 hover:underline"
+                            (click)="renameFolder(f)"
+                          >
+                            Rename
+                          </button>
                         }
                         @if (f.total > 0) {
-                          <button class="text-[11px] font-medium text-blue-600 hover:underline" (click)="emptyFolder(f)">Empty</button>
+                          <button
+                            class="text-[11px] font-medium text-blue-600 hover:underline"
+                            (click)="emptyFolder(f)"
+                          >
+                            Empty
+                          </button>
                         }
                         @if (f.deletable) {
-                          <button class="text-[11px] font-medium text-rose-600 hover:underline" (click)="deleteFolder(f)">Delete</button>
+                          <button
+                            class="text-[11px] font-medium text-rose-600 hover:underline"
+                            (click)="deleteFolder(f)"
+                          >
+                            Delete
+                          </button>
                         }
                       </div>
                     }
@@ -228,7 +289,9 @@ function flattenFolders(folders: Folder[]): Folder[] {
 
       <section class="flex w-96 min-w-72 shrink-0 flex-col border-r border-slate-200 bg-white">
         <div class="flex items-center gap-2 border-b border-slate-200 px-3 py-2">
-          <h2 class="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900">{{ listTitle() }}</h2>
+          <h2 class="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900">
+            {{ listTitle() }}
+          </h2>
           <button class="mail-btn" title="Refresh" (click)="refreshAll()">
             <app-mail-icon name="refresh" />
           </button>
@@ -295,7 +358,11 @@ function flattenFolders(folders: Folder[]): Folder[] {
           } @else {
             <div class="mt-2 flex items-center gap-2 text-xs text-slate-500">
               <span>Results for “{{ searchQuery() }}”</span>
-              <button type="button" class="ml-auto font-medium text-blue-600 hover:underline" (click)="clearSearch()">
+              <button
+                type="button"
+                class="ml-auto font-medium text-blue-600 hover:underline"
+                (click)="clearSearch()"
+              >
                 Clear
               </button>
             </div>
@@ -303,30 +370,68 @@ function flattenFolders(folders: Folder[]): Folder[] {
         </form>
 
         @if (selectedIds().length > 0) {
-          <div class="flex flex-wrap items-center gap-1 border-b border-slate-200 bg-slate-50 px-2 py-1.5">
-            <span class="px-1 text-xs font-medium text-slate-600">{{ selectedIds().length }} selected</span>
-            <select class="mail-select" aria-label="Move selected to folder" (change)="onBatchMove($event)">
+          <div
+            class="flex flex-wrap items-center gap-1 border-b border-slate-200 bg-slate-50 px-2 py-1.5"
+          >
+            <span class="px-1 text-xs font-medium text-slate-600"
+              >{{ selectedIds().length }} selected</span
+            >
+            <select
+              class="mail-select"
+              aria-label="Move selected to folder"
+              (change)="onBatchMove($event)"
+            >
               <option value="">Move to…</option>
               @for (f of moveTargets(); track f.id) {
                 <option [value]="f.id">{{ f.name }}</option>
               }
             </select>
-            <button class="mail-btn" (click)="batch('archive')" [disabled]="batchBusy()" title="Archive">
+            <button
+              class="mail-btn"
+              (click)="batch('archive')"
+              [disabled]="batchBusy()"
+              title="Archive"
+            >
               <app-mail-icon name="archive" />
             </button>
-            <button class="mail-btn" (click)="batch('trash')" [disabled]="batchBusy()" title="Trash">
+            <button
+              class="mail-btn"
+              (click)="batch('trash')"
+              [disabled]="batchBusy()"
+              title="Trash"
+            >
               <app-mail-icon name="trash" />
             </button>
-            <button class="mail-btn mail-btn-danger" (click)="batch('delete')" [disabled]="batchBusy()" title="Delete forever">
+            <button
+              class="mail-btn mail-btn-danger"
+              (click)="batch('delete')"
+              [disabled]="batchBusy()"
+              title="Delete forever"
+            >
               <app-mail-icon name="x" />
             </button>
-            <button class="mail-btn" (click)="batchRead(true)" [disabled]="batchBusy()" title="Mark read">
+            <button
+              class="mail-btn"
+              (click)="batchRead(true)"
+              [disabled]="batchBusy()"
+              title="Mark read"
+            >
               <app-mail-icon name="check" />
             </button>
-            <button class="mail-btn" (click)="batchRead(false)" [disabled]="batchBusy()" title="Mark unread">
+            <button
+              class="mail-btn"
+              (click)="batchRead(false)"
+              [disabled]="batchBusy()"
+              title="Mark unread"
+            >
               <app-mail-icon name="inbox" />
             </button>
-            <button class="mail-btn" (click)="batchFlag(true)" [disabled]="batchBusy()" title="Flag">
+            <button
+              class="mail-btn"
+              (click)="batchFlag(true)"
+              [disabled]="batchBusy()"
+              title="Flag"
+            >
               <app-mail-icon name="flag" />
             </button>
             <button class="mail-btn ml-auto" (click)="selectedIds.set([])" title="Clear selection">
@@ -337,7 +442,9 @@ function flattenFolders(folders: Folder[]): Folder[] {
 
         <div class="min-h-0 flex-1 overflow-y-auto">
           @if (error()) {
-            <p class="border-b border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">{{ error() }}</p>
+            <p class="border-b border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+              {{ error() }}
+            </p>
           }
           @if (listLoading()) {
             <p class="p-4 text-sm text-slate-400">Loading…</p>
@@ -364,7 +471,9 @@ function flattenFolders(folders: Folder[]): Folder[] {
                     </span>
                   </span>
                   @if (t.unread_count > 0) {
-                    <span class="rounded-full bg-brand-600 px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                    <span
+                      class="rounded-full bg-brand-600 px-1.5 py-0.5 text-[11px] font-semibold text-white"
+                    >
                       {{ t.unread_count }}
                     </span>
                   }
@@ -452,7 +561,10 @@ function flattenFolders(folders: Folder[]): Folder[] {
       />
 
       @if (folderFormOpen()) {
-        <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" (click)="folderFormOpen.set(false)">
+        <div
+          class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
+          (click)="folderFormOpen.set(false)"
+        >
           <form
             role="dialog"
             aria-label="New folder"
@@ -473,7 +585,11 @@ function flattenFolders(folders: Folder[]): Folder[] {
             </label>
             <label class="mt-3 block">
               <span class="text-sm font-medium text-slate-700">Inside</span>
-              <select class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" name="folderParent" [(ngModel)]="folderParent">
+              <select
+                class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                name="folderParent"
+                [(ngModel)]="folderParent"
+              >
                 <option [ngValue]="0">Top level</option>
                 @for (f of currentFolders(); track f.id) {
                   <option [ngValue]="f.id">{{ f.name }}</option>
@@ -484,10 +600,18 @@ function flattenFolders(folders: Folder[]): Folder[] {
               <p class="mt-3 text-sm text-rose-600">{{ error() }}</p>
             }
             <div class="mt-5 flex justify-end gap-2">
-              <button type="button" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm" (click)="folderFormOpen.set(false)">
+              <button
+                type="button"
+                class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+                (click)="folderFormOpen.set(false)"
+              >
                 Cancel
               </button>
-              <button type="submit" [disabled]="!folderName.trim()" class="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50">
+              <button
+                type="submit"
+                [disabled]="!folderName.trim()"
+                class="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+              >
                 Create
               </button>
             </div>
@@ -497,50 +621,68 @@ function flattenFolders(folders: Folder[]): Folder[] {
     </div>
   `,
   styles: [
-    `.mail-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      border-radius: 0.5rem;
-      border: 1px solid #cbd5e1;
-      padding: 6px 10px;
-      font-size: 12px;
-      font-weight: 500;
-      color: #334155;
-      transition: background 0.15s;
-    }
-    .mail-btn:hover { background: #f1f5f9; }
-    .mail-btn:disabled { cursor: not-allowed; opacity: 0.5; }
-    .mail-btn:disabled:hover { background: transparent; }
-    .mail-btn-danger { border-color: #fda4af; color: #e11d48; }
-    .mail-btn-danger:hover { background: #fff1f2; }
-    .mail-select {
-      border-radius: 0.5rem;
-      border: 1px solid #cbd5e1;
-      background: #fff;
-      padding: 6px 8px;
-      font-size: 12px;
-      font-weight: 500;
-      color: #334155;
-    }
-    :host-context([data-theme="dark"]) .mail-btn {
-      border-color: #334155;
-      color: #cbd5e1;
-    }
-    :host-context([data-theme="dark"]) .mail-btn:hover { background: #334155; }
-    :host-context([data-theme="dark"]) .mail-btn-danger {
-      border-color: #9f1239;
-      color: #fb7185;
-    }
-    :host-context([data-theme="dark"]) .mail-btn-danger:hover { background: #4c0519; }
-    :host-context([data-theme="dark"]) .mail-select {
-      border-color: #334155;
-      background: #1e293b;
-      color: #cbd5e1;
-    }`,
+    `
+      .mail-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border-radius: 0.5rem;
+        border: 1px solid #cbd5e1;
+        padding: 6px 10px;
+        font-size: 12px;
+        font-weight: 500;
+        color: #334155;
+        transition: background 0.15s;
+      }
+      .mail-btn:hover {
+        background: #f1f5f9;
+      }
+      .mail-btn:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+      }
+      .mail-btn:disabled:hover {
+        background: transparent;
+      }
+      .mail-btn-danger {
+        border-color: #fda4af;
+        color: #e11d48;
+      }
+      .mail-btn-danger:hover {
+        background: #fff1f2;
+      }
+      .mail-select {
+        border-radius: 0.5rem;
+        border: 1px solid #cbd5e1;
+        background: #fff;
+        padding: 6px 8px;
+        font-size: 12px;
+        font-weight: 500;
+        color: #334155;
+      }
+      :host-context([data-theme='dark']) .mail-btn {
+        border-color: #334155;
+        color: #cbd5e1;
+      }
+      :host-context([data-theme='dark']) .mail-btn:hover {
+        background: #334155;
+      }
+      :host-context([data-theme='dark']) .mail-btn-danger {
+        border-color: #9f1239;
+        color: #fb7185;
+      }
+      :host-context([data-theme='dark']) .mail-btn-danger:hover {
+        background: #4c0519;
+      }
+      :host-context([data-theme='dark']) .mail-select {
+        border-color: #334155;
+        background: #1e293b;
+        color: #cbd5e1;
+      }
+    `,
   ],
 })
-export class MailComponent implements OnInit {
+export class MailComponent implements OnInit, OnDestroy {
   private readonly api = inject(MailApi);
   private readonly router = inject(Router);
   private readonly composeTarget = inject(ComposeTarget);
@@ -584,7 +726,7 @@ export class MailComponent implements OnInit {
   // chooses the shared mailbox's tree; without it the indentation follows the
   // signed-in user's own folders even while a shared mailbox is selected.
   protected folderPadding(f: Folder, address?: string): number {
-    const folders = address ? this.sharedFolders().get(address) ?? [] : this.folders();
+    const folders = address ? (this.sharedFolders().get(address) ?? []) : this.folders();
     const byID = new Map(folders.map((folder) => [folder.id, folder]));
     let depth = 0;
     let current = f;
@@ -605,13 +747,43 @@ export class MailComponent implements OnInit {
   // mailbox, or the shared mailbox that was opened from the sidebar.
   private currentFolders(): Folder[] {
     const shared = this.selectedShared();
-    return shared ? this.sharedFolders().get(shared) ?? [] : this.folders();
+    return shared ? (this.sharedFolders().get(shared) ?? []) : this.folders();
   }
 
   private listSeq = 0;
+  private refreshTimer?: ReturnType<typeof setInterval>;
+  private refreshing = false;
 
   ngOnInit(): void {
     void this.bootstrap();
+    // Mail arrives on the server, not in this tab. Look again now and then,
+    // quietly, so an Inbox left open keeps up without a manual refresh.
+    this.refreshTimer = setInterval(() => void this.periodicRefresh(), 30_000);
+  }
+
+  ngOnDestroy(): void {
+    if (this.refreshTimer !== undefined) clearInterval(this.refreshTimer);
+  }
+
+  @HostListener('window:focus')
+  protected onWindowFocus(): void {
+    void this.periodicRefresh();
+  }
+
+  @HostListener('document:visibilitychange')
+  protected onVisibilityChange(): void {
+    if (!document.hidden) void this.periodicRefresh();
+  }
+
+  private async periodicRefresh(): Promise<void> {
+    if (this.refreshing || document.hidden) return;
+    this.refreshing = true;
+    try {
+      await Promise.all([this.refreshFolders(true), this.refreshSharedFolders(true)]);
+      await this.loadList(true, true);
+    } finally {
+      this.refreshing = false;
+    }
   }
 
   private async bootstrap(): Promise<void> {
@@ -622,8 +794,7 @@ export class MailComponent implements OnInit {
     } catch {
       // Shared mailboxes are a convenience, not a requirement for opening mail.
     }
-    const inbox =
-      this.folders().find((f) => f.name.toUpperCase() === 'INBOX') ?? this.folders()[0];
+    const inbox = this.folders().find((f) => f.name.toUpperCase() === 'INBOX') ?? this.folders()[0];
     if (inbox) this.selectFolder(inbox);
   }
 
@@ -642,26 +813,26 @@ export class MailComponent implements OnInit {
     return f ? f.name : 'Mail';
   }
 
-  protected async refreshFolders(): Promise<void> {
+  protected async refreshFolders(quiet = false): Promise<void> {
     try {
       const res = await this.api.listFolders();
       this.folders.set(res.folders ?? []);
     } catch (err) {
-      this.error.set(errorMessage(err));
+      if (!quiet) this.error.set(errorMessage(err));
     }
   }
 
   // refreshSharedFolders reloads the shared mailbox that is open. Only the one
   // in view is re-read: the others stay cached until the user clicks them, and
   // a folder count for a mailbox nobody is looking at is not worth a request.
-  private async refreshSharedFolders(): Promise<void> {
+  private async refreshSharedFolders(quiet = false): Promise<void> {
     const address = this.selectedShared();
     if (!address || !this.sharedFolders().has(address)) return;
     try {
       const res = await this.api.listFolders(address);
       this.sharedFolders.update((m) => new Map(m).set(address, res.folders ?? []));
     } catch (err) {
-      this.error.set(errorMessage(err));
+      if (!quiet) this.error.set(errorMessage(err));
     }
   }
 
@@ -683,7 +854,7 @@ export class MailComponent implements OnInit {
   // is selected, otherwise falls back to the shared mailbox if one is
   // explicitly selected, otherwise undefined (meaning the user's own mailbox).
   protected currentOwner(): string | undefined {
-    const folder = this.currentFolders().find(f => f.id === this.selectedFolderId());
+    const folder = this.currentFolders().find((f) => f.id === this.selectedFolderId());
     if (folder?.owner) return folder.owner;
     return this.selectedShared() ?? undefined;
   }
@@ -710,7 +881,7 @@ export class MailComponent implements OnInit {
       try {
         const res = await this.api.listFolders(s.address);
         folders = res.folders ?? [];
-        this.sharedFolders.update(m => new Map(m).set(s.address, folders!));
+        this.sharedFolders.update((m) => new Map(m).set(s.address, folders!));
       } catch (err) {
         this.error.set(errorMessage(err));
         return;
@@ -845,7 +1016,7 @@ export class MailComponent implements OnInit {
     void this.loadList(false);
   }
 
-  private async loadList(reset: boolean): Promise<void> {
+  private async loadList(reset: boolean, quiet = false): Promise<void> {
     const seq = ++this.listSeq;
     const q = this.searchQuery();
     const folderId = this.selectedFolderId();
@@ -854,16 +1025,18 @@ export class MailComponent implements OnInit {
     };
 
     if (q) {
-      this.listLoading.set(true);
-      this.error.set('');
+      if (!quiet) {
+        this.listLoading.set(true);
+        this.error.set('');
+      }
       try {
         const res = await this.api.search(q, folderId ?? 0, 50, this.currentOwner());
         const messages = res.messages ?? [];
         done(() => this.listData.set({ messages, total: messages.length, hasMore: false }));
       } catch (err) {
-        done(() => this.error.set(errorMessage(err)));
+        if (!quiet) done(() => this.error.set(errorMessage(err)));
       } finally {
-        done(() => this.listLoading.set(false));
+        if (!quiet) done(() => this.listLoading.set(false));
       }
       return;
     }
@@ -875,15 +1048,17 @@ export class MailComponent implements OnInit {
     }
 
     if (this.viewMode() === 'threads') {
-      this.listLoading.set(true);
-      this.error.set('');
+      if (!quiet) {
+        this.listLoading.set(true);
+        this.error.set('');
+      }
       try {
         const res = await this.api.listThreads(folderId, 50, this.currentOwner());
         done(() => this.threads.set(res.threads ?? []));
       } catch (err) {
-        done(() => this.error.set(errorMessage(err)));
+        if (!quiet) done(() => this.error.set(errorMessage(err)));
       } finally {
-        done(() => this.listLoading.set(false));
+        if (!quiet) done(() => this.listLoading.set(false));
       }
       return;
     }
@@ -916,8 +1091,10 @@ export class MailComponent implements OnInit {
       return;
     }
 
-    this.listLoading.set(true);
-    this.error.set('');
+    if (!quiet) {
+      this.listLoading.set(true);
+      this.error.set('');
+    }
     try {
       const res = await this.api.listMessages(folderId, opts);
       done(() =>
@@ -929,9 +1106,9 @@ export class MailComponent implements OnInit {
         }),
       );
     } catch (err) {
-      done(() => this.error.set(errorMessage(err)));
+      if (!quiet) done(() => this.error.set(errorMessage(err)));
     } finally {
-      done(() => this.listLoading.set(false));
+      if (!quiet) done(() => this.listLoading.set(false));
     }
   }
 
@@ -1050,7 +1227,9 @@ export class MailComponent implements OnInit {
     this.batchBusy.set(true);
     this.error.set('');
     try {
-      await Promise.all(ids.map((id) => this.api.setFlag(id, FLAG_FLAGGED, set, this.currentOwner())));
+      await Promise.all(
+        ids.map((id) => this.api.setFlag(id, FLAG_FLAGGED, set, this.currentOwner())),
+      );
       await this.refreshAll();
     } catch (err) {
       this.error.set(errorMessage(err));
