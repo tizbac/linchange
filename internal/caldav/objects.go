@@ -1560,6 +1560,9 @@ func (s *Server) storeEvent(
 				Detail: "the event to replace is no longer there",
 			}
 		}
+		if errors.Is(err, store.ErrLimit) {
+			return store.Event{}, &davError{Status: http.StatusTooManyRequests, Detail: err.Error()}
+		}
 		return store.Event{}, s.databaseError(r.Context(), "storing the event", err)
 	}
 

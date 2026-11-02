@@ -79,6 +79,18 @@ func (m *Meetings) Create(ctx context.Context, q Querier, meeting Meeting, invit
 	return meeting, nil
 }
 
+// ActiveCountFor returns how many meetings an organiser has whose room has
+// not expired. It is the same "non-expired" rule the meeting list uses, so a
+// quota and the list cannot disagree about what counts.
+func (m *Meetings) ActiveCountFor(ctx context.Context, q Querier, organizer string, now time.Time) (int, error) {
+	var n int
+	if err := q.GetContext(ctx, &n,
+		`SELECT count(*) FROM meetings WHERE organizer = $1 AND expires_at > $2`, organizer, now); err != nil {
+		return 0, fmt.Errorf("store: counting the organiser's meetings: %w", err)
+	}
+	return n, nil
+}
+
 // ByUID finds a meeting by the UID of its backing event.
 func (m *Meetings) ByUID(ctx context.Context, q Querier, uid string) (Meeting, error) {
 	var out Meeting

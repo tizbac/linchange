@@ -206,6 +206,12 @@ func (s *Server) handleListCalendars(w http.ResponseWriter, r *http.Request) {
 		add(shared)
 	}
 
+	// The list is a convenience, not a permission: a calendar beyond the cap is
+	// still reachable by id, but no client is asked to draw an unbounded list
+	// somebody else can grow.
+	if max := s.calendar.MaxCalendarsPerUser(); max > 0 && len(out) > max {
+		out = out[:max]
+	}
 	s.writeJSON(w, http.StatusOK, listCalendarsResponse{Calendars: out})
 }
 
@@ -290,6 +296,7 @@ func (s *Server) handleCreateCalendar(w http.ResponseWriter, r *http.Request) {
 			Description:  req.Description,
 			ShowFreeBusy: req.ShowFreeBusy,
 			IsDefault:    req.IsDefault,
+			MaxPerOwner:  s.calendar.MaxCalendarsPerUser(),
 		})
 	}
 	if err != nil {

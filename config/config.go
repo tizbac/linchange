@@ -19,6 +19,7 @@ type Config struct {
 	LDAP     LDAP      `yaml:"ldap"`
 	Mail     Mail      `yaml:"mail"`
 	Exchange Exchange  `yaml:"exchange"`
+	Calendar Calendar  `yaml:"calendar"`
 	Meetings Meetings  `yaml:"meetings"`
 	WebRTC   WebRTC    `yaml:"webrtc"`
 	Web      Web       `yaml:"web"`
@@ -516,6 +517,19 @@ type EAS struct {
 	MaxSyncItems int `yaml:"max_sync_items"`
 }
 
+// Calendar configures the limits that keep a calendar client from being buried
+// by a malicious or accidental list. They are not storage quotas: the data is
+// small, and the harm they prevent is a client drawing ten thousand rows.
+type Calendar struct {
+	// MaxPerUser is the most calendars one person may own, and the most a
+	// principal's calendar list shows. Zero disables the limit.
+	MaxPerUser int `yaml:"max_per_user"`
+	// MaxEventsPerMonth is the most events one calendar may hold in one month,
+	// by the month their start falls in (UTC). A recurring series is one row,
+	// however many times it happens. Zero disables the limit.
+	MaxEventsPerMonth int `yaml:"max_events_per_month"`
+}
+
 // Meetings configures scheduled meetings: the invitation emails and the join
 // and RSVP links they carry. A meeting's chat room is native to linchange, so
 // there is nothing external to configure.
@@ -526,6 +540,9 @@ type Meetings struct {
 	// reach, not the bind address. Empty derives it from server.hostname with
 	// https.
 	PublicURL string `yaml:"public_url"`
+	// MaxActivePerUser is the most non-expired meetings one person may
+	// organise. Zero disables the limit.
+	MaxActivePerUser int `yaml:"max_active_per_user"`
 }
 
 // MeetingsPublicURL is the base address join and RSVP links are built from.

@@ -216,7 +216,7 @@ func (s *Service) applyRequest(ctx context.Context, q store.Querier, who policy.
 	stored.ShowAs = defaultShowAs(stored.ShowAs)
 	stored.DTStamp = stampOf(ev, time.Time{})
 
-	req := writeRequest(cal.ID, who.Address, stored)
+	req := s.withQuota(writeRequest(cal.ID, who.Address, stored))
 	row, err := s.events.Upsert(ctx, q, req)
 	if err != nil {
 		return result, err

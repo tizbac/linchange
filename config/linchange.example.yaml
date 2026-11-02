@@ -297,6 +297,21 @@ exchange:
     http: 0
     https: 0
 
+# Sanity limits for calendars and meetings. They are not storage quotas: they
+# keep one hostile or careless account from making every client draw a huge
+# number of rows. Zero turns a limit off.
+calendar:
+  # Calendars one person may own, and the most one person's calendar list shows.
+  max_per_user: 16
+  # Events one calendar may hold in one month, by the month their start falls in.
+  # A recurring series is one event, however often it happens.
+  max_events_per_month: 1000
+
+meetings:
+  # Non-expired meetings one person may organise at once.
+  max_active_per_user: 32
+  # public_url: https://mail.example.com
+
 # Calls between meeting participants use WebRTC. linchange runs its own
 # STUN/TURN server by default, so a single install is enough. STUN lets two
 # browsers find each other; TURN relays the media when they cannot connect

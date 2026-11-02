@@ -732,3 +732,43 @@ func firstLines(s string, n int) string {
 	}
 	return strings.Join(lines, "\n") + "\n..."
 }
+
+// TestActiveMeetingQuota checks the non-expired rule from both sides: a second
+// live meeting is refused when the limit is one, and the same organiser may
+// create another once the first has expired. Expired meetings do not count.
+func TestActiveMeetingQuota(t *testing.T) {
+	db := testMigratedDB(t)
+	blobs := testBlobs(t)
+	cfg := testConfig()
+	cfg.Meetings.MaxActivePerUser = 1
+	srv, err := httpapi.New(httpapi.Options{
+		DB: db, Config: cfg, Blobs: blobs,
+		Imports: imapimport.New(db, blobs, nil, cfg.Auth.EncryptionKey),
+	})
+	if err != nil {
+		t.Fatalf("building the server: %v", err)
+	}
+	seedUser(t, db, "alice@example.com", "local", true, true)
+	setPassword(t, db, "alice@example.com", "correct horse battery staple")
+	auth := adminToken(t, srv, "alice@example.com")
+
+	makeMeeting := func(title string) (int, map[string]any) {
+		start := time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second)
+		return do(t, srv, "POST", "/api/v1/meetings", map[string]any{
+			"title": title, "start": start, "end": start.Add(time.Hour),
+			"attendees": []map[string]string{{"address": "guest@outside.example"}},
+		}, auth)
+	}
+	if code, body := makeMeeting("First"); code != 201 {
+		t.Fatalf("the first meeting = %d %v, want 201", code, body)
+	}
+	if code, body := makeMeeting("Second"); code != 429 {
+		t.Fatalf("a second live meeting = %d %v, want 429", code, body)
+	}
+	if _, err := db.Exec(`UPDATE meetings SET expires_at = now() - interval '1 hour'`); err != nil {
+		t.Fatalf("expiring the first meeting: %v", err)
+	}
+	if code, body := makeMeeting("Second"); code != 201 {
+		t.Fatalf("a meeting after the first expired = %d %v, want 201", code, body)
+	}
+}

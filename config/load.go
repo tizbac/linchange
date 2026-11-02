@@ -363,6 +363,11 @@ func New() *Config {
 			EWS:          EWS{Enabled: true, Path: "/ews/exchange.asmx"},
 			EAS:          EAS{Enabled: true, Path: "/eas", MaxPingInterval: 3540, MaxSyncItems: 512},
 		},
+		// A sanity limit on what one person's calendar and meeting list may
+		// hold. The data is small; the harm is a client drawing a hostile
+		// number of rows after somebody shares a calendar with it.
+		Calendar: Calendar{MaxPerUser: 16, MaxEventsPerMonth: 1_000},
+		Meetings: Meetings{MaxActivePerUser: 32},
 		// Calls default to the server's own STUN/TURN so that a single install
 		// works without a second service. The relay range is kept to 100 ports:
 		// every one of them has to be opened in a firewall, and a hundred is

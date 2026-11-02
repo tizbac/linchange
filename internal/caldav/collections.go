@@ -1,6 +1,7 @@
 package caldav
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -369,6 +370,9 @@ func (s *Server) handleWorkgroupHome(w http.ResponseWriter, r *http.Request) {
 		fail(w, s.databaseError(r.Context(), "looking up the workgroup calendars", err))
 		return
 	}
+	if max := s.calSvc.MaxCalendarsPerUser(); max > 0 && len(calendars) > max {
+		calendars = calendars[:max]
+	}
 
 	homeURL := s.prefix + "/workgroup/" + strconvItoa(id) + "/"
 	ms := &multiStatus{}
@@ -543,6 +547,12 @@ func (s *Server) readableCalendars(r *http.Request, who policy.Principal) ([]sto
 			seen[cal.ID] = true
 			out = append(out, cal)
 		}
+	}
+	// Same cap as the web list: a shared calendar somebody made hostile cannot
+	// make a client draw an unbounded list. The calendar is still reachable by
+	// its URL; it is only the listing that is bounded.
+	if max := s.calSvc.MaxCalendarsPerUser(); max > 0 && len(out) > max {
+		out = out[:max]
 	}
 	return out, nil
 }
@@ -777,6 +787,7 @@ func (s *Server) handleMkCalendar(w http.ResponseWriter, r *http.Request) {
 		Color:       normaliseColour(colour),
 		Timezone:    tz,
 		Description: req.description,
+		MaxPerOwner: s.calSvc.MaxCalendarsPerUser(),
 	})
 	if err != nil {
 		// The unique index now enforces one calendar per name, so a duplicate
@@ -788,6 +799,10 @@ func (s *Server) handleMkCalendar(w http.ResponseWriter, r *http.Request) {
 				Code:   "DAV:no-conflicting-calendar-home",
 				Detail: "there is already a calendar called " + name + " here",
 			})
+			return
+		}
+		if errors.Is(err, store.ErrLimit) {
+			fail(w, &davError{Status: http.StatusTooManyRequests, Detail: err.Error()})
 			return
 		}
 		fail(w, s.databaseError(r.Context(), "creating the calendar", err))

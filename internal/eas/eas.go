@@ -1048,8 +1048,13 @@ func (e *EAS) applyClientChanges(c *call) {
 		summary := strings.TrimSpace(data.TextOf("Subject"))
 		location := data.TextOf("Location")
 		owner := c.owner()
+		maxPerMonth := 0
+		if e.cfg != nil {
+			maxPerMonth = e.cfg.Calendar.MaxEventsPerMonth
+		}
 		_, err := store.NewEvents().Create(c.ctx, e.db, store.WriteEventRequest{
 			CalendarID:       folderID,
+			MaxPerMonth:      maxPerMonth,
 			UID:              uid,
 			ICalBlob:         basicICal(uid, start, end, summary, location),
 			DTStart:          start,
@@ -1096,8 +1101,13 @@ func (e *EAS) applyClientChanges(c *call) {
 			if summary == "" {
 				summary = ev.Summary
 			}
+			maxPerMonth := 0
+			if e.cfg != nil {
+				maxPerMonth = e.cfg.Calendar.MaxEventsPerMonth
+			}
 			_, err := store.NewEvents().Upsert(c.ctx, e.db, store.WriteEventRequest{
 				CalendarID:   folderID,
+				MaxPerMonth:  maxPerMonth,
 				UID:          ev.UID,
 				RecurrenceID: recID,
 				ICalBlob:     ev.ICalBlob,
@@ -1613,9 +1623,14 @@ func (e *EAS) cmdFolderCreate(c *call, w *WBXMLWriter) *easErr {
 	switch folderType {
 	case folderTypeUserCalendar:
 		owner := c.owner()
+		maxPerOwner := 0
+		if e.cfg != nil {
+			maxPerOwner = e.cfg.Calendar.MaxPerUser
+		}
 		cal, cerr := store.NewCalendars().Create(c.ctx, e.db, store.CreateCalendarRequest{
-			Owner: &owner,
-			Name:  strings.TrimSpace(name),
+			Owner:       &owner,
+			Name:        strings.TrimSpace(name),
+			MaxPerOwner: maxPerOwner,
 		})
 		if cerr != nil {
 			if errors.Is(cerr, store.ErrConflict) {

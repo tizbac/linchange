@@ -26,6 +26,10 @@ type Service struct {
 	events    *store.Events
 	groups    *store.Workgroups
 	limits    recurrence.Limits
+	// Sanity limits from the deployment, zero for none. They protect clients
+	// from a list somebody else made hostile, not the server's storage.
+	maxCalendars   int
+	maxEventMonths int
 }
 
 // NewService returns a service over the given repositories.
@@ -44,6 +48,25 @@ func (s *Service) WithLimits(l recurrence.Limits) *Service {
 	clone.limits = l
 	return &clone
 }
+
+// WithQuotas returns a copy of the service using the deployment's sanity
+// limits. Zero means no limit, and the copy has the same reason as
+// [`WithLimits`]: a request with another ceiling must not change every other
+// request's.
+func (s *Service) WithQuotas(maxCalendars, maxEventMonths int) *Service {
+	clone := *s
+	clone.maxCalendars = maxCalendars
+	clone.maxEventMonths = maxEventMonths
+	return &clone
+}
+
+// MaxCalendarsPerUser is the configured cap on one person's calendars and on
+// the calendars their list shows. Zero is unlimited.
+func (s *Service) MaxCalendarsPerUser() int { return s.maxCalendars }
+
+// MaxEventsPerMonth is the configured cap on one calendar's events in one
+// month. Zero is unlimited.
+func (s *Service) MaxEventsPerMonth() int { return s.maxEventMonths }
 
 // Target builds the authorization target for a calendar.
 //
@@ -440,7 +463,13 @@ func (s *Service) Create(ctx context.Context, q store.Querier, who policy.Princi
 		ev.ShowAs = ical.ShowAsBusy
 	}
 
-	return s.events.Create(ctx, q, writeRequest(cal.ID, who.Address, ev))
+	return s.events.Create(ctx, q, s.withQuota(writeRequest(cal.ID, who.Address, ev)))
+}
+
+// withQuota carries the deployment's monthly limit into a store write.
+func (s *Service) withQuota(req store.WriteEventRequest) store.WriteEventRequest {
+	req.MaxPerMonth = s.maxEventMonths
+	return req
 }
 
 // StoreCopy files an event in the principal's default calendar, replacing any
@@ -460,7 +489,7 @@ func (s *Service) StoreCopy(ctx context.Context, q store.Querier, who policy.Pri
 	if err != nil {
 		return store.Event{}, err
 	}
-	return s.events.Upsert(ctx, q, writeRequest(cal.ID, who.Address, ev))
+	return s.events.Upsert(ctx, q, s.withQuota(writeRequest(cal.ID, who.Address, ev)))
 }
 
 // RemoveCopy removes the principal's copy of an event by UID. It is the
@@ -535,7 +564,7 @@ func (s *Service) Update(ctx context.Context, q store.Querier, who policy.Princi
 	// is the only signal the other side has that something changed.
 	ev.Sequence = existing.Sequence + 1
 
-	req := writeRequest(cal.ID, who.Address, ev)
+	req := s.withQuota(writeRequest(cal.ID, who.Address, ev))
 	// A cancellation is a status, and a client editing a cancelled event back
 	// into a live one has to be allowed to clear it.
 	req.Cancelled = ev.IsCancelled()

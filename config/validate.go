@@ -50,6 +50,7 @@ func (c *Config) Validate() error {
 	v.validateLDAP()
 	v.validateMail()
 	v.validateExchange()
+	v.validateCalendar()
 	v.validateMeetings()
 	v.validateWebRTC()
 	v.validateLog()
@@ -477,9 +478,22 @@ func (v *validator) validateExchange() {
 // deployment that says nothing about meetings has no public URL to check, and
 // one that sets it must point at an address an invitee can reach. Chat is
 // native, so there is no external chat server to validate.
+func (v *validator) validateCalendar() {
+	cal := v.server().Calendar
+	if cal.MaxPerUser < 0 {
+		v.addf("calendar.max_per_user must not be negative, got %d", cal.MaxPerUser)
+	}
+	if cal.MaxEventsPerMonth < 0 {
+		v.addf("calendar.max_events_per_month must not be negative, got %d", cal.MaxEventsPerMonth)
+	}
+}
+
 func (v *validator) validateMeetings() {
 	c := v.server()
 	m := c.Meetings
+	if m.MaxActivePerUser < 0 {
+		v.addf("meetings.max_active_per_user must not be negative, got %d", m.MaxActivePerUser)
+	}
 	if m.PublicURL == "" {
 		return
 	}

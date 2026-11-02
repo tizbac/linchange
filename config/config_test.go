@@ -581,3 +581,22 @@ func TestLockoutScopeInheritsTimingsForTheOtherScope(t *testing.T) {
 			account.Window, account.Duration)
 	}
 }
+
+// TestSanityLimitDefaults pins the shipped calendar and meeting limits: they
+// exist to keep a hostile list from reaching a client, so loosening them has to
+// be a deliberate change with a test to answer for it.
+func TestSanityLimitDefaults(t *testing.T) {
+	cfg, err := Load(writeConfig(t, minimalConfig))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Calendar.MaxPerUser != 16 {
+		t.Errorf("calendar.max_per_user = %d, want 16", cfg.Calendar.MaxPerUser)
+	}
+	if cfg.Calendar.MaxEventsPerMonth != 1000 {
+		t.Errorf("calendar.max_events_per_month = %d, want 1000", cfg.Calendar.MaxEventsPerMonth)
+	}
+	if cfg.Meetings.MaxActivePerUser != 32 {
+		t.Errorf("meetings.max_active_per_user = %d, want 32", cfg.Meetings.MaxActivePerUser)
+	}
+}

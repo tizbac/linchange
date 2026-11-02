@@ -393,7 +393,7 @@ func New(opts Options) (*Server, error) {
 		store.NewCalendars(),
 		store.NewEvents(),
 		store.NewWorkgroups(),
-	)
+	).WithQuotas(cfg.Calendar.MaxPerUser, cfg.Calendar.MaxEventsPerMonth)
 
 	// The CalDAV server is built here for standard calendar clients (Thunderbird,
 	// iOS/macOS Calendar, Evolution, etc.). It uses the same calendar service.
@@ -430,12 +430,13 @@ func New(opts Options) (*Server, error) {
 	// email per guest with their own reply link, and a chat room in the local
 	// chat store.
 	meetingsService, err := meetings.New(meetings.Options{
-		DB:        opts.DB,
-		Mail:      mailService,
-		Calendar:  calService,
-		Chat:      chatService,
-		PublicURL: cfg.MeetingsPublicURL(),
-		Logger:    log,
+		DB:               opts.DB,
+		Mail:             mailService,
+		Calendar:         calService,
+		Chat:             chatService,
+		PublicURL:        cfg.MeetingsPublicURL(),
+		MaxActivePerUser: cfg.Meetings.MaxActivePerUser,
+		Logger:           log,
 	})
 	if err != nil {
 		return nil, err
@@ -974,6 +975,9 @@ func mapErrorCode(err error) int {
 	}
 	if errors.Is(err, store.ErrConflict) {
 		return http.StatusConflict
+	}
+	if errors.Is(err, store.ErrLimit) {
+		return http.StatusTooManyRequests
 	}
 	if errors.Is(err, calendar.ErrDenied) {
 		return http.StatusForbidden

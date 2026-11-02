@@ -34,6 +34,8 @@ var (
 	ErrNotFound = errors.New("store: not found")
 	// ErrConflict is returned when a unique constraint would be violated.
 	ErrConflict = errors.New("store: already exists")
+	// ErrLimit is returned when a configured sanity limit would be crossed.
+	ErrLimit = errors.New("store: limit reached")
 	// ErrQuotaExceeded is returned when an operation would push a mailbox
 	// over its owner's quota.
 	ErrQuotaExceeded = errors.New("store: quota exceeded")

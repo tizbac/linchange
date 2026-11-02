@@ -78,6 +78,11 @@ type CreateCalendarRequest struct {
 	Description  string
 	ShowFreeBusy *bool
 	IsDefault    bool
+	// MaxPerOwner is the configured number of calendars one owner may have.
+	// Zero is unlimited. It is a request setting, never persisted, and the
+	// count and insert share a transaction and an owner lock so two requests
+	// cannot both see the last free slot.
+	MaxPerOwner int
 }
 
 // Calendars reads and writes the calendars table.
@@ -117,15 +122,45 @@ func (c *Calendars) Create(ctx context.Context, q Querier, req CreateCalendarReq
 		RETURNING ` + calendarColumns
 
 	var out Calendar
-	if err := q.GetContext(ctx, &out, query,
-		owner, workgroup, req.Name, req.Color, req.Timezone,
-		req.Description, showFreeBusy, req.IsDefault); err != nil {
-		if IsConflict(err) {
-			return Calendar{}, ErrConflict
+	err = InQuerierTx(ctx, q, func(tx *sqlx.Tx) error {
+		if owner != nil && req.MaxPerOwner > 0 {
+			// Serialise creations for one owner: counting rows and inserting
+			// them are two statements, and two requests that each saw the
+			// last free slot would otherwise both take it.
+			if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, *owner); err != nil {
+				return fmt.Errorf("store: locking calendar owner: %w", err)
+			}
+			var n int
+			if err := tx.GetContext(ctx, &n, `SELECT count(*) FROM calendars WHERE owner = $1`, *owner); err != nil {
+				return fmt.Errorf("store: counting calendars: %w", err)
+			}
+			if n >= req.MaxPerOwner {
+				return fmt.Errorf("%w: %s already has %d calendars (the limit is %d)", ErrLimit, *owner, n, req.MaxPerOwner)
+			}
 		}
-		return Calendar{}, fmt.Errorf("store: creating calendar: %w", err)
+		if err := tx.GetContext(ctx, &out, query,
+			owner, workgroup, req.Name, req.Color, req.Timezone,
+			req.Description, showFreeBusy, req.IsDefault); err != nil {
+			if IsConflict(err) {
+				return ErrConflict
+			}
+			return fmt.Errorf("store: creating calendar: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return Calendar{}, err
 	}
 	return out, nil
+}
+
+// CountOwned returns how many calendars an address owns.
+func (c *Calendars) CountOwned(ctx context.Context, q Querier, owner string) (int, error) {
+	var n int
+	if err := q.GetContext(ctx, &n, `SELECT count(*) FROM calendars WHERE owner = $1`, owner); err != nil {
+		return 0, fmt.Errorf("store: counting calendars: %w", err)
+	}
+	return n, nil
 }
 
 // calendarOwner validates that exactly one of owner and workgroup is set, so
@@ -492,6 +527,10 @@ type WriteEventRequest struct {
 	Timezone     string
 	AllDay       bool
 	RRULE        *string
+	// MaxPerMonth is the configured number of events one calendar may hold in
+	// the month DTStart falls in. Zero is unlimited. It is a request setting,
+	// never persisted.
+	MaxPerMonth int
 
 	Summary          string
 	Location         string
@@ -518,6 +557,9 @@ func (e *Events) Create(ctx context.Context, q Querier, req WriteEventRequest) (
 
 	var out Event
 	err := InQuerierTx(ctx, q, func(tx *sqlx.Tx) error {
+		if err := e.checkMonthLimit(ctx, tx, req, 0); err != nil {
+			return err
+		}
 		row, err := e.insert(ctx, tx, req)
 		if err != nil {
 			return err
@@ -549,6 +591,38 @@ func validateWrite(req WriteEventRequest) error {
 	if req.DTEnd.Before(req.DTStart) {
 		return fmt.Errorf("store: the event ends (%s) before it starts (%s)",
 			req.DTEnd, req.DTStart)
+	}
+	return nil
+}
+
+// checkMonthLimit refuses one more event in the month DTStart falls in, when
+// the configured limit would be crossed. `exclude` is the row being edited, so
+// changing an event in place does not count it twice.
+//
+// The count and the write share a transaction and a lock keyed by the calendar
+// and month: without it two simultaneous creates that each saw the last free
+// slot would both take it. The lock is released when the transaction ends.
+func (e *Events) checkMonthLimit(ctx context.Context, q Querier, req WriteEventRequest, exclude int64) error {
+	if req.MaxPerMonth <= 0 {
+		return nil
+	}
+	start := req.DTStart.UTC()
+	first := time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, time.UTC)
+	next := first.AddDate(0, 1, 0)
+	key := fmt.Sprintf("%d:%04d-%02d", req.CalendarID, first.Year(), first.Month())
+	if _, err := q.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, key); err != nil {
+		return fmt.Errorf("store: locking the calendar month: %w", err)
+	}
+	var n int
+	if err := q.GetContext(ctx, &n,
+		`SELECT count(*) FROM events
+		 WHERE calendar_id = $1 AND dtstart >= $2 AND dtstart < $3 AND id <> $4`,
+		req.CalendarID, first, next, exclude); err != nil {
+		return fmt.Errorf("store: counting the month's events: %w", err)
+	}
+	if n >= req.MaxPerMonth {
+		return fmt.Errorf("%w: this calendar already has %d events in %04d-%02d (the limit is %d)",
+			ErrLimit, n, first.Year(), first.Month(), req.MaxPerMonth)
 	}
 	return nil
 }
@@ -685,9 +759,15 @@ func (e *Events) Upsert(ctx context.Context, q Querier, req WriteEventRequest) (
 			req.CalendarID, req.UID, req.RecurrenceID)
 		switch {
 		case err == nil:
+			if err := e.checkMonthLimit(ctx, tx, req, id); err != nil {
+				return err
+			}
 			out, err = e.update(ctx, tx, id, req)
 			return err
 		case IsNotFound(err):
+			if err := e.checkMonthLimit(ctx, tx, req, 0); err != nil {
+				return err
+			}
 			out, err = e.insert(ctx, tx, req)
 			return err
 		default:

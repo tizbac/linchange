@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, ElementRef, OnInit, computed, inject, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ContactsApi } from '../core/contacts/contacts-api';
 import {
@@ -10,6 +10,7 @@ import {
   Suggestion,
   VCardPreview,
 } from '../core/contacts/contacts.models';
+import { gravatarUrl, initials } from '../core/contacts/gravatar';
 import { errorMessage } from '../core/http-error';
 import { OrganizationApi, OrganizationGroup } from '../core/organization/organization-api';
 
@@ -23,7 +24,9 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
     <main class="mx-auto max-w-6xl px-6 py-10">
       <header class="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 class="text-2xl font-semibold tracking-tight text-slate-900" i18n="@@contacts.title">Contacts</h1>
+          <h1 class="text-2xl font-semibold tracking-tight text-slate-900" i18n="@@contacts.title">
+            Contacts
+          </h1>
           <p class="mt-1 text-sm text-slate-500" i18n="@@contacts.subtitle">
             Your personal book, books shared with you, and the organization directory.
           </p>
@@ -39,17 +42,27 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
       </header>
 
       @if (error()) {
-        <p class="mt-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-rose-200">{{ error() }}</p>
+        <p class="mt-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-rose-200">
+          {{ error() }}
+        </p>
       }
       @if (ok()) {
-        <p class="mt-4 rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-700 ring-1 ring-emerald-200">{{ ok() }}</p>
+        <p
+          class="mt-4 rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-700 ring-1 ring-emerald-200"
+        >
+          {{ ok() }}
+        </p>
       }
 
       @if (offers().length > 0) {
         <section class="mt-5 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-          <h2 class="text-lg font-semibold text-slate-900" i18n="@@contacts.sharedWithYou">Shared with you</h2>
+          <h2 class="text-lg font-semibold text-slate-900" i18n="@@contacts.sharedWithYou">
+            Shared with you
+          </h2>
           @for (offer of offers(); track offer.id) {
-            <div class="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 p-3">
+            <div
+              class="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 p-3"
+            >
               <span class="text-sm text-slate-700" i18n="@@contacts.offerLine">
                 <span class="font-medium">{{ offer.bookOwner }}</span> shared
                 <span class="font-medium">{{ offer.bookName }}</span> with you
@@ -80,7 +93,9 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
 
       @if (showNewBook()) {
         <section class="mt-5 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-          <h2 class="text-lg font-semibold text-slate-900" i18n="@@contacts.newBookTitle">New address book</h2>
+          <h2 class="text-lg font-semibold text-slate-900" i18n="@@contacts.newBookTitle">
+            New address book
+          </h2>
           <form class="mt-3 grid gap-3 sm:grid-cols-2" (ngSubmit)="createBook()">
             <label class="block">
               <span class="text-sm font-medium text-slate-700" i18n="@@contacts.name">Name</span>
@@ -94,7 +109,9 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
               />
             </label>
             <label class="block">
-              <span class="text-sm font-medium text-slate-700" i18n="@@contacts.descriptionOptional">Description (optional)</span>
+              <span class="text-sm font-medium text-slate-700" i18n="@@contacts.descriptionOptional"
+                >Description (optional)</span
+              >
               <input
                 class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                 name="bookDescription"
@@ -102,13 +119,17 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
               />
             </label>
             <div class="flex gap-2 sm:col-span-2">
-              <button type="submit" [disabled]="busy() || !newBook.name.trim()"
+              <button
+                type="submit"
+                [disabled]="busy() || !newBook.name.trim()"
                 class="rounded-lg bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-800 disabled:opacity-50"
                 i18n="@@contacts.create"
               >
                 Create
               </button>
-              <button type="button" (click)="showNewBook.set(false)"
+              <button
+                type="button"
+                (click)="showNewBook.set(false)"
                 class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 i18n="@@contacts.cancel"
               >
@@ -138,7 +159,10 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
               </span>
             </button>
           } @empty {
-            <p class="rounded-xl bg-white p-4 text-sm text-slate-500 ring-1 ring-slate-200" i18n="@@contacts.loading">
+            <p
+              class="rounded-xl bg-white p-4 text-sm text-slate-500 ring-1 ring-slate-200"
+              i18n="@@contacts.loading"
+            >
               Loading address books…
             </p>
           }
@@ -164,7 +188,9 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
                     >
                       New contact
                     </button>
-                    <label class="cursor-pointer rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                    <label
+                      class="cursor-pointer rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    >
                       Import vCard
                       <input
                         type="file"
@@ -206,52 +232,105 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
               <input
                 class="mt-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                 name="contactSearch"
-                [(ngModel)]="contactQuery"
+                [ngModel]="contactQuery()"
+                (ngModelChange)="setContactQuery($event)"
                 placeholder="Search this book by name, address, phone or organization"
                 i18n-placeholder="@@contacts.searchPlaceholder"
               />
 
-              <ul class="mt-3 divide-y divide-slate-100">
-                @for (contact of filteredContacts(); track contact.id) {
-                  <li>
-                    <button
-                      type="button"
-                      (click)="openContact(contact)"
-                      class="flex w-full flex-wrap items-center justify-between gap-2 py-3 text-left hover:bg-slate-50"
-                    >
-                      <span class="min-w-0">
-                        <span class="block text-sm font-medium text-slate-900">
-                          {{ contact.displayName || contact.emails?.[0]?.value || noName }}
+              <div class="mt-3 flex gap-2">
+                <div
+                  #contactScroller
+                  class="h-[28rem] min-w-0 flex-1 overflow-y-auto rounded-xl ring-1 ring-slate-100"
+                  (scroll)="onContactScroll($event)"
+                >
+                  @if (contactCount() === 0) {
+                    <p class="px-3 py-8 text-center text-sm text-slate-400">
+                      {{ contactQuery() ? noMatch : emptyBook }}
+                    </p>
+                  } @else {
+                    <!-- The full list's height stays in the scrollbar; only the rows in
+                         view are in the DOM, so a hostile book cannot cost the client
+                         thousands of nodes. -->
+                    <div [style.height.px]="contactTopPad()"></div>
+                    @for (contact of visibleContacts(); track contact.id) {
+                      <button
+                        type="button"
+                        (click)="openContact(contact)"
+                        [style.height.px]="contactRowHeight"
+                        class="flex w-full items-center justify-between gap-3 overflow-hidden border-b border-slate-100 px-2 text-left hover:bg-slate-50"
+                      >
+                        <span
+                          class="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-100 text-xs font-semibold text-brand-800"
+                        >
+                          <span aria-hidden="true">{{ contactInitials(contact) }}</span>
+                          @if (contactAvatar(contact); as avatar) {
+                            <img
+                              [src]="avatar"
+                              alt=""
+                              loading="lazy"
+                              decoding="async"
+                              class="absolute inset-0 h-full w-full object-cover"
+                              (error)="avatarFailedFor(contact.id)"
+                            />
+                          }
                         </span>
-                        <span class="block text-xs text-slate-500">
-                          {{ contact.organization || '' }}
-                          @if (contact.organization && contact.title) { · }
-                          {{ contact.title || '' }}
+                        <span class="min-w-0 flex-1">
+                          <span class="block truncate text-sm font-medium text-slate-900">
+                            {{ contact.displayName || contact.emails?.[0]?.value || noName }}
+                          </span>
+                          <span class="block truncate text-xs text-slate-500">
+                            {{ contact.organization || '' }}
+                            @if (contact.organization && contact.title) {
+                              ·
+                            }
+                            {{ contact.title || '' }}
+                          </span>
                         </span>
-                      </span>
-                      <span class="text-right text-xs text-slate-500">
-                        <span class="block">{{ contact.emails?.[0]?.value || '' }}</span>
-                        <span class="block">{{ contact.phones?.[0]?.value || '' }}</span>
-                      </span>
-                    </button>
-                  </li>
-                } @empty {
-                  <li class="py-6 text-center text-sm text-slate-400">
-                    {{ contactQuery ? noMatch : emptyBook }}
-                  </li>
+                        <span
+                          class="max-w-[45%] shrink-0 truncate text-right text-xs text-slate-500"
+                        >
+                          <span class="block truncate">{{ contact.emails?.[0]?.value || '' }}</span>
+                          <span class="block truncate">{{ contact.phones?.[0]?.value || '' }}</span>
+                        </span>
+                      </button>
+                    }
+                    <div [style.height.px]="contactBottomPad()"></div>
+                  }
+                </div>
+                @if (contactCount() > 0) {
+                  <nav
+                    class="flex w-7 shrink-0 flex-col items-center overflow-y-auto rounded-xl bg-slate-50 py-1 text-[11px] font-medium ring-1 ring-slate-100"
+                  >
+                    @for (letter of alphabet; track letter) {
+                      <button
+                        type="button"
+                        (click)="jumpToLetter(letter)"
+                        [disabled]="!letters().has(letter)"
+                        class="flex h-5 w-5 items-center justify-center rounded-full text-slate-600 hover:bg-white hover:text-brand-700 disabled:cursor-default disabled:text-slate-300"
+                      >
+                        {{ letter }}
+                      </button>
+                    }
+                  </nav>
                 }
-              </ul>
+              </div>
             </div>
 
             @if (showShare()) {
               <div class="mt-4 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-                <h3 class="text-base font-semibold text-slate-900" i18n="@@contacts.shareTitle">Share this address book</h3>
+                <h3 class="text-base font-semibold text-slate-900" i18n="@@contacts.shareTitle">
+                  Share this address book
+                </h3>
                 <p class="mt-1 text-sm text-slate-500" i18n="@@contacts.shareHint">
-                  The person or group is offered the book by email and must accept before it appears.
+                  The person or group is offered the book by email and must accept before it
+                  appears.
                 </p>
                 <form class="mt-3 grid gap-3 sm:grid-cols-3" (ngSubmit)="share(book)">
                   <label class="block">
-                    <span class="text-sm font-medium text-slate-700" i18n="@@contacts.shareWith">Share with</span>
+                    <span class="text-sm font-medium text-slate-700" i18n="@@contacts.shareWith"
+                      >Share with</span
+                    >
                     <select
                       class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                       name="shareKind"
@@ -263,7 +342,9 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
                   </label>
                   @if (shareForm.subjectKind === 'user') {
                     <label class="block">
-                      <span class="text-sm font-medium text-slate-700" i18n="@@contacts.address">Address</span>
+                      <span class="text-sm font-medium text-slate-700" i18n="@@contacts.address"
+                        >Address</span
+                      >
                       <input
                         class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                         name="shareAddress"
@@ -274,7 +355,9 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
                     </label>
                   } @else {
                     <label class="block">
-                      <span class="text-sm font-medium text-slate-700" i18n="@@contacts.group">Group</span>
+                      <span class="text-sm font-medium text-slate-700" i18n="@@contacts.group"
+                        >Group</span
+                      >
                       <select
                         class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                         name="shareGroup"
@@ -288,7 +371,9 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
                     </label>
                   }
                   <label class="block">
-                    <span class="text-sm font-medium text-slate-700" i18n="@@contacts.access">Access</span>
+                    <span class="text-sm font-medium text-slate-700" i18n="@@contacts.access"
+                      >Access</span
+                    >
                     <select
                       class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                       name="shareLevel"
@@ -315,8 +400,12 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
                     @for (item of shares(); track item.id) {
                       <li class="flex flex-wrap items-center justify-between gap-2 py-2">
                         <span class="text-sm text-slate-700">
-                          {{ item.subjectAddress || item.groupName || groupLabel(item.subjectGroupId) }}
-                          <span class="text-xs text-slate-400">· {{ levelLabel(item.level) }} · {{ statusLabel(item.status) }}</span>
+                          {{
+                            item.subjectAddress || item.groupName || groupLabel(item.subjectGroupId)
+                          }}
+                          <span class="text-xs text-slate-400"
+                            >· {{ levelLabel(item.level) }} · {{ statusLabel(item.status) }}</span
+                          >
                         </span>
                         <button
                           type="button"
@@ -333,7 +422,10 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
               </div>
             }
           } @else {
-            <p class="rounded-2xl bg-white p-6 text-sm text-slate-500 shadow-sm ring-1 ring-slate-200" i18n="@@contacts.chooseBook">
+            <p
+              class="rounded-2xl bg-white p-6 text-sm text-slate-500 shadow-sm ring-1 ring-slate-200"
+              i18n="@@contacts.chooseBook"
+            >
               Choose an address book.
             </p>
           }
@@ -347,23 +439,35 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
           </h2>
           <form class="mt-4 grid gap-4 sm:grid-cols-2" (ngSubmit)="saveContact()">
             <label class="block sm:col-span-2">
-              <span class="text-sm font-medium text-slate-700" i18n="@@contacts.displayName">Display name</span>
+              <span class="text-sm font-medium text-slate-700" i18n="@@contacts.displayName"
+                >Display name</span
+              >
               <input class="{{ input }}" name="displayName" [(ngModel)]="draft.displayName" />
             </label>
             <label class="block">
-              <span class="text-sm font-medium text-slate-700" i18n="@@contacts.firstName">First name</span>
+              <span class="text-sm font-medium text-slate-700" i18n="@@contacts.firstName"
+                >First name</span
+              >
               <input class="{{ input }}" name="firstName" [(ngModel)]="draft.firstName" />
             </label>
             <label class="block">
-              <span class="text-sm font-medium text-slate-700" i18n="@@contacts.lastName">Last name</span>
+              <span class="text-sm font-medium text-slate-700" i18n="@@contacts.lastName"
+                >Last name</span
+              >
               <input class="{{ input }}" name="lastName" [(ngModel)]="draft.lastName" />
             </label>
 
             <fieldset class="sm:col-span-2">
-              <legend class="text-sm font-medium text-slate-700" i18n="@@contacts.emails">Email addresses</legend>
+              <legend class="text-sm font-medium text-slate-700" i18n="@@contacts.emails">
+                Email addresses
+              </legend>
               @for (email of draft.emails ?? []; track $index) {
                 <div class="mt-2 flex gap-2">
-                  <select class="{{ input }} w-28" [name]="'emailType' + $index" [(ngModel)]="email.type">
+                  <select
+                    class="{{ input }} w-28"
+                    [name]="'emailType' + $index"
+                    [(ngModel)]="email.type"
+                  >
                     <option value="work" i18n="@@contacts.work">Work</option>
                     <option value="home" i18n="@@contacts.home">Home</option>
                     <option value="other" i18n="@@contacts.other">Other</option>
@@ -375,19 +479,37 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
                     type="email"
                     [(ngModel)]="email.value"
                   />
-                  <button type="button" (click)="removeEmail($index)" class="text-xs text-rose-600" i18n="@@contacts.removeEmail">Remove</button>
+                  <button
+                    type="button"
+                    (click)="removeEmail($index)"
+                    class="text-xs text-rose-600"
+                    i18n="@@contacts.removeEmail"
+                  >
+                    Remove
+                  </button>
                 </div>
               }
-              <button type="button" (click)="addEmail()" class="mt-2 text-xs font-medium text-brand-700" i18n="@@contacts.addEmail">
+              <button
+                type="button"
+                (click)="addEmail()"
+                class="mt-2 text-xs font-medium text-brand-700"
+                i18n="@@contacts.addEmail"
+              >
                 + Add email
               </button>
             </fieldset>
 
             <fieldset class="sm:col-span-2">
-              <legend class="text-sm font-medium text-slate-700" i18n="@@contacts.phones">Phone numbers</legend>
+              <legend class="text-sm font-medium text-slate-700" i18n="@@contacts.phones">
+                Phone numbers
+              </legend>
               @for (phone of draft.phones ?? []; track $index) {
                 <div class="mt-2 flex gap-2">
-                  <select class="{{ input }} w-28" [name]="'phoneType' + $index" [(ngModel)]="phone.type">
+                  <select
+                    class="{{ input }} w-28"
+                    [name]="'phoneType' + $index"
+                    [(ngModel)]="phone.type"
+                  >
                     <option value="work" i18n="@@contacts.work">Work</option>
                     <option value="cell" i18n="@@contacts.mobile">Mobile</option>
                     <option value="home" i18n="@@contacts.home">Home</option>
@@ -401,67 +523,132 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
                     type="tel"
                     [(ngModel)]="phone.value"
                   />
-                  <button type="button" (click)="removePhone($index)" class="text-xs text-rose-600" i18n="@@contacts.removePhone">Remove</button>
+                  <button
+                    type="button"
+                    (click)="removePhone($index)"
+                    class="text-xs text-rose-600"
+                    i18n="@@contacts.removePhone"
+                  >
+                    Remove
+                  </button>
                 </div>
               }
-              <button type="button" (click)="addPhone()" class="mt-2 text-xs font-medium text-brand-700" i18n="@@contacts.addPhone">
+              <button
+                type="button"
+                (click)="addPhone()"
+                class="mt-2 text-xs font-medium text-brand-700"
+                i18n="@@contacts.addPhone"
+              >
                 + Add phone
               </button>
             </fieldset>
 
             <label class="block">
-              <span class="text-sm font-medium text-slate-700" i18n="@@contacts.organization">Organization</span>
+              <span class="text-sm font-medium text-slate-700" i18n="@@contacts.organization"
+                >Organization</span
+              >
               <input class="{{ input }}" name="organization" [(ngModel)]="draft.organization" />
             </label>
             <label class="block">
-              <span class="text-sm font-medium text-slate-700" i18n="@@contacts.department">Department</span>
+              <span class="text-sm font-medium text-slate-700" i18n="@@contacts.department"
+                >Department</span
+              >
               <input class="{{ input }}" name="department" [(ngModel)]="draft.department" />
             </label>
             <label class="block">
-              <span class="text-sm font-medium text-slate-700" i18n="@@contacts.jobTitle">Job title</span>
+              <span class="text-sm font-medium text-slate-700" i18n="@@contacts.jobTitle"
+                >Job title</span
+              >
               <input class="{{ input }}" name="title" [(ngModel)]="draft.title" />
             </label>
             <label class="block">
-              <span class="text-sm font-medium text-slate-700" i18n="@@contacts.website">Website</span>
+              <span class="text-sm font-medium text-slate-700" i18n="@@contacts.website"
+                >Website</span
+              >
               <input class="{{ input }}" name="website" [(ngModel)]="draft.website" />
             </label>
 
             <fieldset class="sm:col-span-2">
-              <legend class="text-sm font-medium text-slate-700" i18n="@@contacts.address">Address</legend>
+              <legend class="text-sm font-medium text-slate-700" i18n="@@contacts.address">
+                Address
+              </legend>
               <div class="mt-2 grid gap-2 sm:grid-cols-2">
-                <input class="{{ input }}" name="street" placeholder="Street" i18n-placeholder="@@contacts.street" [(ngModel)]="draft.addresses![0].street" />
-                <input class="{{ input }}" name="city" placeholder="City" i18n-placeholder="@@contacts.city" [(ngModel)]="draft.addresses![0].city" />
-                <input class="{{ input }}" name="region" placeholder="State / region" i18n-placeholder="@@contacts.region" [(ngModel)]="draft.addresses![0].region" />
-                <input class="{{ input }}" name="postalCode" placeholder="Postal code" i18n-placeholder="@@contacts.postalCode" [(ngModel)]="draft.addresses![0].postalCode" />
-                <input class="{{ input }}" name="country" placeholder="Country" i18n-placeholder="@@contacts.country" [(ngModel)]="draft.addresses![0].country" />
+                <input
+                  class="{{ input }}"
+                  name="street"
+                  placeholder="Street"
+                  i18n-placeholder="@@contacts.street"
+                  [(ngModel)]="draft.addresses![0].street"
+                />
+                <input
+                  class="{{ input }}"
+                  name="city"
+                  placeholder="City"
+                  i18n-placeholder="@@contacts.city"
+                  [(ngModel)]="draft.addresses![0].city"
+                />
+                <input
+                  class="{{ input }}"
+                  name="region"
+                  placeholder="State / region"
+                  i18n-placeholder="@@contacts.region"
+                  [(ngModel)]="draft.addresses![0].region"
+                />
+                <input
+                  class="{{ input }}"
+                  name="postalCode"
+                  placeholder="Postal code"
+                  i18n-placeholder="@@contacts.postalCode"
+                  [(ngModel)]="draft.addresses![0].postalCode"
+                />
+                <input
+                  class="{{ input }}"
+                  name="country"
+                  placeholder="Country"
+                  i18n-placeholder="@@contacts.country"
+                  [(ngModel)]="draft.addresses![0].country"
+                />
               </div>
             </fieldset>
 
             <label class="block">
-              <span class="text-sm font-medium text-slate-700" i18n="@@contacts.birthday">Birthday</span>
+              <span class="text-sm font-medium text-slate-700" i18n="@@contacts.birthday"
+                >Birthday</span
+              >
               <input class="{{ input }}" name="birthday" type="date" [(ngModel)]="draft.birthday" />
             </label>
             <label class="block sm:col-span-2">
               <span class="text-sm font-medium text-slate-700" i18n="@@contacts.notes">Notes</span>
-              <textarea class="{{ input }}" name="notes" rows="3" [(ngModel)]="draft.notes"></textarea>
+              <textarea
+                class="{{ input }}"
+                name="notes"
+                rows="3"
+                [(ngModel)]="draft.notes"
+              ></textarea>
             </label>
 
             <div class="flex gap-2 sm:col-span-2">
-              <button type="submit" [disabled]="busy() || !draft.displayName.trim()"
+              <button
+                type="submit"
+                [disabled]="busy() || !draft.displayName.trim()"
                 class="rounded-lg bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-800 disabled:opacity-50"
                 i18n="@@contacts.save"
               >
                 Save
               </button>
               @if (editingId()) {
-                <button type="button" (click)="deleteCurrentContact()"
+                <button
+                  type="button"
+                  (click)="deleteCurrentContact()"
                   class="rounded-lg border border-rose-300 px-4 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50"
                   i18n="@@contacts.delete"
                 >
                   Delete
                 </button>
               }
-              <button type="button" (click)="showEditor.set(false)"
+              <button
+                type="button"
+                (click)="showEditor.set(false)"
                 class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 i18n="@@contacts.cancel"
               >
@@ -472,15 +659,23 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
         </section>
       }
       @if (importPreview(); as preview) {
-        <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" (click)="importPreview.set(null)">
-          <div class="max-h-[80vh] w-full max-w-2xl overflow-auto rounded-2xl bg-white p-5 shadow-xl ring-1 ring-slate-200" (click)="$event.stopPropagation()">
+        <div
+          class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
+          (click)="importPreview.set(null)"
+        >
+          <div
+            class="max-h-[80vh] w-full max-w-2xl overflow-auto rounded-2xl bg-white p-5 shadow-xl ring-1 ring-slate-200"
+            (click)="$event.stopPropagation()"
+          >
             <h2 class="text-lg font-semibold text-slate-900">Import contacts</h2>
             <p class="mt-1 text-sm text-slate-500">
-              {{ preview.length }} contacts in this file.
-              {{ duplicateCount(preview) }} already exist or repeat a card.
+              {{ preview.length }} contacts in this file. {{ duplicateCount(preview) }} already
+              exist or repeat a card.
             </p>
             <table class="mt-4 w-full text-sm">
-              <thead class="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-400">
+              <thead
+                class="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-400"
+              >
                 <tr>
                   <th class="pb-2">Name</th>
                   <th class="pb-2">Email</th>
@@ -494,11 +689,15 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
                     <td class="py-2 text-slate-600">{{ (card.emails ?? []).join(', ') }}</td>
                     <td class="py-2">
                       @if (card.duplicate) {
-                        <span class="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                        <span
+                          class="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
+                        >
                           duplicate — {{ card.match }}
                         </span>
                       } @else {
-                        <span class="rounded bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
+                        <span
+                          class="rounded bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800"
+                        >
                           new
                         </span>
                       }
@@ -508,7 +707,11 @@ import { OrganizationApi, OrganizationGroup } from '../core/organization/organiz
               </tbody>
             </table>
             <div class="mt-5 flex justify-end gap-2">
-              <button type="button" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm" (click)="importPreview.set(null)">
+              <button
+                type="button"
+                class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+                (click)="importPreview.set(null)"
+              >
                 Cancel
               </button>
               <button
@@ -560,7 +763,68 @@ export class ContactsComponent implements OnInit {
   // ngModel, and the editor is the only place that reads it.
   protected draft: ContactInput = emptyContact();
 
-  protected contactQuery = '';
+  protected readonly contactQuery = signal('');
+  protected readonly alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('');
+  // A row is one fixed height, which is what lets the scrollbar describe the
+  // whole book while only the rows in view exist in the DOM.
+  protected readonly contactRowHeight = 64;
+  private readonly contactViewportHeight = 448; // h-[28rem]
+  private readonly contactOverscan = 6;
+  private readonly contactScroller = viewChild<ElementRef<HTMLDivElement>>('contactScroller');
+  protected readonly contactScrollTop = signal(0);
+  private readonly avatarFailed = signal<Set<number>>(new Set());
+  private readonly avatarUrls = new Map<string, string | null>();
+  protected readonly filtered = computed(() => {
+    const q = this.contactQuery().trim().toLowerCase();
+    const list = q
+      ? this.contacts().filter((contact) => {
+          const haystack = [
+            contact.displayName,
+            contact.organization,
+            contact.title,
+            ...(contact.emails ?? []).map((e) => e.value),
+            ...(contact.phones ?? []).map((p) => p.value),
+          ]
+            .join(' ')
+            .toLowerCase();
+          return haystack.includes(q);
+        })
+      : [...this.contacts()];
+    // Name is the address-book default, whichever order the server sent.
+    return list.sort((a, b) =>
+      this.contactName(a).localeCompare(this.contactName(b), undefined, { sensitivity: 'base' }),
+    );
+  });
+  protected readonly contactCount = computed(() => this.filtered().length);
+  protected readonly letters = computed(
+    () => new Set(this.filtered().map((contact) => this.initial(this.contactName(contact)))),
+  );
+  protected readonly visibleContacts = computed(() => {
+    const all = this.filtered();
+    const start = Math.max(
+      0,
+      Math.floor(this.contactScrollTop() / this.contactRowHeight) - this.contactOverscan,
+    );
+    const count =
+      Math.ceil(this.contactViewportHeight / this.contactRowHeight) + 2 * this.contactOverscan;
+    return all.slice(start, start + count);
+  });
+  protected readonly contactTopPad = computed(() => {
+    const start = Math.max(
+      0,
+      Math.floor(this.contactScrollTop() / this.contactRowHeight) - this.contactOverscan,
+    );
+    return start * this.contactRowHeight;
+  });
+  protected readonly contactBottomPad = computed(() =>
+    Math.max(
+      0,
+      (this.contactCount() -
+        this.visibleContacts().length -
+        this.contactTopPad() / this.contactRowHeight) *
+        this.contactRowHeight,
+    ),
+  );
   protected newBook = { name: '', description: '' };
   protected shareForm: {
     subjectKind: 'user' | 'group';
@@ -571,7 +835,10 @@ export class ContactsComponent implements OnInit {
 
   async ngOnInit(): Promise<void> {
     await this.load();
-    void this.orgApi.groups().then((res) => this.groups.set(res.groups ?? [])).catch(() => undefined);
+    void this.orgApi
+      .groups()
+      .then((res) => this.groups.set(res.groups ?? []))
+      .catch(() => undefined);
   }
 
   protected async load(): Promise<void> {
@@ -583,7 +850,7 @@ export class ContactsComponent implements OnInit {
       this.offers.set(offers.offers ?? []);
       const current = this.selectedBook();
       const next = current
-        ? this.books().find((b) => b.id === current.id) ?? this.books()[0]
+        ? (this.books().find((b) => b.id === current.id) ?? this.books()[0])
         : this.books()[0];
       if (next) {
         await this.selectBook(next);
@@ -599,11 +866,13 @@ export class ContactsComponent implements OnInit {
     this.selectedBook.set(book);
     this.showEditor.set(false);
     this.showShare.set(false);
-    this.contactQuery = '';
+    this.setContactQuery('');
     try {
       const [contacts, shares] = await Promise.all([
         this.api.listContacts(book.id),
-        book.isOwner && book.scope === 'shared' ? this.api.listShares(book.id) : Promise.resolve({ shares: [] }),
+        book.isOwner && book.scope === 'shared'
+          ? this.api.listShares(book.id)
+          : Promise.resolve({ shares: [] }),
       ]);
       this.contacts.set(contacts.contacts ?? []);
       this.shares.set(shares.shares ?? []);
@@ -612,21 +881,58 @@ export class ContactsComponent implements OnInit {
     }
   }
 
-  protected filteredContacts(): Contact[] {
-    const q = this.contactQuery.trim().toLowerCase();
-    if (!q) return this.contacts();
-    return this.contacts().filter((contact) => {
-      const haystack = [
-        contact.displayName,
-        contact.organization,
-        contact.title,
-        ...(contact.emails ?? []).map((e) => e.value),
-        ...(contact.phones ?? []).map((p) => p.value),
-      ]
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(q);
-    });
+  private contactName(contact: Contact): string {
+    const full = [contact.firstName, contact.lastName].filter((part) => part?.trim()).join(' ');
+    return (contact.displayName || full || contact.emails?.[0]?.value || '').trim();
+  }
+
+  private initial(name: string): string {
+    const first = (name.normalize('NFD').match(/[A-Za-z]/)?.[0] ?? '').toUpperCase();
+    return first || '#';
+  }
+
+  protected contactInitials(contact: Contact): string {
+    return initials(this.contactName(contact));
+  }
+
+  protected contactAvatar(contact: Contact): string | null {
+    if (this.avatarFailed().has(contact.id)) return null;
+    const email = contact.emails?.[0]?.value?.trim().toLowerCase();
+    if (!email) return null;
+    if (!this.avatarUrls.has(email)) this.avatarUrls.set(email, gravatarUrl(email, 80));
+    return this.avatarUrls.get(email) ?? null;
+  }
+
+  protected avatarFailedFor(id: number): void {
+    this.avatarFailed.update((failed) => new Set([...failed, id]));
+  }
+
+  protected setContactQuery(value: string): void {
+    this.contactQuery.set(value);
+    this.resetContactScroll();
+  }
+
+  private resetContactScroll(): void {
+    this.contactScrollTop.set(0);
+    const scroller = this.contactScroller()?.nativeElement;
+    if (scroller) scroller.scrollTop = 0;
+  }
+
+  protected onContactScroll(event: Event): void {
+    this.contactScrollTop.set((event.target as HTMLElement).scrollTop);
+  }
+
+  protected jumpToLetter(letter: string): void {
+    const at = this.filtered().findIndex(
+      (contact) => this.initial(this.contactName(contact)) === letter,
+    );
+    if (at < 0) return;
+    const scroller = this.contactScroller()?.nativeElement;
+    // The selected row is placed a little below the top, as an address book
+    // does, rather than hidden under the border.
+    const top = Math.max(0, at * this.contactRowHeight - this.contactRowHeight);
+    if (scroller) scroller.scrollTop = top;
+    this.contactScrollTop.set(top);
   }
 
   protected scopeLabel(book: AddressBook): string {
@@ -773,9 +1079,11 @@ export class ContactsComponent implements OnInit {
       } else {
         await this.api.createContact(book.id, this.draft);
       }
-      this.ok.set(editing
-        ? $localize`:@@contacts.updated:Contact updated.`
-        : $localize`:@@contacts.added:Contact added.`);
+      this.ok.set(
+        editing
+          ? $localize`:@@contacts.updated:Contact updated.`
+          : $localize`:@@contacts.added:Contact added.`,
+      );
       this.showEditor.set(false);
       await this.selectBook(book);
     } catch (err) {
@@ -808,7 +1116,10 @@ export class ContactsComponent implements OnInit {
     this.busy.set(true);
     this.error.set('');
     try {
-      const book = await this.api.createBook(this.newBook.name.trim(), this.newBook.description.trim());
+      const book = await this.api.createBook(
+        this.newBook.name.trim(),
+        this.newBook.description.trim(),
+      );
       this.ok.set($localize`:@@contacts.bookCreated:${book.name} was created.`);
       this.newBook = { name: '', description: '' };
       this.showNewBook.set(false);
@@ -821,7 +1132,10 @@ export class ContactsComponent implements OnInit {
   }
 
   protected async renameBook(book: AddressBook): Promise<void> {
-    const name = prompt($localize`:@@contacts.renamePrompt:New name for the address book`, book.name);
+    const name = prompt(
+      $localize`:@@contacts.renamePrompt:New name for the address book`,
+      book.name,
+    );
     if (!name || !name.trim() || name.trim() === book.name) return;
     this.busy.set(true);
     try {
@@ -835,7 +1149,12 @@ export class ContactsComponent implements OnInit {
   }
 
   protected async deleteBook(book: AddressBook): Promise<void> {
-    if (!confirm($localize`:@@contacts.deleteBookConfirm:Delete the address book "${book.name}" and all its contacts?`)) return;
+    if (
+      !confirm(
+        $localize`:@@contacts.deleteBookConfirm:Delete the address book "${book.name}" and all its contacts?`,
+      )
+    )
+      return;
     this.busy.set(true);
     try {
       await this.api.deleteBook(book.id);
@@ -867,7 +1186,9 @@ export class ContactsComponent implements OnInit {
         subject_group_id: user ? undefined : this.shareForm.groupId,
         level: this.shareForm.level,
       });
-      this.ok.set($localize`:@@contacts.offerSent:Offer sent. It appears for them once they accept.`);
+      this.ok.set(
+        $localize`:@@contacts.offerSent:Offer sent. It appears for them once they accept.`,
+      );
       this.shareForm.address = '';
       this.shareForm.groupId = 0;
       await this.selectBook(book);
@@ -896,9 +1217,11 @@ export class ContactsComponent implements OnInit {
     this.busy.set(true);
     try {
       await this.api.decideOffer(offer.id, decision);
-      this.ok.set(decision === 'accept'
-        ? $localize`:@@contacts.bookAccepted:Address book accepted.`
-        : $localize`:@@contacts.offerDeclined:Offer declined.`);
+      this.ok.set(
+        decision === 'accept'
+          ? $localize`:@@contacts.bookAccepted:Address book accepted.`
+          : $localize`:@@contacts.offerDeclined:Offer declined.`,
+      );
       await this.load();
     } catch (err) {
       this.error.set(errorMessage(err));

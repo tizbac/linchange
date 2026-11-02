@@ -1,5 +1,13 @@
 import { NgClass } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  ElementRef,
+  computed,
+  inject,
+  signal,
+  viewChild,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { ContactsApi } from '../core/contacts/contacts-api';
@@ -38,7 +46,9 @@ function defaults() {
     <main class="mx-auto max-w-4xl px-6 py-10">
       <header class="flex items-center justify-between">
         <div>
-          <h1 class="text-3xl font-semibold tracking-tight text-slate-900" i18n="@@meetings.title">Meetings</h1>
+          <h1 class="text-3xl font-semibold tracking-tight text-slate-900" i18n="@@meetings.title">
+            Meetings
+          </h1>
           <p class="mt-1 text-sm text-slate-500" i18n="@@meetings.intro">
             A meeting is a calendar event with an invitation: every guest is mailed a link that
             works whether or not they have an account here.
@@ -59,11 +69,15 @@ function defaults() {
 
       @if (creating()) {
         <section class="mt-6 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-          <h2 class="text-lg font-semibold text-slate-900" i18n="@@meetings.newTitle">New meeting</h2>
+          <h2 class="text-lg font-semibold text-slate-900" i18n="@@meetings.newTitle">
+            New meeting
+          </h2>
 
           <div class="mt-4 grid gap-4 sm:grid-cols-2">
             <label class="block sm:col-span-2">
-              <span class="text-sm font-medium text-slate-700" i18n="@@meetings.titleLabel">Title</span>
+              <span class="text-sm font-medium text-slate-700" i18n="@@meetings.titleLabel"
+                >Title</span
+              >
               <input
                 type="text"
                 [(ngModel)]="title"
@@ -106,7 +120,10 @@ function defaults() {
 
             <label class="block sm:col-span-2">
               <span class="text-sm font-medium text-slate-700" i18n="@@meetings.guestsLabel">
-                Guests <span class="font-normal text-slate-400">— one per line, "Bob &lt;bob&#64;example.com&gt;" or just the address</span>
+                Guests
+                <span class="font-normal text-slate-400"
+                  >— one per line, "Bob &lt;bob&#64;example.com&gt;" or just the address</span
+                >
               </span>
               <textarea
                 [(ngModel)]="attendeesText"
@@ -124,7 +141,9 @@ function defaults() {
             <div class="relative sm:col-span-2">
               <span class="text-sm font-medium text-slate-700" i18n="@@meetings.contactsLabel">
                 Add from contacts
-                <span class="font-normal text-slate-400">— search your books and the organization directory</span>
+                <span class="font-normal text-slate-400"
+                  >— search your books and the organization directory</span
+                >
               </span>
               <input
                 class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
@@ -170,7 +189,10 @@ function defaults() {
                  meeting without this list being rewritten. -->
             <div class="sm:col-span-2">
               <span class="text-sm font-medium text-slate-700" i18n="@@meetings.groupsLabel">
-                Groups <span class="font-normal text-slate-400">— invited whole, at whatever they hold when the invitation goes out</span>
+                Groups
+                <span class="font-normal text-slate-400"
+                  >— invited whole, at whatever they hold when the invitation goes out</span
+                >
               </span>
               @if (orgGroups().length > 0) {
                 <div class="mt-1 flex flex-wrap gap-2">
@@ -190,7 +212,12 @@ function defaults() {
                         (change)="toggleGroup(g)"
                       />
                       {{ g.name }}
-                      <span class="text-xs" [ngClass]="invitedGroups().includes(g.id) ? 'text-brand-600' : 'text-slate-400'">
+                      <span
+                        class="text-xs"
+                        [ngClass]="
+                          invitedGroups().includes(g.id) ? 'text-brand-600' : 'text-slate-400'
+                        "
+                      >
                         {{ g.everyone ? wholeOrganization : memberCount(g.member_count) }}
                       </span>
                     </label>
@@ -205,7 +232,9 @@ function defaults() {
 
             <!-- A webinar is chosen here, with the invitation, so every guest
                  knows before they join that only the organiser will speak. -->
-            <label class="flex items-start gap-3 rounded-lg border border-slate-200 p-3 sm:col-span-2">
+            <label
+              class="flex items-start gap-3 rounded-lg border border-slate-200 p-3 sm:col-span-2"
+            >
               <input
                 type="checkbox"
                 [(ngModel)]="oneWay"
@@ -213,7 +242,9 @@ function defaults() {
                 class="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
               />
               <span>
-                <span class="text-sm font-medium text-slate-700" i18n="@@meetings.oneWay">One-way conference (webinar)</span>
+                <span class="text-sm font-medium text-slate-700" i18n="@@meetings.oneWay"
+                  >One-way conference (webinar)</span
+                >
                 <span class="block text-xs text-slate-400" i18n="@@meetings.oneWayHint">
                   Only you speak. Guests stay muted and can raise a hand to ask for the floor.
                 </span>
@@ -221,7 +252,9 @@ function defaults() {
             </label>
 
             <label class="block">
-              <span class="text-sm font-medium text-slate-700" i18n="@@meetings.expiryLabel">Room available for (hours)</span>
+              <span class="text-sm font-medium text-slate-700" i18n="@@meetings.expiryLabel"
+                >Room available for (hours)</span
+              >
               <input
                 type="number"
                 min="1"
@@ -231,13 +264,15 @@ function defaults() {
                 class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
               <span class="mt-1 block text-xs text-slate-400" i18n="@@meetings.expiryHint">
-                The link and room stop working this long after the meeting ends. Default 12, maximum 24.
+                The link and room stop working this long after the meeting ends. Default 12, maximum
+                24.
               </span>
             </label>
 
             <label class="block">
               <span class="text-sm font-medium text-slate-700" i18n="@@meetings.location">
-                Location <span class="font-normal text-slate-400">(optional; the join link fills in)</span>
+                Location
+                <span class="font-normal text-slate-400">(optional; the join link fills in)</span>
               </span>
               <input
                 type="text"
@@ -249,7 +284,9 @@ function defaults() {
               />
             </label>
             <label class="block">
-              <span class="text-sm font-medium text-slate-700" i18n="@@meetings.timezone">Shown in</span>
+              <span class="text-sm font-medium text-slate-700" i18n="@@meetings.timezone"
+                >Shown in</span
+              >
               <input
                 type="text"
                 [(ngModel)]="timezone"
@@ -288,7 +325,9 @@ function defaults() {
                 <span i18n="@@meetings.create">Create and invite</span>
               }
             </button>
-            <span class="text-sm text-slate-500" i18n="@@meetings.inviteHint">Invitations go out immediately, one per guest.</span>
+            <span class="text-sm text-slate-500" i18n="@@meetings.inviteHint"
+              >Invitations go out immediately, one per guest.</span
+            >
           </div>
         </section>
       }
@@ -298,7 +337,10 @@ function defaults() {
       }
 
       <div class="mt-8 flex flex-wrap items-center justify-between gap-3">
-        <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-500" i18n="@@meetings.listTitle">
+        <h2
+          class="text-sm font-semibold uppercase tracking-wide text-slate-500"
+          i18n="@@meetings.listTitle"
+        >
           Your meetings
         </h2>
         <label class="inline-flex cursor-pointer items-center gap-2 text-sm text-slate-600">
@@ -322,70 +364,75 @@ function defaults() {
             </p>
           </div>
         } @else {
-          <ul class="space-y-3">
-            @for (m of items(); track m.uid) {
-              <li>
+          <div
+            #meetingsScroller
+            class="h-[32rem] overflow-y-auto rounded-2xl"
+            (scroll)="onMeetingsScroll($event)"
+          >
+            <!-- Infinite scroll: pages arrive as the end comes into view, and only
+                 the rows around the viewport are in the DOM. -->
+            <div [style.height.px]="meetingTopPad()"></div>
+            @for (m of visibleMeetings(); track m.uid) {
+              <div [style.height.px]="meetingRowHeight">
                 <a
                   [routerLink]="['/meetings', m.uid]"
-                  class="block rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200 hover:ring-brand-400 transition-colors"
+                  [style.height.px]="meetingRowHeight - 12"
+                  class="block overflow-hidden rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 transition-colors hover:ring-brand-400"
                 >
                   <div class="flex items-start justify-between gap-4">
                     <div class="min-w-0">
                       <div class="flex items-center gap-2">
                         <span class="truncate font-medium text-slate-900">{{ m.title }}</span>
                         @if (m.cancelled) {
-                          <span class="rounded bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700" i18n="@@meetings.cancelled">Cancelled</span>
+                          <span
+                            class="rounded bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700"
+                            i18n="@@meetings.cancelled"
+                            >Cancelled</span
+                          >
                         }
                         @if (m.expired) {
-                          <span class="rounded bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600" i18n="@@meetings.expired">Expired</span>
+                          <span
+                            class="rounded bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600"
+                            i18n="@@meetings.expired"
+                            >Expired</span
+                          >
                         }
                         <span
                           class="rounded px-2 py-0.5 text-xs font-medium"
-                          [ngClass]="m.role === 'organizer' ? 'bg-brand-100 text-brand-800' : 'bg-slate-100 text-slate-600'"
+                          [ngClass]="
+                            m.role === 'organizer'
+                              ? 'bg-brand-100 text-brand-800'
+                              : 'bg-slate-100 text-slate-600'
+                          "
                         >
                           {{ m.role === 'organizer' ? organiserLabel : guestLabel }}
                         </span>
                       </div>
-                      <p class="mt-1 text-sm text-slate-600">{{ when(m) }}</p>
+                      <p class="mt-1 truncate text-sm text-slate-600">{{ when(m) }}</p>
                       @if (m.location) {
-                        <p class="mt-0.5 text-sm text-slate-400">{{ m.location }}</p>
+                        <p class="mt-0.5 truncate text-sm text-slate-400">{{ m.location }}</p>
                       }
                     </div>
                     <div class="shrink-0 text-right text-sm text-slate-500">
-                      <div i18n="@@meetings.acceptedCount">{{ m.acceptedCount }} of {{ m.attendeeCount }} accepted</div>
+                      <div i18n="@@meetings.acceptedCount">
+                        {{ m.acceptedCount }} of {{ m.attendeeCount }} accepted
+                      </div>
                       @if (m.myPartStat && m.myPartStat !== 'NEEDS-ACTION') {
-                        <div class="mt-0.5 text-slate-400" i18n="@@meetings.yourAnswer">You: {{ answer(m.myPartStat) }}</div>
+                        <div class="mt-0.5 text-slate-400" i18n="@@meetings.yourAnswer">
+                          You: {{ answer(m.myPartStat) }}
+                        </div>
                       }
                     </div>
                   </div>
                 </a>
-              </li>
+              </div>
             }
-          </ul>
-          <div class="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
-            <span i18n="@@meetings.pageSummary">
-              {{ total() }} meetings · page {{ page() + 1 }} of {{ pageCount() }}
-            </span>
-            <div class="flex gap-2">
-              <button
-                type="button"
-                [disabled]="page() === 0"
-                (click)="previousPage()"
-                class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
-                i18n="@@meetings.previous"
-              >
-                Previous
-              </button>
-              <button
-                type="button"
-                [disabled]="page() + 1 >= pageCount()"
-                (click)="nextPage()"
-                class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
-                i18n="@@meetings.next"
-              >
-                Next
-              </button>
-            </div>
+            <div [style.height.px]="meetingBottomPad()"></div>
+            @if (loadingMore()) {
+              <p class="py-3 text-center text-xs text-slate-400" i18n="@@meetings.loading">
+                Loading…
+              </p>
+            }
           </div>
         }
       </section>
@@ -414,13 +461,41 @@ export class MeetingsComponent {
   readonly saving = signal(false);
   readonly creating = signal(false);
 
-  // The list is paged. Expired meetings are hidden by default; they are the
-  // rows whose links no longer work, and they should not push live meetings
-  // off the page.
+  // The list loads a page at a time as the end comes into view. Expired
+  // meetings are hidden by default; they are the rows whose links no longer
+  // work, and they should not push live meetings off the list.
   readonly total = signal(0);
-  readonly page = signal(0);
-  readonly pageSize = 20;
-  readonly pageCount = computed(() => Math.max(1, Math.ceil(this.total() / this.pageSize)));
+  readonly loadingMore = signal(false);
+  private readonly pageSize = 20;
+  private readonly meetingsScroller = viewChild<ElementRef<HTMLDivElement>>('meetingsScroller');
+  protected readonly meetingRowHeight = 128;
+  private readonly meetingViewportHeight = 512; // h-[32rem]
+  private readonly meetingOverscan = 3;
+  private readonly meetingScrollTop = signal(0);
+  protected readonly visibleMeetings = computed(() => {
+    const all = this.items();
+    const start = Math.max(
+      0,
+      Math.floor(this.meetingScrollTop() / this.meetingRowHeight) - this.meetingOverscan,
+    );
+    const count =
+      Math.ceil(this.meetingViewportHeight / this.meetingRowHeight) + 2 * this.meetingOverscan;
+    return all.slice(start, start + count);
+  });
+  protected readonly meetingTopPad = computed(
+    () =>
+      Math.max(
+        0,
+        Math.floor(this.meetingScrollTop() / this.meetingRowHeight) - this.meetingOverscan,
+      ) * this.meetingRowHeight,
+  );
+  protected readonly meetingBottomPad = computed(
+    () =>
+      Math.max(
+        0,
+        this.total() - this.meetingTopPad() / this.meetingRowHeight - this.visibleMeetings().length,
+      ) * this.meetingRowHeight,
+  );
   includeExpired = false;
   // The room lifetime chosen in the form, measured from the meeting's end.
   // The server defaults to 12 and refuses more than 24.
@@ -463,45 +538,70 @@ export class MeetingsComponent {
 
   async load(): Promise<void> {
     this.loading.set(true);
+    this.loadingMore.set(false);
     this.loadError = '';
+    this.items.set([]);
+    this.total.set(0);
+    this.meetingScrollTop.set(0);
     try {
-      const offset = this.page() * this.pageSize;
-      const res = await this.api.list({
-        includeExpired: this.includeExpired,
-        limit: this.pageSize,
-        offset,
-      });
-      this.items.set(res.meetings);
-      this.total.set(res.total);
-      // Deleting or hiding the last row of a page leaves the page empty even
-      // though earlier rows exist. Step back to the last real page instead of
-      // showing "no meetings" next to a total that says otherwise.
-      if (res.meetings.length === 0 && res.total > 0 && offset > 0) {
-        this.page.set(Math.max(0, Math.ceil(res.total / this.pageSize) - 1));
-        await this.load();
-      }
-    } catch (err) {
-      this.loadError = errorMessage(err);
+      await this.loadMore();
     } finally {
       this.loading.set(false);
     }
   }
 
+  protected async loadMore(): Promise<void> {
+    if (this.loadingMore()) return;
+    const offset = this.items().length;
+    if (offset > 0 && offset >= this.total()) return;
+    this.loadingMore.set(true);
+    this.loadError = '';
+    const includeExpired = this.includeExpired;
+    let fetched = 0;
+    try {
+      const res = await this.api.list({
+        includeExpired,
+        limit: this.pageSize,
+        offset,
+      });
+      // A toggle while this page was in flight belongs to the other list.
+      if (includeExpired !== this.includeExpired) return;
+      fetched = res.meetings.length;
+      this.items.update((items) => (offset === 0 ? res.meetings : [...items, ...res.meetings]));
+      this.total.set(res.total);
+    } catch (err) {
+      this.loadError = errorMessage(err);
+    } finally {
+      this.loadingMore.set(false);
+    }
+    // The scrollbar can be dragged past the pages already fetched. Keep taking
+    // pages until the rows at that position exist, or the list is complete.
+    const wanted =
+      Math.ceil((this.meetingScrollTop() + this.meetingViewportHeight) / this.meetingRowHeight) +
+      this.meetingOverscan;
+    if (fetched > 0 && this.items().length < wanted && this.items().length < this.total()) {
+      void this.loadMore();
+    }
+  }
+
+  protected onMeetingsScroll(event: Event): void {
+    const el = event.target as HTMLElement;
+    this.meetingScrollTop.set(el.scrollTop);
+    // Load the next page while the last loaded rows are still a few rows away,
+    // so the list does not visibly stop at the bottom of a page.
+    const nearEnd =
+      el.scrollTop + el.clientHeight >=
+      this.items().length * this.meetingRowHeight - this.meetingRowHeight * 3;
+    if (nearEnd && this.items().length < this.total()) void this.loadMore();
+  }
+
   protected toggleExpired(): void {
     this.includeExpired = !this.includeExpired;
-    this.page.set(0);
-    void this.load();
-  }
-
-  protected previousPage(): void {
-    if (this.page() === 0) return;
-    this.page.update((p) => p - 1);
-    void this.load();
-  }
-
-  protected nextPage(): void {
-    if (this.page() + 1 >= this.pageCount()) return;
-    this.page.update((p) => p + 1);
+    // A different list starts at its beginning, including its scroll position.
+    queueMicrotask(() => {
+      const scroller = this.meetingsScroller()?.nativeElement;
+      if (scroller) scroller.scrollTop = 0;
+    });
     void this.load();
   }
 
@@ -540,7 +640,8 @@ export class MeetingsComponent {
     // An end before the start means the meeting runs past midnight: the next
     // day is what was meant, and rejecting it would only make the organiser
     // retype a meeting they had already described correctly.
-    const endAdjusted = end.getTime() <= start.getTime() ? new Date(end.getTime() + 24 * 3600 * 1000) : end;
+    const endAdjusted =
+      end.getTime() <= start.getTime() ? new Date(end.getTime() + 24 * 3600 * 1000) : end;
 
     const draft: MeetingDraft = {
       title,

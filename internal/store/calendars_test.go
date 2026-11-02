@@ -1339,3 +1339,62 @@ func TestDeletingAWorkgroupTakesItsCalendars(t *testing.T) {
 		t.Errorf("the workgroup calendar survived its workgroup: %v", err)
 	}
 }
+
+// TestSanityLimitsStopWrites checks the two row-count limits where they are
+// enforced: calendar creation and event insertion. Both are deliberately in the
+// store, so every path (web, CalDAV, EAS) meets the same answer.
+func TestSanityLimitsStopWrites(t *testing.T) {
+	database := testMigratedDB(t)
+	ctx := context.Background()
+	f := seedCalendarFixtures(t, database)
+	calendars := store.NewCalendars()
+
+	// Alice already has one calendar; with a cap of two she may add one more.
+	if _, err := calendars.Create(ctx, database, store.CreateCalendarRequest{
+		Owner: strptr(f.alice), Name: "Travel", MaxPerOwner: 2,
+	}); err != nil {
+		t.Fatalf("the second calendar: %v", err)
+	}
+	if _, err := calendars.Create(ctx, database, store.CreateCalendarRequest{
+		Owner: strptr(f.alice), Name: "Third", MaxPerOwner: 2,
+	}); !errors.Is(err, store.ErrLimit) {
+		t.Fatalf("the third calendar: err = %v, want ErrLimit", err)
+	}
+
+	events := store.NewEvents()
+	makeEvent := func(uid string, start time.Time, max int) error {
+		req := writeEvent(f.aliceCal, ical.Event{
+			UID: uid, Summary: uid, Start: start, End: start.Add(time.Hour),
+			Timezone: "UTC", DTStamp: start, Status: ical.StatusConfirmed,
+		})
+		req.MaxPerMonth = max
+		_, err := events.Create(ctx, database, req)
+		return err
+	}
+	if err := makeEvent("one", utc(2026, 3, 1, 9, 0), 2); err != nil {
+		t.Fatalf("the first event: %v", err)
+	}
+	if err := makeEvent("two", utc(2026, 3, 2, 9, 0), 2); err != nil {
+		t.Fatalf("the second event: %v", err)
+	}
+	if err := makeEvent("three", utc(2026, 3, 3, 9, 0), 2); !errors.Is(err, store.ErrLimit) {
+		t.Fatalf("the third event in March: err = %v, want ErrLimit", err)
+	}
+	// Another month is another quota, and an in-place update does not count
+	// itself twice.
+	if err := makeEvent("april", utc(2026, 4, 1, 9, 0), 2); err != nil {
+		t.Fatalf("an event in April: %v", err)
+	}
+	row, err := events.ByUID(ctx, database, f.aliceCal, "one", nil)
+	if err != nil {
+		t.Fatalf("reading the first event: %v", err)
+	}
+	update := writeEvent(f.aliceCal, ical.Event{
+		UID: row.UID, Summary: "one changed", Start: row.DTStart, End: row.DTEnd,
+		Timezone: row.Timezone, DTStamp: row.DTStamp, Status: row.Status,
+	})
+	update.MaxPerMonth = 2
+	if _, err := events.Upsert(ctx, database, update); err != nil {
+		t.Fatalf("changing an event already in the month: %v", err)
+	}
+}

@@ -703,3 +703,31 @@ func TestWithLimitsDoesNotMutateTheService(t *testing.T) {
 		t.Errorf("the original service was affected by its copy: %v", err)
 	}
 }
+
+// TestEventMonthQuotaReachesStore checks that the deployment's event limit is
+// carried into the write, not only kept on the service: a second event in the
+// same month is refused, while the same event being changed is not.
+func TestEventMonthQuotaReachesStore(t *testing.T) {
+	database := db(t)
+	c := seed(t, database)
+	ctx := context.Background()
+	limited := c.svc.WithQuotas(0, 1)
+
+	first, err := limited.Create(ctx, database, c.alice, calendar.Draft{
+		CalendarID: c.aliceCal, Event: baseEvent("First", utc(2026, 3, 10, 9, 0)),
+	})
+	if err != nil {
+		t.Fatalf("the first event: %v", err)
+	}
+	if _, err := limited.Create(ctx, database, c.alice, calendar.Draft{
+		CalendarID: c.aliceCal, Event: baseEvent("Second", utc(2026, 3, 11, 9, 0)),
+	}); !errors.Is(err, store.ErrLimit) {
+		t.Fatalf("the second event: err = %v, want ErrLimit", err)
+	}
+	edited := baseEvent("First changed", first.DTStart)
+	if _, err := limited.Update(ctx, database, c.alice, first.ID, calendar.Draft{
+		CalendarID: c.aliceCal, Event: edited,
+	}, 0); err != nil {
+		t.Fatalf("changing the event already in the month: %v", err)
+	}
+}

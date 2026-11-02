@@ -191,7 +191,10 @@ type Options struct {
 	// PublicURL is the base address invitation links are built from, with no
 	// trailing slash.
 	PublicURL string
-	Logger    *slog.Logger
+	// MaxActivePerUser is the configured number of non-expired meetings one
+	// person may organise. Zero is unlimited.
+	MaxActivePerUser int
+	Logger           *slog.Logger
 }
 
 // Service creates, lists and answers meetings.
@@ -205,6 +208,7 @@ type Service struct {
 	workgroups *store.Workgroups
 	chat       *chat.Service
 	publicURL  string
+	maxActive  int
 	log        *slog.Logger
 }
 
@@ -237,6 +241,7 @@ func New(opts Options) (*Service, error) {
 		// a base address that somehow arrived without a host ("https://")
 		// into "https:", and a repair must not be able to mangle further.
 		publicURL: strings.TrimSuffix(opts.PublicURL, "/"),
+		maxActive: opts.MaxActivePerUser,
 		log:       log,
 	}, nil
 }
@@ -360,6 +365,21 @@ func (s *Service) Create(ctx context.Context, who policy.Principal, d Draft) (*C
 		invitees []store.MeetingInvite
 	)
 	err = store.InTx(ctx, s.db, func(tx *sqlx.Tx) error {
+		if s.maxActive > 0 {
+			// Count and insert are one transaction under an organiser lock:
+			// two requests that each saw the last free slot must not both take it.
+			if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "meetings:"+organizer); err != nil {
+				return err
+			}
+			n, err := s.meetings.ActiveCountFor(ctx, tx, organizer, time.Now())
+			if err != nil {
+				return err
+			}
+			if n >= s.maxActive {
+				return fmt.Errorf("%w: %s already organises %d non-expired meetings (the limit is %d)",
+					store.ErrLimit, organizer, n, s.maxActive)
+			}
+		}
 		row, err := s.calendar.Create(ctx, tx, who, calendar.Draft{Event: ev})
 		if err != nil {
 			return err
