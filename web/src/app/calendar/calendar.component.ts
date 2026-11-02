@@ -45,7 +45,15 @@ import {
 } from '../core/calendar/calendar.models';
 import { Contact, OrganizationApi, OrganizationGroup } from '../core/organization/organization-api';
 import { errorMessage } from '../core/http-error';
-import { formatDateTime, formatDate, startOfDay, endOfDay, toRFC3339, parseRFC3339, toLocalInputValue } from '../core/calendar/ui';
+import {
+  formatDateTime,
+  formatDate,
+  startOfDay,
+  endOfDay,
+  toRFC3339,
+  parseRFC3339,
+  toLocalInputValue,
+} from '../core/calendar/ui';
 import { NgIf, NgFor, NgClass } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { CalIcon } from '../core/calendar/ui';
@@ -59,7 +67,9 @@ import { CalIcon } from '../core/calendar/ui';
   template: `
     <div class="h-[calc(100vh-80px)] flex flex-col min-h-[500px] px-4 pb-4 sm:px-6">
       <!-- Toolbar -->
-      <div class="flex items-center justify-between p-4 border-b bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+      <div
+        class="flex items-center justify-between p-4 border-b bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+      >
         <div class="flex items-center gap-4">
           <button
             type="button"
@@ -110,13 +120,19 @@ import { CalIcon } from '../core/calendar/ui';
               aria-expanded="calendarPickerOpen()"
             >
               <app-cal-icon name="calendar" [size]="16" />
-              <span class="hidden sm:inline">{{ visibleCalendars().length }} / {{ calendars().length }}</span>
+              <span class="hidden sm:inline"
+                >{{ visibleCalendars().length }} / {{ calendars().length }}</span
+              >
               <app-cal-icon name="chevron_down" [size]="14" />
             </button>
             @if (calendarPickerOpen()) {
-              <div class="absolute right-0 top-full mt-1 z-50 w-64 bg-white dark:bg-gray-900 rounded-lg shadow-lg ring-1 ring-gray-200 dark:ring-gray-700 py-1">
+              <div
+                class="absolute right-0 top-full mt-1 z-50 w-64 bg-white dark:bg-gray-900 rounded-lg shadow-lg ring-1 ring-gray-200 dark:ring-gray-700 py-1"
+              >
                 @for (cal of calendars(); track cal.id) {
-                  <label class="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer">
+                  <label
+                    class="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer"
+                  >
                     <input
                       type="checkbox"
                       [checked]="isCalendarVisible(cal.id)"
@@ -165,16 +181,31 @@ import { CalIcon } from '../core/calendar/ui';
 
       <!-- Offers Banner: calendars waiting for this person to answer -->
       @if (offers().length > 0) {
-        <div class="bg-amber-50 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800">
+        <div
+          class="bg-amber-50 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800"
+        >
           <div class="max-w-7xl mx-auto px-4 py-3">
-            <div class="flex flex-wrap items-center gap-3 text-sm text-amber-900 dark:text-amber-100">
+            <div
+              class="flex flex-wrap items-center gap-3 text-sm text-amber-900 dark:text-amber-100"
+            >
               <app-cal-icon name="users" [size]="18" class="flex-shrink-0" />
-              <span class="font-medium">You have {{ offers().length }} calendar offer{{ offers().length === 1 ? '' : 's' }} waiting for your answer:</span>
+              <span class="font-medium"
+                >You have {{ offers().length }} calendar offer{{
+                  offers().length === 1 ? '' : 's'
+                }}
+                waiting for your answer:</span
+              >
               @for (offer of offers(); track offer.id) {
-                <span class="flex items-center gap-2 bg-white dark:bg-gray-800 px-3 py-1.5 rounded-lg border border-amber-200 dark:border-amber-800">
+                <span
+                  class="flex items-center gap-2 bg-white dark:bg-gray-800 px-3 py-1.5 rounded-lg border border-amber-200 dark:border-amber-800"
+                >
                   <span class="font-medium">{{ offer.calendar_name }}</span>
-                  <span class="text-xs text-gray-500 dark:text-gray-400">from {{ offer.calendar_owner }}</span>
-                  <span class="px-2 py-0.5 text-xs bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200 rounded">
+                  <span class="text-xs text-gray-500 dark:text-gray-400"
+                    >from {{ offer.calendar_owner }}</span
+                  >
+                  <span
+                    class="px-2 py-0.5 text-xs bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200 rounded"
+                  >
                     {{ offer.level === 'write' ? 'edit' : 'view' }}
                   </span>
                   <button
@@ -202,22 +233,25 @@ import { CalIcon } from '../core/calendar/ui';
 
       <!-- Calendar -->
       <div class="flex-1 overflow-hidden relative min-h-0">
-        <full-calendar
-          #fullCalendar
-          [options]="calendarOptions"
-          class="h-full"
-        />
+        <full-calendar #fullCalendar [options]="calendarOptions" class="h-full" />
       </div>
 
       <!-- Event Detail Modal -->
       @if (selectedEvent()) {
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" (click)="closeEventDetail()">
+        <div
+          class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+          (click)="closeEventDetail()"
+        >
           <div
             class="bg-white dark:bg-gray-900 rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto text-gray-900 dark:text-gray-100"
             (click)="$event.stopPropagation()"
           >
-            <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-start justify-between">
-              <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">{{ selectedEvent()?.extendedProps?.['summary'] || 'Event' }}</h2>
+            <div
+              class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-start justify-between"
+            >
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                {{ selectedEvent()?.extendedProps?.['summary'] || 'Event' }}
+              </h2>
               <button
                 type="button"
                 class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
@@ -229,7 +263,9 @@ import { CalIcon } from '../core/calendar/ui';
             </div>
             <div class="p-4 space-y-3">
               <div>
-                <label class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Time</label>
+                <label class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase"
+                  >Time</label
+                >
                 <p class="text-sm text-gray-900 dark:text-gray-100">
                   @if (selectedEvent()?.allDay) {
                     All day
@@ -244,13 +280,19 @@ import { CalIcon } from '../core/calendar/ui';
               </div>
               @if (selectedEvent()?.extendedProps?.['location']) {
                 <div>
-                  <label class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Location</label>
-                  <p class="text-sm text-gray-900 dark:text-gray-100">{{ selectedEvent()!.extendedProps!['location'] }}</p>
+                  <label class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase"
+                    >Location</label
+                  >
+                  <p class="text-sm text-gray-900 dark:text-gray-100">
+                    {{ selectedEvent()!.extendedProps!['location'] }}
+                  </p>
                 </div>
               }
               @if (selectedEvent()?.extendedProps?.['attendees']?.length) {
                 <div>
-                  <label class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Attendees</label>
+                  <label class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase"
+                    >Attendees</label
+                  >
                   <ul class="text-sm space-y-1">
                     @for (a of selectedEvent()!.extendedProps!['attendees']; track a.address) {
                       <li class="flex items-center gap-2 text-gray-900 dark:text-gray-100">
@@ -260,12 +302,14 @@ import { CalIcon } from '../core/calendar/ui';
                             'bg-green-500': a.partStat === 'ACCEPTED',
                             'bg-yellow-500': a.partStat === 'TENTATIVE',
                             'bg-red-500': a.partStat === 'DECLINED',
-                            'bg-gray-400': a.partStat === 'NEEDS-ACTION'
+                            'bg-gray-400': a.partStat === 'NEEDS-ACTION',
                           }"
                         ></span>
                         {{ a.name || a.address }}
                         @if (a.partStat !== 'ACCEPTED') {
-                          <span class="text-xs text-gray-500 dark:text-gray-400 capitalize">{{ a.partStat?.toLowerCase().replace('-', ' ') }}</span>
+                          <span class="text-xs text-gray-500 dark:text-gray-400 capitalize">{{
+                            a.partStat?.toLowerCase().replace('-', ' ')
+                          }}</span>
                         }
                       </li>
                     }
@@ -293,7 +337,9 @@ import { CalIcon } from '../core/calendar/ui';
                   </button>
                 </div>
               } @else {
-                <p class="pt-2 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400">
+                <p
+                  class="pt-2 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400"
+                >
                   This calendar was shared with you as view only.
                 </p>
               }
@@ -305,12 +351,17 @@ import { CalIcon } from '../core/calendar/ui';
       <!-- Create calendar: a personal calendar is made the same way an event
            is, and it lands in the pickers the moment it exists. -->
       @if (createCalendarModal()) {
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" (click)="closeCreateCalendar()">
+        <div
+          class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+          (click)="closeCreateCalendar()"
+        >
           <div
             class="bg-white dark:bg-gray-900 rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto text-gray-900 dark:text-gray-100"
             (click)="$event.stopPropagation()"
           >
-            <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <div
+              class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between"
+            >
               <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">New calendar</h2>
               <button
                 type="button"
@@ -326,7 +377,10 @@ import { CalIcon } from '../core/calendar/ui';
                 <p class="text-sm text-rose-600 dark:text-rose-400">{{ calendarError() }}</p>
               }
               <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="calendar-name">
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+                  for="calendar-name"
+                >
                   Name
                 </label>
                 <input
@@ -340,7 +394,10 @@ import { CalIcon } from '../core/calendar/ui';
                 />
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="calendar-description">
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+                  for="calendar-description"
+                >
                   Description <span class="font-normal text-gray-400">(optional)</span>
                 </label>
                 <input
@@ -352,7 +409,10 @@ import { CalIcon } from '../core/calendar/ui';
                 />
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="calendar-colour">
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+                  for="calendar-colour"
+                >
                   Colour
                 </label>
                 <input
@@ -386,13 +446,20 @@ import { CalIcon } from '../core/calendar/ui';
 
       <!-- Sharing Modal -->
       @if (shareModal()) {
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" (click)="closeSharing()">
+        <div
+          class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+          (click)="closeSharing()"
+        >
           <div
             class="bg-white dark:bg-gray-900 rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto text-gray-900 dark:text-gray-100"
             (click)="$event.stopPropagation()"
           >
-            <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-              <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Who can see this calendar</h2>
+            <div
+              class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between"
+            >
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                Who can see this calendar
+              </h2>
               <button
                 type="button"
                 class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
@@ -404,7 +471,9 @@ import { CalIcon } from '../core/calendar/ui';
             </div>
             <div class="p-4 space-y-4">
               <div>
-                <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">Calendar</label>
+                <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100"
+                  >Calendar</label
+                >
                 <select
                   [ngModel]="shareCalendarId()"
                   (ngModelChange)="selectShareCalendar($event)"
@@ -413,7 +482,8 @@ import { CalIcon } from '../core/calendar/ui';
                 >
                   @for (cal of calendars(); track cal.id) {
                     <option [value]="cal.id">
-                      {{ cal.display_name || cal.name }}{{ cal.workgroup_id ? ' · organization' : '' }}
+                      {{ cal.display_name || cal.name
+                      }}{{ cal.workgroup_id ? ' · organization' : '' }}
                     </option>
                   }
                 </select>
@@ -424,7 +494,9 @@ import { CalIcon } from '../core/calendar/ui';
               }
 
               <div>
-                <span class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">Shared with</span>
+                <span class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100"
+                  >Shared with</span
+                >
                 @if (shares().length > 0) {
                   <ul class="divide-y divide-gray-200 dark:divide-gray-700">
                     @for (share of shares(); track share.id) {
@@ -464,9 +536,14 @@ import { CalIcon } from '../core/calendar/ui';
                 }
               </div>
 
-              <form (ngSubmit)="addShare()" class="space-y-3 border-t border-gray-200 dark:border-gray-700 pt-3">
+              <form
+                (ngSubmit)="addShare()"
+                class="space-y-3 border-t border-gray-200 dark:border-gray-700 pt-3"
+              >
                 <div>
-                  <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">Share with</label>
+                  <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100"
+                    >Share with</label
+                  >
                   <select
                     [(ngModel)]="shareSubject"
                     name="shareSubject"
@@ -475,13 +552,17 @@ import { CalIcon } from '../core/calendar/ui';
                     <option value="">Choose somebody…</option>
                     <optgroup label="People">
                       @for (p of orgPeople(); track p.address) {
-                        <option [value]="'user:' + p.address">{{ p.display_name || p.address }}</option>
+                        <option [value]="'user:' + p.address">
+                          {{ p.display_name || p.address }}
+                        </option>
                       }
                     </optgroup>
                     <optgroup label="Groups">
                       @for (g of orgGroups(); track g.id) {
                         <option [value]="'group:' + g.id">
-                          {{ g.name }} ({{ g.everyone ? 'the whole organization' : g.member_count + ' people' }})
+                          {{ g.name }} ({{
+                            g.everyone ? 'the whole organization' : g.member_count + ' people'
+                          }})
                         </option>
                       }
                     </optgroup>
@@ -533,13 +614,20 @@ import { CalIcon } from '../core/calendar/ui';
 
       <!-- Create/Edit Event Modal -->
       @if (showEditModal()) {
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" (click)="closeEditModal()">
+        <div
+          class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+          (click)="closeEditModal()"
+        >
           <div
             class="bg-white dark:bg-gray-900 rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto text-gray-900 dark:text-gray-100"
             (click)="$event.stopPropagation()"
           >
-            <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-              <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">{{ editingEvent()?.eventId ? 'Edit Event' : 'New Event' }}</h2>
+            <div
+              class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between"
+            >
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                {{ editingEvent()?.eventId ? 'Edit Event' : 'New Event' }}
+              </h2>
               <button
                 type="button"
                 class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
@@ -551,7 +639,9 @@ import { CalIcon } from '../core/calendar/ui';
             </div>
             <form (ngSubmit)="saveEvent()" class="p-4 space-y-4">
               <div>
-                <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">Title</label>
+                <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100"
+                  >Title</label
+                >
                 <input
                   type="text"
                   [(ngModel)]="editForm.title"
@@ -562,7 +652,9 @@ import { CalIcon } from '../core/calendar/ui';
                 />
               </div>
               <div>
-                <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">Calendar</label>
+                <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100"
+                  >Calendar</label
+                >
                 <select
                   [(ngModel)]="editForm.calendarId"
                   name="calendarId"
@@ -570,14 +662,18 @@ import { CalIcon } from '../core/calendar/ui';
                 >
                   @for (cal of calendars(); track cal.id) {
                     <option [value]="cal.id">
-                      {{ cal.display_name || cal.name }}{{ cal.workgroup_id ? ' · organization' : '' }}{{ cal.level === 'read' ? ' · view only' : '' }}
+                      {{ cal.display_name || cal.name
+                      }}{{ cal.workgroup_id ? ' · organization' : ''
+                      }}{{ cal.level === 'read' ? ' · view only' : '' }}
                     </option>
                   }
                 </select>
               </div>
               <div class="grid grid-cols-2 gap-3">
                 <div>
-                  <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">Start</label>
+                  <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100"
+                    >Start</label
+                  >
                   <input
                     type="datetime-local"
                     [(ngModel)]="editForm.start"
@@ -587,7 +683,9 @@ import { CalIcon } from '../core/calendar/ui';
                   />
                 </div>
                 <div>
-                  <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">End</label>
+                  <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100"
+                    >End</label
+                  >
                   <input
                     type="datetime-local"
                     [(ngModel)]="editForm.end"
@@ -608,7 +706,9 @@ import { CalIcon } from '../core/calendar/ui';
                 <label for="allDay" class="text-sm text-gray-900 dark:text-gray-100">All day</label>
               </div>
               <div>
-                <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">Location</label>
+                <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100"
+                  >Location</label
+                >
                 <input
                   type="text"
                   [(ngModel)]="editForm.location"
@@ -618,7 +718,9 @@ import { CalIcon } from '../core/calendar/ui';
                 />
               </div>
               <div>
-                <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">Timezone</label>
+                <label class="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100"
+                  >Timezone</label
+                >
                 <input
                   type="text"
                   [(ngModel)]="editForm.timezone"
@@ -633,7 +735,7 @@ import { CalIcon } from '../core/calendar/ui';
                   class="flex-1 px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
                   [disabled]="saving()"
                 >
-                  {{ saving() ? 'Saving...' : (editingEvent()?.eventId ? 'Save' : 'Create') }}
+                  {{ saving() ? 'Saving...' : editingEvent()?.eventId ? 'Save' : 'Create' }}
                 </button>
                 <button
                   type="button"
@@ -649,93 +751,162 @@ import { CalIcon } from '../core/calendar/ui';
       }
     </div>
   `,
-  styles: [`
-    :host {
-      display: block;
-      height: calc(100vh - 80px);
-      min-height: 500px;
-    }
-    .fc {
-      --fc-border-color: #e5e7eb;
-      --fc-button-bg-color: #2563eb;
-      --fc-button-border-color: #2563eb;
-      --fc-button-hover-bg-color: #1d4ed8;
-      --fc-button-hover-border-color: #1d4ed8;
-      --fc-button-active-bg-color: #1e40af;
-      --fc-button-active-border-color: #1e40af;
-      --fc-today-bg-color: #dbeafe;
-      --fc-event-bg-color: #2563eb;
-      --fc-event-border-color: #2563eb;
-      --fc-popover-bg: white;
-      --fc-popover-border-color: #e5e7eb;
-      /* Light theme text colors */
-      --fc-page-bg-color: white;
-      --fc-neutral-text-color: #111827;
-    }
-    .fc .fc-toolbar-title { color: #111827; }
-    .fc .fc-button { color: white; }
-    [data-theme="dark"] .fc {
-      --fc-border-color: #374151;
-      --fc-button-bg-color: #3b82f6;
-      --fc-button-border-color: #3b82f6;
-      --fc-button-hover-bg-color: #2563eb;
-      --fc-button-hover-border-color: #2563eb;
-      --fc-button-active-bg-color: #1d4ed8;
-      --fc-button-active-border-color: #1d4ed8;
-      --fc-today-bg-color: #1e3a5f;
-      --fc-event-bg-color: #3b82f6;
-      --fc-event-border-color: #3b82f6;
-      --fc-popover-bg: #1f2937;
-      --fc-popover-border-color: #374151;
-      /* Dark theme text colors */
-      --fc-page-bg-color: #111827;
-      --fc-neutral-text-color: #f3f4f6;
-    }
-    [data-theme="dark"] .fc .fc-toolbar-title { color: #f3f4f6; }
-    [data-theme="dark"] .fc .fc-button { color: white; }
-    [data-theme="dark"] .fc .fc-col-header-cell { background-color: #1f2937; color: #f3f4f6; }
-    [data-theme="dark"] .fc .fc-daygrid-day-number { color: #f3f4f6; }
-    [data-theme="dark"] .fc .fc-timegrid-slot-label { color: #9ca3af; }
-    [data-theme="dark"] .fc .fc-timegrid-axis { background-color: #1f2937; }
-    [data-theme="dark"] .fc .fc-timegrid-divider { border-color: #374151; }
-    /* Dark theme for event detail modal and edit modal */
-    [data-theme="dark"] .fixed.bg-white.dark\:bg-gray-900 { background-color: #1f2937; }
-    [data-theme="dark"] .fixed .bg-white.dark\:bg-gray-900 { background-color: #1f2937; }
-    [data-theme="dark"] .fixed .border-b { border-color: #374151; }
-    [data-theme="dark"] .fixed .border-t { border-color: #374151; }
-    [data-theme="dark"] .fixed label { color: #d1d5db; }
-    [data-theme="dark"] .fixed .text-gray-500 { color: #9ca3af; }
-    [data-theme="dark"] .fixed .text-gray-700 { color: #d1d5db; }
-    [data-theme="dark"] .fixed .text-sm { color: #d1d5db; }
-    [data-theme="dark"] .fixed input,
-    [data-theme="dark"] .fixed select,
-    [data-theme="dark"] .fixed textarea {
-      background-color: #374151;
-      border-color: #4b5563;
-      color: #f3f4f6;
-    }
-    [data-theme="dark"] .fixed input:focus,
-    [data-theme="dark"] .fixed select:focus {
-      border-color: #3b82f6;
-      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
-    }
-    [data-theme="dark"] .fixed input::placeholder { color: #9ca3af; }
-    [data-theme="dark"] .fixed .bg-gray-100.dark\:bg-gray-800 { background-color: #374151; }
-    [data-theme="dark"] .fixed .hover\:bg-gray-200.dark\:hover\:bg-gray-700:hover { background-color: #4b5563; }
-    [data-theme="dark"] .fixed .hover\:bg-gray-800:hover { background-color: #374151; }
-    [data-theme="dark"] .fixed .bg-gray-800 { background-color: #1f2937; }
-    [data-theme="dark"] .fixed .bg-red-50 { background-color: rgba(127, 29, 29, 0.3); }
-    [data-theme="dark"] .fixed .hover\:bg-red-100:hover { background-color: rgba(127, 29, 29, 0.5); }
-    [data-theme="dark"] .fixed .text-gray-400 { color: #9ca3af; }
-    [data-theme="dark"] .fixed .text-gray-300 { color: #d1d5db; }
-    [data-theme="dark"] .fixed .text-gray-600 { color: #9ca3af; }
-    [data-theme="dark"] .fixed .text-gray-900 { color: #f3f4f6; }
-    [data-theme="dark"] .fixed .text-blue-600 { color: #60a5fa; }
-    [data-theme="dark"] .fixed .focus\:ring-blue-500:focus { box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3); }
-    [data-theme="dark"] .fixed .border-gray-300 { border-color: #4b5563; }
-    [data-theme="dark"] .fixed .border-gray-200 { border-color: #374151; }
-    [data-theme="dark"] .fixed .text-red-600 { color: #f87171; }
-  `]
+  styles: [
+    `
+      :host {
+        display: block;
+        height: calc(100vh - 80px);
+        min-height: 500px;
+      }
+      .fc {
+        --fc-border-color: #e5e7eb;
+        --fc-button-bg-color: #2563eb;
+        --fc-button-border-color: #2563eb;
+        --fc-button-hover-bg-color: #1d4ed8;
+        --fc-button-hover-border-color: #1d4ed8;
+        --fc-button-active-bg-color: #1e40af;
+        --fc-button-active-border-color: #1e40af;
+        --fc-today-bg-color: #dbeafe;
+        --fc-event-bg-color: #2563eb;
+        --fc-event-border-color: #2563eb;
+        --fc-popover-bg: white;
+        --fc-popover-border-color: #e5e7eb;
+        /* Light theme text colors */
+        --fc-page-bg-color: white;
+        --fc-neutral-text-color: #111827;
+      }
+      .fc .fc-toolbar-title {
+        color: #111827;
+      }
+      .fc .fc-button {
+        color: white;
+      }
+      [data-theme='dark'] .fc {
+        --fc-border-color: #374151;
+        --fc-button-bg-color: #3b82f6;
+        --fc-button-border-color: #3b82f6;
+        --fc-button-hover-bg-color: #2563eb;
+        --fc-button-hover-border-color: #2563eb;
+        --fc-button-active-bg-color: #1d4ed8;
+        --fc-button-active-border-color: #1d4ed8;
+        --fc-today-bg-color: #1e3a5f;
+        --fc-event-bg-color: #3b82f6;
+        --fc-event-border-color: #3b82f6;
+        --fc-popover-bg: #1f2937;
+        --fc-popover-border-color: #374151;
+        /* Dark theme text colors */
+        --fc-page-bg-color: #111827;
+        --fc-neutral-text-color: #f3f4f6;
+      }
+      [data-theme='dark'] .fc .fc-toolbar-title {
+        color: #f3f4f6;
+      }
+      [data-theme='dark'] .fc .fc-button {
+        color: white;
+      }
+      [data-theme='dark'] .fc .fc-col-header-cell {
+        background-color: #1f2937;
+        color: #f3f4f6;
+      }
+      [data-theme='dark'] .fc .fc-daygrid-day-number {
+        color: #f3f4f6;
+      }
+      [data-theme='dark'] .fc .fc-timegrid-slot-label {
+        color: #9ca3af;
+      }
+      [data-theme='dark'] .fc .fc-timegrid-axis {
+        background-color: #1f2937;
+      }
+      [data-theme='dark'] .fc .fc-timegrid-divider {
+        border-color: #374151;
+      }
+      /* Dark theme for event detail modal and edit modal */
+      [data-theme='dark'] .fixed.bg-white.dark\:bg-gray-900 {
+        background-color: #1f2937;
+      }
+      [data-theme='dark'] .fixed .bg-white.dark\:bg-gray-900 {
+        background-color: #1f2937;
+      }
+      [data-theme='dark'] .fixed .border-b {
+        border-color: #374151;
+      }
+      [data-theme='dark'] .fixed .border-t {
+        border-color: #374151;
+      }
+      [data-theme='dark'] .fixed label {
+        color: #d1d5db;
+      }
+      [data-theme='dark'] .fixed .text-gray-500 {
+        color: #9ca3af;
+      }
+      [data-theme='dark'] .fixed .text-gray-700 {
+        color: #d1d5db;
+      }
+      [data-theme='dark'] .fixed .text-sm {
+        color: #d1d5db;
+      }
+      [data-theme='dark'] .fixed input,
+      [data-theme='dark'] .fixed select,
+      [data-theme='dark'] .fixed textarea {
+        background-color: #374151;
+        border-color: #4b5563;
+        color: #f3f4f6;
+      }
+      [data-theme='dark'] .fixed input:focus,
+      [data-theme='dark'] .fixed select:focus {
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+      }
+      [data-theme='dark'] .fixed input::placeholder {
+        color: #9ca3af;
+      }
+      [data-theme='dark'] .fixed .bg-gray-100.dark\:bg-gray-800 {
+        background-color: #374151;
+      }
+      [data-theme='dark'] .fixed .hover\:bg-gray-200.dark\:hover\:bg-gray-700:hover {
+        background-color: #4b5563;
+      }
+      [data-theme='dark'] .fixed .hover\:bg-gray-800:hover {
+        background-color: #374151;
+      }
+      [data-theme='dark'] .fixed .bg-gray-800 {
+        background-color: #1f2937;
+      }
+      [data-theme='dark'] .fixed .bg-red-50 {
+        background-color: rgba(127, 29, 29, 0.3);
+      }
+      [data-theme='dark'] .fixed .hover\:bg-red-100:hover {
+        background-color: rgba(127, 29, 29, 0.5);
+      }
+      [data-theme='dark'] .fixed .text-gray-400 {
+        color: #9ca3af;
+      }
+      [data-theme='dark'] .fixed .text-gray-300 {
+        color: #d1d5db;
+      }
+      [data-theme='dark'] .fixed .text-gray-600 {
+        color: #9ca3af;
+      }
+      [data-theme='dark'] .fixed .text-gray-900 {
+        color: #f3f4f6;
+      }
+      [data-theme='dark'] .fixed .text-blue-600 {
+        color: #60a5fa;
+      }
+      [data-theme='dark'] .fixed .focus\:ring-blue-500:focus {
+        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+      }
+      [data-theme='dark'] .fixed .border-gray-300 {
+        border-color: #4b5563;
+      }
+      [data-theme='dark'] .fixed .border-gray-200 {
+        border-color: #374151;
+      }
+      [data-theme='dark'] .fixed .text-red-600 {
+        color: #f87171;
+      }
+    `,
+  ],
 })
 export class CalendarComponent implements AfterViewInit, OnDestroy {
   private readonly api = inject(CalendarApi);
@@ -755,7 +926,9 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
   readonly selectedEvent = signal<EventApi | null>(null);
   readonly editingEvent = signal<EventModel | null>(null);
   readonly showEditModal = signal(false);
-  readonly view = signal<'dayGridMonth' | 'timeGridWeek' | 'timeGridDay' | 'listWeek'>('dayGridMonth');
+  readonly view = signal<'dayGridMonth' | 'timeGridWeek' | 'timeGridDay' | 'listWeek'>(
+    'dayGridMonth',
+  );
   readonly title = signal('');
   readonly saving = signal(false);
   readonly loading = signal(false);
@@ -803,7 +976,7 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
   toggleCalendarVisibility(id: number, event: Event): void {
     const checked = (event.target as HTMLInputElement).checked;
     this.hiddenCalendarIds.update((hidden) =>
-      checked ? hidden.filter((x) => x !== id) : [...hidden, id]
+      checked ? hidden.filter((x) => x !== id) : [...hidden, id],
     );
     // Also update FullCalendar's event sources
     this.updateFullCalendarEvents();
@@ -1123,10 +1296,38 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
     await this.loadCalendars();
     await this.loadOffers();
     await this.loadEvents();
+    // A CalDAV phone or desktop client writes to the same server. The page has
+    // no push channel, so it looks again now and then and when it comes back
+    // into view; otherwise an event made elsewhere waits for a reload.
+    this.refreshTimer = setInterval(() => void this.refreshFromServer(), 60_000);
   }
 
   ngOnDestroy(): void {
-    // Cleanup if needed
+    if (this.refreshTimer !== undefined) clearInterval(this.refreshTimer);
+  }
+
+  @HostListener('window:focus')
+  protected onWindowFocus(): void {
+    void this.refreshFromServer();
+  }
+
+  @HostListener('document:visibilitychange')
+  protected onVisibilityChange(): void {
+    if (!document.hidden) void this.refreshFromServer();
+  }
+
+  private refreshTimer?: ReturnType<typeof setInterval>;
+  private refreshing = false;
+
+  private async refreshFromServer(): Promise<void> {
+    if (this.refreshing || document.hidden) return;
+    this.refreshing = true;
+    try {
+      await this.loadCalendars();
+      await this.loadEvents(true);
+    } finally {
+      this.refreshing = false;
+    }
   }
 
   private async loadCalendars(): Promise<void> {
@@ -1154,14 +1355,14 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  private async loadEvents(): Promise<void> {
+  private async loadEvents(quiet = false): Promise<void> {
     const cal = this.calendarApi;
     if (!cal) return;
     const view = cal.view;
     const start = toRFC3339(view.activeStart);
     const end = toRFC3339(view.activeEnd);
 
-    this.loading.set(true);
+    if (!quiet) this.loading.set(true);
     try {
       // The visible range replaces what was loaded, it does not add to it.
       // Appending meant every navigation, and every refetch after a save,
@@ -1177,7 +1378,7 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
     } catch (err) {
       console.error('Failed to load events:', err);
     } finally {
-      this.loading.set(false);
+      if (!quiet) this.loading.set(false);
     }
   }
 
@@ -1224,7 +1425,7 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
   }
 
   private calendarColor(calendarId: number): string {
-    const cal = this.calendars().find(c => c.id === calendarId);
+    const cal = this.calendars().find((c) => c.id === calendarId);
     return cal?.color || '#3b82f6';
   }
 
@@ -1261,7 +1462,7 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
   }
 
   handleDateSelect(arg: DateSelectArg): void {
-    const defaultCal = this.calendars().find(c => c.is_default) || this.calendars()[0];
+    const defaultCal = this.calendars().find((c) => c.is_default) || this.calendars()[0];
 
     this.editForm = {
       id: 0,
@@ -1321,7 +1522,7 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
   }
 
   openCreateEvent(): void {
-    const defaultCal = this.calendars().find(c => c.is_default) || this.calendars()[0];
+    const defaultCal = this.calendars().find((c) => c.is_default) || this.calendars()[0];
 
     const now = new Date();
     const start = toLocalInputValue(now);
@@ -1381,7 +1582,10 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
       summary: ext.summary,
       location: ext.location,
       start: startDate.toISOString(),
-      end: (event.end ? new Date(event.end) : new Date(startDate.getTime() + 3600000)).toISOString(),
+      end: (event.end
+        ? new Date(event.end)
+        : new Date(startDate.getTime() + 3600000)
+      ).toISOString(),
       allDay: event.allDay,
       timezone: ext.timezone,
       status: ext.status,
