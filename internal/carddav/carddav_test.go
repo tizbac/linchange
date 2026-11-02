@@ -178,6 +178,14 @@ func TestCardDAVLifecycle(t *testing.T) {
 	if code != http.StatusForbidden {
 		t.Fatalf("bob PUT to a read-only share = %d %s, want 403", code, body)
 	}
+	code, body = call(t, client, httpSrv.URL, "PUT", alias+"shared-card.vcf", card, "bob@example.com")
+	if code != http.StatusForbidden {
+		t.Fatalf("bob changing a card in a read-only share = %d %s, want 403", code, body)
+	}
+	code, body = call(t, client, httpSrv.URL, "DELETE", alias+"shared-card.vcf", "", "bob@example.com")
+	if code != http.StatusForbidden {
+		t.Fatalf("bob deleting a card in a read-only share = %d %s, want 403", code, body)
+	}
 }
 
 func mustCard(t *testing.T) vcard.Card {
