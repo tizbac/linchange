@@ -505,24 +505,35 @@ func (s *Server) propfindFor(w http.ResponseWriter, r *http.Request) (propfindRe
 // readableCalendars is the set of calendars a principal may read in its own home
 // set.
 //
-// It is the principal's own calendars plus the ones shared with them and
-// accepted. A shared calendar keeps its owner's URL in the listing, because the
-// URL names the calendar's home rather than the viewer; the viewer reaches it
-// with their own credentials and requireRead decides whether they may.
+// It is the principal's own calendars, their organization's, and the ones shared
+// with them and accepted. A shared calendar keeps its owner's URL in the listing,
+// because the URL names the calendar's home rather than the viewer; the viewer
+// reaches it with their own credentials and requireRead decides whether they may.
 func (s *Server) readableCalendars(r *http.Request, who policy.Principal) ([]store.Calendar, *davError) {
 	rows, err := s.calendars.ByOwner(r.Context(), s.db, who.Address)
 	if err != nil {
 		return nil, s.databaseError(r.Context(), "listing the calendars", err)
+	}
+	// The organization's calendars are part of everyone's home set, as they are
+	// part of the web client's list: a member may book a team calendar without
+	// anybody having shared it with them by name. The access check below still
+	// decides whether this member may read it.
+	var group []store.Calendar
+	if wg, err := store.NewWorkgroups().ForAddress(r.Context(), s.db, who.Address); err == nil {
+		group, err = s.calendars.ByWorkgroup(r.Context(), s.db, wg.ID)
+		if err != nil {
+			return nil, s.databaseError(r.Context(), "listing the organization's calendars", err)
+		}
 	}
 	shared, err := store.NewCalendarShares().SharedCalendars(r.Context(), s.db, who.Address)
 	if err != nil {
 		return nil, s.databaseError(r.Context(), "listing the shared calendars", err)
 	}
 
-	out := make([]store.Calendar, 0, len(rows)+len(shared))
-	seen := make(map[int64]bool, len(rows)+len(shared))
-	for _, group := range [][]store.Calendar{rows, shared} {
-		for _, cal := range group {
+	out := make([]store.Calendar, 0, len(rows)+len(group)+len(shared))
+	seen := make(map[int64]bool, len(rows)+len(group)+len(shared))
+	for _, calendars := range [][]store.Calendar{rows, group, shared} {
+		for _, cal := range calendars {
 			if seen[cal.ID] {
 				continue
 			}

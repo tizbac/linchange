@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1777,6 +1778,46 @@ func TestSharedCalendarIsListedAndReachableByTheSubject(t *testing.T) {
 	if resp.StatusCode != http.StatusMultiStatus || !strings.Contains(body, "<D:privilege><D:all/></D:privilege>") {
 		t.Fatalf("a write share = %d %s, want the all privilege", resp.StatusCode, body)
 	}
+}
+
+// A team calendar belongs to its organization, not to a person, and every
+// member sees it without anybody sharing it with them by name: that is what
+// makes it a team calendar. The home set has to list it, or a client that reads
+// calendars only there shows a member no team calendar at all.
+func TestWorkgroupCalendarIsListedForEveryMember(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	openBookings, legacyMailAuth := false, true
+	wg, err := store.NewWorkgroups().Create(ctx, h.db, store.CreateWorkgroupRequest{
+		Name: "Example", Domain: "example.com", OpenBooking: &openBookings, LegacyMailAuth: &legacyMailAuth,
+		Members: []store.WorkgroupMember{{Address: bobAddr, Role: store.WorkgroupRoleMember}},
+	})
+	if err != nil {
+		t.Fatalf("creating the workgroup: %v", err)
+	}
+	groupCal, err := store.NewCalendars().Create(ctx, h.db, store.CreateCalendarRequest{
+		WorkgroupID: &wg.ID, Name: "Scadenze", Timezone: "UTC",
+	})
+	if err != nil {
+		t.Fatalf("creating the team calendar: %v", err)
+	}
+
+	resp, body := h.doAs(bobAddr, bobPass, "PROPFIND", "/caldav/bob%40example.com/",
+		propfindBody("displayname", "resourcetype", "current-user-privilege-set"), map[string]string{"Depth": "1"})
+	if resp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("bob's home = %d %s", resp.StatusCode, body)
+	}
+	want := "/caldav/workgroup/" + strconv.FormatInt(wg.ID, 10) + "/Scadenze/"
+	if !strings.Contains(body, want) {
+		t.Fatalf("the team calendar is not listed in bob's home: %s", body)
+	}
+	if !strings.Contains(body, "<D:displayname>Scadenze</D:displayname>") {
+		t.Fatalf("the team calendar is listed without its name: %s", body)
+	}
+	if !strings.Contains(body, "<D:privilege><D:read/></D:privilege>") {
+		t.Fatalf("a member who may only read the team calendar was told otherwise: %s", body)
+	}
+	_ = groupCal
 }
 
 const sharedEvent = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\nUID:shared-1\r\nDTSTAMP:20260101T000000Z\r\nDTSTART:20260102T100000Z\r\nDTEND:20260102T110000Z\r\nSUMMARY:Shared\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
