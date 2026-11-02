@@ -1370,8 +1370,14 @@ export class CalendarComponent implements AfterViewInit, OnDestroy {
       const found: EventModel[] = [];
       const calendarIds = this.calendars().map((c) => c.id);
       for (const id of calendarIds) {
-        const res = await this.api.listEvents(id, start, end);
-        found.push(...res.events);
+        // One calendar that cannot be read (a share whose access changed, a
+        // calendar being deleted) must not hide every other calendar's events.
+        try {
+          const res = await this.api.listEvents(id, start, end);
+          found.push(...res.events);
+        } catch (err) {
+          console.error(`Failed to load events for calendar ${id}:`, err);
+        }
       }
       this.events.set(found);
       this.updateFullCalendarEvents();
