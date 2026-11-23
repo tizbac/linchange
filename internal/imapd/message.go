@@ -347,6 +347,41 @@ func (r *MessageRepo) CountByMailbox(ctx context.Context, db *sqlx.DB, mailboxID
 	return count, nil
 }
 
+// MailboxStatus is the set of counts STATUS reports for one mailbox.
+type MailboxStatus struct {
+	Messages       uint32 `db:"messages"`
+	Unseen         uint32 `db:"unseen"`
+	Recent         uint32 `db:"recent"`
+	Deleted        uint32 `db:"deleted"`
+	Size           int64  `db:"size"`
+	DeletedStorage int64  `db:"deleted_storage"`
+}
+
+// StatusByMailbox returns every STATUS count in one query.
+//
+// STATUS asks for a subset of the items, but the caller cannot know which
+// pointers go-imap will dereference: writeStatus dereferences NumUnseen,
+// NumDeleted, Size and DeletedStorage when the client requested them, so a
+// nil field panics the connection. Returning all of them keeps that decision
+// out of the session and costs one scan instead of five.
+func (r *MessageRepo) StatusByMailbox(ctx context.Context, db *sqlx.DB, mailboxID int64) (MailboxStatus, error) {
+	const query = `
+		SELECT count(*) AS messages,
+		       count(*) FILTER (WHERE NOT ('\Seen' = ANY (flags))) AS unseen,
+		       count(*) FILTER (WHERE '\Recent' = ANY (flags)) AS recent,
+		       count(*) FILTER (WHERE '\Deleted' = ANY (flags)) AS deleted,
+		       COALESCE(sum(size), 0)::bigint AS size,
+		       COALESCE(sum(size) FILTER (WHERE '\Deleted' = ANY (flags)), 0)::bigint AS deleted_storage
+		FROM messages
+		WHERE mailbox_id = $1`
+
+	var st MailboxStatus
+	if err := db.GetContext(ctx, &st, query, mailboxID); err != nil {
+		return MailboxStatus{}, fmt.Errorf("store: mailbox status: %w", err)
+	}
+	return st, nil
+}
+
 // GetDeletedMessages returns all messages with the \Deleted flag in a mailbox.
 func (r *MessageRepo) GetDeletedMessages(ctx context.Context, db *sqlx.DB, mailboxID int64) ([]Message, error) {
 	const query = `

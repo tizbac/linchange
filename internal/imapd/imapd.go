@@ -678,15 +678,29 @@ func (s *session) Status(mailbox string, options *imap.StatusOptions) (*imap.Sta
 		return nil, ErrMailboxNotFound
 	}
 
-	msgCount, err := s.backend.messageStore.CountByMailbox(ctx, s.backend.db, mb.ID)
+	st, err := s.backend.messageStore.StatusByMailbox(ctx, s.backend.db, mb.ID)
 	if err != nil {
-		return nil, fmt.Errorf("imap: status count: %w", err)
+		return nil, fmt.Errorf("imap: status: %w", err)
 	}
 
-	msgCountU32 := uint32(msgCount)
+	// go-imap dereferences each pointer the client asked for, so every field
+	// must be populated even when the request did not include it.
+	numMessages := st.Messages
+	numRecent := st.Recent
+	numUnseen := st.Unseen
+	numDeleted := st.Deleted
+	size := st.Size
+	deletedStorage := st.DeletedStorage
 	return &imap.StatusData{
-		Mailbox:     name,
-		NumMessages: &msgCountU32,
+		Mailbox:        name,
+		NumMessages:    &numMessages,
+		NumRecent:      &numRecent,
+		UIDNext:        imap.UID(mb.UIDNext),
+		UIDValidity:    mb.UIDValidity,
+		NumUnseen:      &numUnseen,
+		NumDeleted:     &numDeleted,
+		Size:           &size,
+		DeletedStorage: &deletedStorage,
 	}, nil
 }
 

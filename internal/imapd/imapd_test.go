@@ -515,6 +515,79 @@ func TestStatusMailbox(t *testing.T) {
 	}
 }
 
+// A client that asks for UNSEEN, DELETED, SIZE or DELETED-STORAGE must get a
+// value, not a panic. go-imap dereferences the matching StatusData pointer, so
+// an item the session left nil used to crash the connection.
+func TestStatusMailboxReportsEveryItem(t *testing.T) {
+	_, _, addr := setupServer(t)
+
+	client, err := imapclient.DialInsecure(addr, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	cmd := client.Login("alice@example.com", "testpassword123")
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+
+	seen := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Seen\r\n\r\nSeen body.\r\n")
+	unseen := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Unseen\r\n\r\nUnseen body.\r\n")
+
+	appendMessage := func(msg []byte, flags []imap.Flag) {
+		t.Helper()
+		appendCmd := client.Append("INBOX", int64(len(msg)), &imap.AppendOptions{Flags: flags})
+		if _, err := appendCmd.Write(msg); err != nil {
+			t.Fatalf("append write: %v", err)
+		}
+		if err := appendCmd.Close(); err != nil {
+			t.Fatalf("append close: %v", err)
+		}
+		if _, err := appendCmd.Wait(); err != nil {
+			t.Fatalf("append wait: %v", err)
+		}
+	}
+
+	appendMessage(seen, []imap.Flag{"\\Seen", "\\Deleted"})
+	appendMessage(unseen, nil)
+
+	data, err := client.Status("INBOX", &imap.StatusOptions{
+		NumMessages:    true,
+		UIDNext:        true,
+		UIDValidity:    true,
+		NumUnseen:      true,
+		NumDeleted:     true,
+		Size:           true,
+		DeletedStorage: true,
+	}).Wait()
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+
+	if data.NumMessages == nil || *data.NumMessages != 2 {
+		t.Errorf("NumMessages = %v, want 2", data.NumMessages)
+	}
+	if data.NumUnseen == nil || *data.NumUnseen != 1 {
+		t.Errorf("NumUnseen = %v, want 1", data.NumUnseen)
+	}
+	if data.NumDeleted == nil || *data.NumDeleted != 1 {
+		t.Errorf("NumDeleted = %v, want 1", data.NumDeleted)
+	}
+	if data.Size == nil || *data.Size != int64(len(seen)+len(unseen)) {
+		t.Errorf("Size = %v, want %d", data.Size, len(seen)+len(unseen))
+	}
+	if data.DeletedStorage == nil || *data.DeletedStorage != int64(len(seen)) {
+		t.Errorf("DeletedStorage = %v, want %d", data.DeletedStorage, len(seen))
+	}
+	if data.UIDNext != 3 {
+		t.Errorf("UIDNext = %d, want 3", data.UIDNext)
+	}
+	if data.UIDValidity != 1 {
+		t.Errorf("UIDValidity = %d, want 1", data.UIDValidity)
+	}
+}
+
 func TestSearch(t *testing.T) {
 	_, _, addr := setupServer(t)
 
