@@ -299,6 +299,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 
 		if imapSrv.Enabled() {
 			a.OnShutdown(func(ctx context.Context) error {
+				imapSrv.Close()
 				log.Info("imap listeners stopped")
 				return nil
 			})

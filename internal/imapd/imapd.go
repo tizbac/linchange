@@ -60,6 +60,15 @@ type Server struct {
 // Enabled reports whether any IMAP listener is configured.
 func (s *Server) Enabled() bool { return s.enabled }
 
+// Close stops the background notification listener. It is separate from the
+// imapserver listeners so that a shutdown can release the database connection
+// even when the caller closes the network listeners itself.
+func (s *Server) Close() {
+	if s.backend != nil && s.backend.changes != nil {
+		s.backend.changes.Close()
+	}
+}
+
 // PlainServer returns the underlying imapserver.Server for plain connections.
 // Tests use this to bind to a random port.
 func (s *Server) PlainServer() *imapserver.Server { return s.plainServer }
@@ -80,7 +89,10 @@ type backend struct {
 	quotaRepo       *store.Quotas
 	sharedMailboxes *store.SharedMailboxes
 	sharedGrants    *store.SharedMailboxGrants
-	logger          *slog.Logger
+	// changes delivers PostgreSQL notifications to IDLE sessions. It is one
+	// listener for the whole server, not one per session.
+	changes *changeNotifier
+	logger  *slog.Logger
 }
 
 // New creates the IMAP server.
@@ -108,6 +120,7 @@ func New(db *sqlx.DB, blobs *blobstore.Store,
 		quotaRepo:       store.NewQuotas(),
 		sharedMailboxes: sharedMailboxes,
 		sharedGrants:    sharedGrants,
+		changes:         newChangeNotifier(db, log),
 		logger:          log,
 	}
 
@@ -785,34 +798,50 @@ func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
 }
 
 // Idle enters idle mode.
+//
+// The session subscribes to the server's single notification listener instead
+// of opening a connection of its own. Waiting for a notification is a blocking
+// read on that one connection, so an idle client costs no database work at all;
+// the previous implementation polled with SELECT 1 in a tight loop, which kept
+// a CPU busy and took a pool connection per idling client.
 func (s *session) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) error {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Set up notification listening.
-	listener := &pgListener{
-		db:     s.backend.db,
-		logger: s.backend.logger,
+	var mailboxID int64
+	if s.selected != nil {
+		mailboxID = s.selected.mailboxID
 	}
+	notifications, unsubscribe := s.backend.changes.subscribe(mailboxID)
+	defer unsubscribe()
 
-	if err := listener.Listen(ctx, "message_change"); err != nil {
-		return fmt.Errorf("imap: listen: %w", err)
-	}
-	defer listener.Unlisten(ctx)
+	// Subscribe before counting. A message that arrived between the client's
+	// last count and LISTEN would otherwise be missed, because PostgreSQL does
+	// not replay notifications to a new listener.
+	s.writeMailboxCount(ctx, w)
 
 	for {
 		select {
 		case <-stop:
 			return nil
-		case <-listener.Notify:
-			if s.selected == nil {
-				return nil
-			}
-			// Send untagged EXISTS response.
-			count, err := s.backend.messageStore.CountByMailbox(ctx, s.backend.db, s.selected.mailboxID)
-			if err == nil {
-				_ = w.WriteNumMessages(uint32(count))
-			}
+		case <-notifications:
+			s.writeMailboxCount(ctx, w)
 		}
+	}
+}
+
+// writeMailboxCount sends an untagged EXISTS response for the selected mailbox.
+// The timeout matters because Idle cannot return while this query is in flight,
+// and the client has already been told the server is idling.
+func (s *session) writeMailboxCount(ctx context.Context, w *imapserver.UpdateWriter) {
+	if s.selected == nil {
+		return
+	}
+	countCtx, countCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer countCancel()
+	count, err := s.backend.messageStore.CountByMailbox(countCtx, s.backend.db, s.selected.mailboxID)
+	if err == nil {
+		_ = w.WriteNumMessages(uint32(count))
 	}
 }
 
