@@ -207,7 +207,7 @@ func (b *Backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 		}
 	}
 	// Opportunistic maintenance: drop greylist entries that expired without a
-	// valid retry.
+	// valid retry. Prune is throttled and does nothing when greylisting is off.
 	if _, err := b.greylist.Prune(context.Background(), b.db); err != nil {
 		b.log.Warn("greylist prune failed", "error", err)
 	}

@@ -3,12 +3,23 @@ package inbound
 import (
 	"context"
 	"net/netip"
+	"sync"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 
 	"github.com/linchange/linchange/config"
 	"github.com/linchange/linchange/internal/store"
+)
+
+const (
+	// pruneInterval keeps the opportunistic prune from becoming one DELETE per
+	// inbound connection. A spam run can open thousands of SMTP sessions, and
+	// each of them must not queue behind a write against the same table.
+	pruneInterval = 5 * time.Minute
+	// pruneTimeout bounds the delete so a slow database cannot pin an SMTP
+	// session (and a pool connection) forever.
+	pruneTimeout = 5 * time.Second
 )
 
 // GreylistAction is the greylist verdict for one MAIL FROM.
@@ -35,6 +46,9 @@ const (
 // A null envelope sender (bounce) is never greylisted.
 type Greylist struct {
 	cfg config.Greylisting
+
+	mu        sync.Mutex
+	lastPrune time.Time
 }
 
 // NewGreylist builds the greylist from configuration.
@@ -111,8 +125,27 @@ func (g *Greylist) Check(ctx context.Context, db *sqlx.DB, ip netip.Addr, envelo
 }
 
 // Prune removes entries that expired without being accepted. It is called
-// opportunistically per connection, not on a timer.
+// opportunistically per connection, not on a timer, so it is throttled: the
+// first connection after pruneInterval does the work and the rest are a
+// no-op. When greylisting is disabled there is nothing to prune.
 func (g *Greylist) Prune(ctx context.Context, db *sqlx.DB) (int64, error) {
+	if !g.Enabled() {
+		return 0, nil
+	}
+
+	g.mu.Lock()
+	if !g.lastPrune.IsZero() && time.Since(g.lastPrune) < pruneInterval {
+		g.mu.Unlock()
+		return 0, nil
+	}
+	// Claim the prune before touching the database: concurrent SMTP
+	// connections must wait for the next interval, not pile up on the DELETE.
+	g.lastPrune = time.Now()
+	g.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(ctx, pruneTimeout)
+	defer cancel()
+
 	res, err := db.ExecContext(ctx,
 		`DELETE FROM greylist WHERE expires_at < now() AND accepted_at IS NULL`)
 	if err != nil {

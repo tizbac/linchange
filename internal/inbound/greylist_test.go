@@ -170,3 +170,85 @@ func TestGreylistPrune(t *testing.T) {
 		t.Errorf("%d rows remain, want 1", remaining)
 	}
 }
+
+// Pruning must not touch the database when greylisting is off: a disabled
+// feature that still writes on every SMTP connection is a cost the operator
+// did not ask for and, under a spam run, a way to exhaust the connection pool.
+func TestPruneDoesNothingWhenDisabled(t *testing.T) {
+	db := testdb.Migrated(t)
+
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO greylist (sender_ip, envelope_from, first_seen_at, last_seen_at, expires_at)
+		VALUES ('192.0.2.1', 'sender@example.net', now() - interval '2 hours',
+		        now() - interval '2 hours', now() - interval '1 hour')`); err != nil {
+		t.Fatalf("insert greylist row: %v", err)
+	}
+
+	g := NewGreylist(config.Greylisting{Enabled: false})
+	n, err := g.Prune(ctx, db)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("Prune removed %d rows while disabled, want 0", n)
+	}
+
+	var rows int
+	if err := db.GetContext(ctx, &rows, `SELECT count(*) FROM greylist`); err != nil {
+		t.Fatalf("count greylist: %v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("greylist has %d rows, want 1", rows)
+	}
+}
+
+// When enabled, the first caller prunes and the next ones within the interval
+// leave the table alone, so a burst of connections cannot queue on the DELETE.
+func TestPruneIsThrottled(t *testing.T) {
+	db := testdb.Migrated(t)
+
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO greylist (sender_ip, envelope_from, first_seen_at, last_seen_at, expires_at)
+		VALUES ('192.0.2.2', 'sender@example.net', now() - interval '2 hours',
+		        now() - interval '2 hours', now() - interval '1 hour')`); err != nil {
+		t.Fatalf("insert greylist row: %v", err)
+	}
+
+	g := NewGreylist(config.Greylisting{Enabled: true})
+	removed, err := g.Prune(ctx, db)
+	if err != nil {
+		t.Fatalf("first Prune: %v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("first Prune removed %d rows, want 1", removed)
+	}
+
+	removed, err = g.Prune(ctx, db)
+	if err != nil {
+		t.Fatalf("second Prune: %v", err)
+	}
+	if removed != 0 {
+		t.Fatalf("second Prune removed %d rows, want 0", removed)
+	}
+
+	// Pretend the interval has passed. A new expired row proves the next call
+	// runs the DELETE again instead of returning early.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO greylist (sender_ip, envelope_from, first_seen_at, last_seen_at, expires_at)
+		VALUES ('192.0.2.3', 'sender@example.net', now() - interval '2 hours',
+		        now() - interval '2 hours', now() - interval '1 hour')`); err != nil {
+		t.Fatalf("insert second greylist row: %v", err)
+	}
+	g.mu.Lock()
+	g.lastPrune = time.Now().Add(-pruneInterval)
+	g.mu.Unlock()
+	removed, err = g.Prune(ctx, db)
+	if err != nil {
+		t.Fatalf("Prune after interval: %v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("Prune after interval removed %d rows, want 1", removed)
+	}
+}
